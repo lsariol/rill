@@ -152,7 +152,7 @@ pub fn parse_duration(s: &str) -> Option<u32> {
 /// Formats seconds as the largest whole unit, such as `10m`.
 pub fn format_duration(secs: u32) -> String {
     for (unit, size) in [("w", 604_800), ("d", 86_400), ("h", 3600), ("m", 60)] {
-        if secs >= size && secs % size == 0 {
+        if secs >= size && secs.is_multiple_of(size) {
             return format!("{}{unit}", secs / size);
         }
     }

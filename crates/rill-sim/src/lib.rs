@@ -174,7 +174,7 @@ struct Sim {
 
 impl Sim {
     fn new(platform: Platform, profile: Profile) -> Sim {
-        let mut rng = SmallRng::seeded(profile.seed ^ (platform as u64 + 1) * 0x9E37);
+        let mut rng = SmallRng::seeded(profile.seed ^ ((platform as u64 + 1) * 0x9E37));
         let users = (0..300).map(|i| make_user(&mut rng, platform, i)).collect();
         Sim {
             platform,
