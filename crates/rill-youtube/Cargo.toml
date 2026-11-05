@@ -1,0 +1,26 @@
+[package]
+name = "rill-youtube"
+description = "Rill's YouTube adapter: desktop OAuth with PKCE and live chat through the Data API."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rill-core.workspace = true
+rill-os.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync", "net", "io-util"] }
+reqwest = { version = "0.13", features = ["json", "form", "query"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

@@ -5208,6 +5208,7 @@ dependencies = [
  "rill-os",
  "rill-sim",
  "rill-twitch",
+ "rill-youtube",
  "rustls",
  "tokio",
  "tracing",
@@ -5271,6 +5272,23 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite",
+ "tracing",
+]
+
+[[package]]
+name = "rill-youtube"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "getrandom 0.3.4",
+ "reqwest",
+ "rill-core",
+ "rill-os",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
  "tracing",
 ]
 

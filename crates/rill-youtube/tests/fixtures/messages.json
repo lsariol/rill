@@ -1,0 +1,52 @@
+{
+  "kind": "youtube#liveChatMessageListResponse",
+  "pollingIntervalMillis": 3000,
+  "nextPageToken": "GKjVnqvLs",
+  "pageInfo": { "totalResults": 4, "resultsPerPage": 4 },
+  "items": [
+    {
+      "kind": "youtube#liveChatMessage",
+      "id": "LCC.abc",
+      "snippet": {
+        "type": "textMessageEvent",
+        "liveChatId": "Cg0KC2Zvbw",
+        "authorChannelId": "UCviewer",
+        "publishedAt": "2024-10-27T03:33:20.000000+00:00",
+        "hasDisplayContent": true,
+        "displayMessage": "hello @rill_dev",
+        "textMessageDetails": { "messageText": "hello @rill_dev" }
+      },
+      "authorDetails": {
+        "channelId": "UCviewer",
+        "displayName": "@viewer",
+        "isVerified": false,
+        "isChatOwner": false,
+        "isChatSponsor": false,
+        "isChatModerator": true
+      }
+    },
+    {
+      "id": "LCC.super",
+      "snippet": {
+        "type": "superChatEvent",
+        "publishedAt": "2024-10-27T03:33:21+00:00",
+        "displayMessage": "$5.00 from @fan: great stream"
+      },
+      "authorDetails": { "channelId": "UCfan", "displayName": "@fan", "isChatSponsor": true }
+    },
+    {
+      "id": "LCC.del",
+      "snippet": {
+        "type": "messageDeletedEvent",
+        "publishedAt": "2024-10-27T03:33:22+00:00",
+        "messageDeletedDetails": { "deletedMessageId": "LCC.old" }
+      },
+      "authorDetails": { "channelId": "UCmod", "displayName": "@mod" }
+    },
+    {
+      "id": "LCC.poll",
+      "snippet": { "type": "pollEvent", "publishedAt": "2024-10-27T03:33:23+00:00" },
+      "authorDetails": { "channelId": "UCowner", "displayName": "@owner" }
+    }
+  ]
+}

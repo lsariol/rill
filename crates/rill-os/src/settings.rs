@@ -30,6 +30,8 @@ pub struct YouTubeSettings {
     /// Overrides the built-in desktop OAuth client.
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
+    /// The shortest wait between chat polls, in milliseconds (default 5000). Longer saves quota.
+    pub min_poll_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
