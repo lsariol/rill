@@ -1,0 +1,10 @@
+[package]
+name = "rill-core"
+description = "Platform-neutral chat core for Rill: types, routing and commands."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

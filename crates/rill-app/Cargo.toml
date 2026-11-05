@@ -1,0 +1,20 @@
+[package]
+name = "rill-app"
+description = "Rill's native desktop UI, built with GPUI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "rill"
+path = "src/main.rs"
+
+[dependencies]
+rill-core.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui-component.workspace = true
+
+[lints]
+workspace = true

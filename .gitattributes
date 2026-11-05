@@ -1,0 +1,4 @@
+# Rust, TOML and shell scripts are always LF, so rustfmt agrees on every OS.
+*.rs   text eol=lf
+*.toml text eol=lf
+*.sh   text eol=lf
