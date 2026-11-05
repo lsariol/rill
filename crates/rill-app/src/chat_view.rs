@@ -46,6 +46,8 @@ pub struct ChatView {
     pub(crate) completions_dismissed: Option<SharedString>,
     pub(crate) composer_error: Option<SharedString>,
     pub(crate) panel: Panel,
+    /// The Kick channel name box in Accounts.
+    pub(crate) kick_channel: Entity<gpui_component::input::InputState>,
     pub(crate) compact: bool,
     effective_compact: bool,
     following: bool,
@@ -109,6 +111,9 @@ impl ChatView {
             completions_dismissed: None,
             composer_error: None,
             panel: Panel::None,
+            kick_channel: cx.new(|cx| {
+                gpui_component::input::InputState::new(window, cx).placeholder("Kick channel name")
+            }),
             compact: false,
             effective_compact: false,
             following: true,
@@ -135,9 +140,8 @@ impl ChatView {
             }
             self.session.apply(event, now);
         }
-        if !self.session.connected().is_empty()
-            && let Destination::One(p) = self.destination
-            && !self.session.connected().contains(&p)
+        if let Destination::One(p) = self.destination
+            && !self.session.sendable().contains(&p)
         {
             self.destination = Destination::All;
         }

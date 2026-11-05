@@ -5204,6 +5204,7 @@ dependencies = [
  "gpui-pre-platform",
  "gpui-pre-reqwest-client",
  "rill-core",
+ "rill-kick",
  "rill-os",
  "rill-sim",
  "rill-twitch",
@@ -5219,6 +5220,23 @@ name = "rill-core"
 version = "0.0.0"
 dependencies = [
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "rill-kick"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "reqwest",
+ "rill-core",
+ "rill-os",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
  "tracing",
 ]
 

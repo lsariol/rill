@@ -83,7 +83,7 @@ impl ChatView {
             self.accept_completion(spec, window, cx);
             return;
         }
-        self.destination = self.destination.next(&self.session.connected());
+        self.destination = self.destination.next(&self.session.sendable());
         cx.notify();
     }
 
@@ -92,7 +92,7 @@ impl ChatView {
             self.move_completion(-1, cx);
             return;
         }
-        self.destination = self.destination.prev(&self.session.connected());
+        self.destination = self.destination.prev(&self.session.sendable());
         cx.notify();
     }
 
@@ -196,7 +196,7 @@ impl ChatView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let connected = self.session.connected();
+        let connected = self.session.sendable();
         let (label, label_color) = match self.destination {
             _ if connected.is_empty() => {
                 ("To: nothing connected yet".to_string(), rgb(style::FAINT))

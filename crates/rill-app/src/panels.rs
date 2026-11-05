@@ -212,8 +212,9 @@ impl ChatView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let label = match command {
+        let label = match &command {
             Command::SignOut => format!("Signed out of {p}"),
+            Command::Join { channel } => format!("Joined {p} channel \"{}\"", channel.trim()),
             _ => format!("Signed in to {p}"),
         };
         let submitted = self.session.execute(p, Plan::Run { command, label });
@@ -242,7 +243,42 @@ impl ChatView {
                 ConnectionStatus::Failed(why) => Some(why.clone()),
                 _ => None,
             };
-            let button = if !set_up {
+            let read_only_kick = p == Platform::Kick
+                && set_up
+                && !matches!(
+                    status,
+                    ConnectionStatus::Connected
+                        | ConnectionStatus::Reconnecting { .. }
+                        | ConnectionStatus::Connecting
+                );
+            let kick_join = read_only_kick.then(|| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .mt_1()
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(Input::new(&self.kick_channel).xsmall()),
+                    )
+                    .child(
+                        Button::new("kick-join")
+                            .xsmall()
+                            .primary()
+                            .label("Read chat")
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                let channel = view.kick_channel.read(cx).value().to_string();
+                                view.account(Platform::Kick, Command::Join { channel }, window, cx);
+                            })),
+                    )
+            });
+            let line = if p == Platform::Kick && status == ConnectionStatus::Connected {
+                SharedString::from("Reading chat (read-only)")
+            } else {
+                line
+            };
+            let button = if !set_up || read_only_kick {
                 None
             } else {
                 match status {
@@ -344,6 +380,7 @@ impl ChatView {
                 )
                 .children(error.map(|e| div().text_xs().text_color(rgb(style::ERROR)).child(e)))
                 .children(prompt_box)
+                .children(kick_join)
         });
         div()
             .flex()

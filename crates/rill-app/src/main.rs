@@ -128,8 +128,10 @@ fn real_adapters() -> (Vec<Box<dyn Adapter>>, Vec<String>) {
         errors.push(e);
         rill_os::settings::Settings::default()
     });
-    let adapters: Vec<Box<dyn Adapter>> =
-        vec![Box::new(rill_twitch::TwitchAdapter::new(&settings.twitch))];
+    let adapters: Vec<Box<dyn Adapter>> = vec![
+        Box::new(rill_twitch::TwitchAdapter::new(&settings.twitch)),
+        Box::new(rill_kick::KickAdapter::new(&settings.kick)),
+    ];
     (adapters, errors)
 }
 

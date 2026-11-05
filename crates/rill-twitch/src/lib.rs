@@ -544,7 +544,7 @@ async fn run_request(
                     .await?;
                 None
             }
-            Command::SignIn | Command::SignOut => None,
+            Command::SignIn | Command::SignOut | Command::Join { .. } => None,
         })
     };
     r.await.map_err(|e: HelixError| e.message())

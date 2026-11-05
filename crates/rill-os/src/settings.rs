@@ -62,6 +62,27 @@ pub fn load() -> Result<Settings, String> {
     })
 }
 
+/// Writes the settings, replacing the file in one step.
+pub fn save(settings: &Settings) -> Result<(), String> {
+    let path = path();
+    let fail = |e: std::io::Error| format!("Settings: can't write {}: {e}.", path.display());
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(fail)?;
+    }
+    let text = serde_json::to_string_pretty(settings)
+        .map_err(|e| format!("Settings: can't encode the settings: {e}."))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text).map_err(fail)?;
+    std::fs::rename(&tmp, &path).map_err(fail)
+}
+
+/// Loads, changes and saves the settings.
+pub fn update(change: impl FnOnce(&mut Settings)) -> Result<(), String> {
+    let mut settings = load()?;
+    change(&mut settings);
+    save(&settings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

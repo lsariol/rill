@@ -89,6 +89,14 @@ impl Session {
         self.links.get(&platform)
     }
 
+    /// Connected platforms that can send messages: the composer's destinations.
+    pub fn sendable(&self) -> Vec<Platform> {
+        self.connected()
+            .into_iter()
+            .filter(|p| self.can(*p, Action::Send))
+            .collect()
+    }
+
     /// Platforms that are connected now, in cycle order.
     pub fn connected(&self) -> Vec<Platform> {
         self.links

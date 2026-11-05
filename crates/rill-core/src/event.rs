@@ -137,6 +137,10 @@ pub enum Command {
     SignIn,
     /// Forget the stored account and disconnect.
     SignOut,
+    /// Read this channel (by its name on the platform) instead of the current one.
+    Join {
+        channel: String,
+    },
 }
 
 impl Command {
@@ -152,7 +156,7 @@ impl Command {
             Command::Ban { .. } => Action::Ban,
             Command::Unban { .. } => Action::Unban,
             Command::Poll { .. } => Action::Poll,
-            Command::SignIn | Command::SignOut => return None,
+            Command::SignIn | Command::SignOut | Command::Join { .. } => return None,
         })
     }
 }
