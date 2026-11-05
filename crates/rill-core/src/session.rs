@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use crate::command::{self, CommandKind, Parsed};
+use crate::event::SignInPrompt;
 use crate::feed::{Delivery, DeliveryState, Feed, Item, Notice, SentMessage};
 use crate::{
     Account, Action, Capabilities, Command, ConnectionStatus, Destination, Event, Level, Platform,
@@ -18,6 +19,8 @@ pub struct Link {
     pub status: ConnectionStatus,
     pub account: Option<Account>,
     pub capabilities: Capabilities,
+    /// Shown while the user still has to finish signing in.
+    pub sign_in: Option<SignInPrompt>,
 }
 
 /// A request to hand to one platform's adapter.
@@ -111,6 +114,9 @@ impl Session {
                 account,
                 capabilities,
             } => self.apply_status(platform, status, account, capabilities, now_ms),
+            Event::SignIn { platform, prompt } => {
+                self.links.entry(platform).or_default().sign_in = Some(prompt);
+            }
             Event::Message(m) => {
                 let mine = self
                     .links
@@ -158,6 +164,14 @@ impl Session {
     ) {
         let link = self.links.entry(platform).or_default();
         let before = std::mem::replace(&mut link.status, status.clone());
+        if matches!(
+            status,
+            ConnectionStatus::Connected
+                | ConnectionStatus::Failed(_)
+                | ConnectionStatus::Disconnected
+        ) {
+            link.sign_in = None;
+        }
         link.capabilities = capabilities;
         if let Some(a) = account {
             self.feed.set_own_name(platform, &a.login);
@@ -206,11 +220,11 @@ impl Session {
                 });
             }
             Some(Pending::Action { label }) => match result {
-                Ok(_) => self.notice(Some(platform), Level::Info, &format!("{label}."), now_ms),
+                Ok(_) => self.notice(Some(platform), Level::Info, &format!("✓ {label}"), now_ms),
                 Err(e) => self.notice(
                     Some(platform),
                     Level::Error,
-                    &format!("{label} failed: {e}"),
+                    &format!("✗ {label}: {e}"),
                     now_ms,
                 ),
             },
@@ -373,13 +387,17 @@ impl Session {
     pub fn execute(&mut self, platform: Platform, plan: Plan) -> Submitted {
         let action = match &plan {
             Plan::Run { command, .. } => command.action(),
-            Plan::PollDialog => Action::Poll,
+            Plan::PollDialog => Some(Action::Poll),
         };
-        if !self.connected().contains(&platform) {
-            return Submitted::Rejected(format!("{platform} isn't connected."));
-        }
-        if !self.can(platform, action) {
-            return Submitted::Rejected(format!("{platform} can't {action} with this account."));
+        if let Some(action) = action {
+            if !self.connected().contains(&platform) {
+                return Submitted::Rejected(format!("{platform} isn't connected."));
+            }
+            if !self.can(platform, action) {
+                return Submitted::Rejected(format!(
+                    "{platform} can't {action} with this account."
+                ));
+            }
         }
         match plan {
             Plan::PollDialog => Submitted::PollDialog(platform),
@@ -702,7 +720,7 @@ mod tests {
         );
         let last = s.feed.entries().last().unwrap();
         assert!(matches!(&last.item, Item::Notice(n)
-            if n.level == Level::Error && n.text == "Ban bob failed: You aren't a moderator here."));
+            if n.level == Level::Error && n.text == "✗ Ban bob: You aren't a moderator here."));
     }
 
     #[test]
@@ -717,6 +735,33 @@ mod tests {
             Submitted::Rejected(_)
         ));
         assert_eq!(s.submit("   ", Destination::All, 0), Submitted::Nothing);
+    }
+
+    #[test]
+    fn sign_in_needs_no_connection_and_prompt_clears_on_connect() {
+        let mut s = Session::new(100);
+        let plan = Plan::Run {
+            command: Command::SignIn,
+            label: "Sign in to Twitch".into(),
+        };
+        assert!(matches!(
+            s.execute(Platform::Twitch, plan),
+            Submitted::Send(_)
+        ));
+        s.apply(
+            Event::SignIn {
+                platform: Platform::Twitch,
+                prompt: SignInPrompt {
+                    url: "https://www.twitch.tv/activate".into(),
+                    code: Some("ABCD-EFGH".into()),
+                    expires_at_ms: 0,
+                },
+            },
+            0,
+        );
+        assert!(s.link(Platform::Twitch).unwrap().sign_in.is_some());
+        connect(&mut s, Platform::Twitch, ALL_CAPS);
+        assert!(s.link(Platform::Twitch).unwrap().sign_in.is_none());
     }
 
     #[test]

@@ -8,7 +8,7 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState, Textarea, TextareaState};
 use gpui_component::{Sizable, StyledExt as _};
 use rill_core::command::format_duration;
-use rill_core::{Action, Author, Command, Plan, Platform, UserRef};
+use rill_core::{Action, Author, Command, ConnectionStatus, Plan, Platform, UserRef};
 
 use crate::chat_view::ChatView;
 use crate::style;
@@ -30,6 +30,7 @@ pub enum Panel {
         choices: Vec<Platform>,
     },
     Poll(PollForm),
+    Accounts,
 }
 
 /// A clicked user, with the message they were clicked on.
@@ -180,6 +181,7 @@ impl ChatView {
                     .into_any_element()
             }
             Panel::Poll(form) => self.render_poll(form, cx),
+            Panel::Accounts => self.render_accounts(cx),
         };
         div()
             .mx_3()
@@ -200,6 +202,155 @@ impl ChatView {
                     .tooltip("Close (Esc)")
                     .on_click(cx.listener(|view, _, window, cx| view.close_panel(window, cx))),
             )
+            .into_any_element()
+    }
+
+    fn account(
+        &mut self,
+        p: Platform,
+        command: Command,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let label = match command {
+            Command::SignOut => format!("Signed out of {p}"),
+            _ => format!("Signed in to {p}"),
+        };
+        let submitted = self.session.execute(p, Plan::Run { command, label });
+        self.handle_submitted(submitted, window, cx);
+        self.panel = Panel::Accounts;
+    }
+
+    fn render_accounts(&self, cx: &mut Context<Self>) -> AnyElement {
+        let rows = Platform::ALL.into_iter().map(|p| {
+            let link = self.session.link(p);
+            let status = link.map(|l| l.status.clone()).unwrap_or_default();
+            let account = link
+                .and_then(|l| l.account.as_ref())
+                .map(|a| a.display_name.clone());
+            let prompt = link.and_then(|l| l.sign_in.clone());
+            let set_up = self.hub.has(p);
+            let line: SharedString = match (&status, &account) {
+                _ if !set_up => "Coming soon".into(),
+                (ConnectionStatus::Connected, Some(a)) => format!("Connected as {a}").into(),
+                (ConnectionStatus::Reconnecting { .. }, _) => status.label().into(),
+                (ConnectionStatus::Connecting, _) if prompt.is_none() => "Connecting…".into(),
+                (ConnectionStatus::Connecting, _) => "Waiting for you to approve".into(),
+                _ => "Not connected".into(),
+            };
+            let error = match &status {
+                ConnectionStatus::Failed(why) => Some(why.clone()),
+                _ => None,
+            };
+            let button = if !set_up {
+                None
+            } else {
+                match status {
+                    ConnectionStatus::Connected | ConnectionStatus::Reconnecting { .. } => Some(
+                        Button::new(SharedString::from(format!("signout-{p}")))
+                            .xsmall()
+                            .outline()
+                            .label("Disconnect")
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                view.account(p, Command::SignOut, window, cx);
+                            })),
+                    ),
+                    ConnectionStatus::Connecting if prompt.is_some() => Some(
+                        Button::new(SharedString::from(format!("cancel-{p}")))
+                            .xsmall()
+                            .ghost()
+                            .label("Cancel")
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                view.account(p, Command::SignOut, window, cx);
+                            })),
+                    ),
+                    ConnectionStatus::Connecting => None,
+                    _ => Some(
+                        Button::new(SharedString::from(format!("signin-{p}")))
+                            .xsmall()
+                            .primary()
+                            .label("Connect")
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                view.account(p, Command::SignIn, window, cx);
+                            })),
+                    ),
+                }
+            };
+            let prompt_box = prompt.map(|pr| {
+                let url = pr.url.clone();
+                let code = pr.code.clone();
+                let short = url
+                    .trim_start_matches("https://")
+                    .split('?')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .mt_1()
+                    .p_2()
+                    .rounded_md()
+                    .bg(rgb(style::RAISED))
+                    .child(match &code {
+                        Some(_) => format!("Open {short} and enter this code:"),
+                        None => format!("Finish signing in at {short}."),
+                    })
+                    .children(code.clone().map(|c| div().text_xl().font_bold().child(c)))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .child(
+                                Button::new(SharedString::from(format!("open-{p}")))
+                                    .xsmall()
+                                    .primary()
+                                    .label("Open page")
+                                    .on_click(move |_, _, cx| cx.open_url(&url)),
+                            )
+                            .children(code.map(|c| {
+                                Button::new(SharedString::from(format!("copy-{p}")))
+                                    .xsmall()
+                                    .outline()
+                                    .label("Copy code")
+                                    .on_click(move |_, _, cx| {
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                            c.clone(),
+                                        ));
+                                    })
+                            })),
+                    )
+            });
+            div()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(style::platform_icon(p, 16.))
+                        .child(div().w(px(64.)).child(p.name()))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(rgb(style::MUTED))
+                                .child(line),
+                        )
+                        .children(button),
+                )
+                .children(error.map(|e| div().text_xs().text_color(rgb(style::ERROR)).child(e)))
+                .children(prompt_box)
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().font_bold().child("Accounts"))
+            .children(rows)
             .into_any_element()
     }
 

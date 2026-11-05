@@ -1,5 +1,8 @@
 //! Rill's OS integrations, kept small and behind plain functions.
 
+pub mod credentials;
+pub mod settings;
+
 use std::path::PathBuf;
 
 /// Where Rill keeps settings, logs and caches.
@@ -7,7 +10,9 @@ use std::path::PathBuf;
 /// Debug builds use the repository's `.dev/` folder, so a local run touches nothing outside it.
 pub fn data_dir() -> PathBuf {
     if cfg!(debug_assertions) {
-        return PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.dev");
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let repo = manifest.ancestors().nth(2).unwrap_or(manifest);
+        return repo.join(".dev");
     }
     platform_data_dir().join("Rill")
 }

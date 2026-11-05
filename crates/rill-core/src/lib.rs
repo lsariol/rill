@@ -14,7 +14,7 @@ pub use adapter::{Adapter, AdapterIo, EventSink, Hub};
 pub use destination::Destination;
 pub use event::{
     Account, Action, Capabilities, Command, ConnectionStatus, Event, Level, Request, RequestId,
-    UserRef,
+    SignInPrompt, UserRef,
 };
 pub use feed::{Entry, Feed, Filter, Item};
 pub use message::{

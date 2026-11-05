@@ -411,7 +411,7 @@ fn handle(sim: &mut Sim, events: &EventSink, req: Request) {
                     None => Err(format!("{platform}: no user named \"{}\".", user.login)),
                 }
             }
-            Command::Unban { .. } => Ok(None),
+            Command::Unban { .. } | Command::SignIn | Command::SignOut => Ok(None),
             Command::Poll { title, .. } => {
                 follow_up.push(Event::Notice {
                     platform,

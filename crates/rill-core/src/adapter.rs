@@ -143,6 +143,11 @@ impl Hub {
         })
     }
 
+    /// Whether a platform has an adapter running.
+    pub fn has(&self, platform: Platform) -> bool {
+        self.requests.contains_key(&platform)
+    }
+
     /// The runtime, for other background work.
     pub fn handle(&self) -> tokio::runtime::Handle {
         self.runtime.handle().clone()

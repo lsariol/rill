@@ -1,10 +1,16 @@
 [package]
 name = "rill-os"
-description = "Rill's OS integrations: data folders and the credential store."
+description = "Rill's OS integrations: data folders, settings and the credential store."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[dependencies]
+keyring = "4.2"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

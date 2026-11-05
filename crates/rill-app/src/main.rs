@@ -22,6 +22,7 @@ const USAGE: &str = "\
 Usage: rill [options]
 
 Options:
+  --sim               Show simulated chat instead of connecting to the platforms
   --rate <n>          Simulated messages per second, per platform (default 4)
   --bursts            Ten times the rate for 3 s every 20 s
   --emotes            Make most words emotes
@@ -31,11 +32,12 @@ Options:
   --stats <file>      Write counters to this file on quit (with --exit-after)
   -h, --help          Show this help
 
-Until accounts can be connected, Rill shows simulated chat.";
+--rate, --bursts, --emotes, --flaky and --fail apply to simulated chat and turn on --sim.";
 
 /// Command-line options.
 #[derive(Debug, Default)]
 struct Options {
+    sim: bool,
     profile: Profile,
     exit_after: Option<Duration>,
     stats: Option<std::path::PathBuf>,
@@ -51,11 +53,18 @@ fn parse_args() -> Result<Options, String> {
         };
         match arg.as_str() {
             "-h" | "--help" => return Err(USAGE.to_string()),
-            "--rate" => o.profile.rate = number(&value("--rate")?, "--rate")?,
-            "--fail" => o.profile.fail_rate = number(&value("--fail")?, "--fail")?.clamp(0., 1.),
-            "--bursts" => o.profile.bursts = true,
-            "--emotes" => o.profile.emote_heavy = true,
-            "--flaky" => o.profile.flaky = true,
+            "--sim" => o.sim = true,
+            "--rate" => {
+                o.sim = true;
+                o.profile.rate = number(&value("--rate")?, "--rate")?;
+            }
+            "--fail" => {
+                o.sim = true;
+                o.profile.fail_rate = number(&value("--fail")?, "--fail")?.clamp(0., 1.);
+            }
+            "--bursts" => (o.sim, o.profile.bursts) = (true, true),
+            "--emotes" => (o.sim, o.profile.emote_heavy) = (true, true),
+            "--flaky" => (o.sim, o.profile.flaky) = (true, true),
             "--exit-after" => {
                 o.exit_after = Some(Duration::from_secs_f64(number(
                     &value("--exit-after")?,
@@ -111,6 +120,19 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     Some(guard)
 }
 
+/// The platform connections from settings.json, and any problem loading it.
+fn real_adapters() -> (Vec<Box<dyn Adapter>>, Vec<String>) {
+    let mut errors = Vec::new();
+    let settings = rill_os::settings::load().unwrap_or_else(|e| {
+        tracing::error!(err = %e, "settings not loaded; using defaults");
+        errors.push(e);
+        rill_os::settings::Settings::default()
+    });
+    let adapters: Vec<Box<dyn Adapter>> =
+        vec![Box::new(rill_twitch::TwitchAdapter::new(&settings.twitch))];
+    (adapters, errors)
+}
+
 fn main() -> ExitCode {
     let options = match parse_args() {
         Ok(o) => o,
@@ -131,10 +153,21 @@ fn main() -> ExitCode {
     let _log = init_logging();
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "Rill starting");
 
-    let adapters: Vec<Box<dyn Adapter>> = Platform::ALL
-        .into_iter()
-        .map(|p| Box::new(SimAdapter::new(p, options.profile.clone())) as Box<dyn Adapter>)
-        .collect();
+    if rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .is_err()
+    {
+        tracing::warn!("TLS provider was already installed");
+    }
+    let (adapters, startup_errors) = if options.sim {
+        let sims = Platform::ALL
+            .into_iter()
+            .map(|p| Box::new(SimAdapter::new(p, options.profile.clone())) as Box<dyn Adapter>)
+            .collect();
+        (sims, Vec::new())
+    } else {
+        real_adapters()
+    };
     let (hub, events) = match Hub::start(adapters) {
         Ok(started) => started,
         Err(e) => {
@@ -174,7 +207,7 @@ fn main() -> ExitCode {
         };
         let mut view_handle = None;
         let opened = cx.open_window(window_options, |window, cx| {
-            let view = cx.new(|cx| chat_view::ChatView::new(hub, events, window, cx));
+            let view = cx.new(|cx| chat_view::ChatView::new(hub, events, startup_errors, window, cx));
             view_handle = Some(view.clone());
             cx.new(|cx| Root::new(view, window, cx))
         });

@@ -63,6 +63,7 @@ impl ChatView {
     pub fn new(
         hub: Hub,
         events: mpsc::Receiver<Event>,
+        startup_errors: Vec<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -94,8 +95,12 @@ impl ChatView {
 
         let pump = cx.spawn(async move |this, cx| pump_events(this, events, cx).await);
 
-        Self {
-            session: Session::new(FEED_CAPACITY),
+        let mut session = Session::new(FEED_CAPACITY);
+        for e in startup_errors {
+            session.notice(None, rill_core::Level::Error, &e, now_ms());
+        }
+        let mut view = Self {
+            session,
             hub,
             list,
             input,
@@ -114,7 +119,9 @@ impl ChatView {
             started: Instant::now(),
             _tasks: vec![pump],
             _subscriptions: vec![subscription],
-        }
+        };
+        view.sync_list();
+        view
     }
 
     /// Applies a batch of adapter events and updates the list.
@@ -123,6 +130,9 @@ impl ChatView {
         self.stats.events += batch.len() as u64;
         self.stats.batches += 1;
         for event in batch {
+            if matches!(event, Event::SignIn { .. }) {
+                self.panel = Panel::Accounts;
+            }
             self.session.apply(event, now);
         }
         if !self.session.connected().is_empty()
@@ -185,7 +195,19 @@ impl ChatView {
         cx.notify();
     }
 
+    /// A header icon click: sign in if the platform isn't connected, else show or hide it.
     fn toggle_platform(&mut self, p: Platform, cx: &mut Context<Self>) {
+        let usable = self.session.link(p).is_some_and(|l| {
+            matches!(
+                l.status,
+                ConnectionStatus::Connected | ConnectionStatus::Reconnecting { .. }
+            )
+        });
+        if !usable {
+            self.panel = Panel::Accounts;
+            cx.notify();
+            return;
+        }
         let mut filter = self.session.feed.filter().clone();
         if !filter.hidden.remove(&p) {
             filter.hidden.insert(p);
@@ -239,11 +261,15 @@ impl ChatView {
                 ConnectionStatus::Failed(_) => Some(style::ERROR),
                 ConnectionStatus::Disconnected => None,
             };
-            let tip: SharedString = format!(
-                "{p}: {}. Click to {} its messages.",
-                status.label(),
-                if shown { "hide" } else { "show" }
-            )
+            let tip: SharedString = match status {
+                ConnectionStatus::Connected | ConnectionStatus::Reconnecting { .. } => format!(
+                    "{p}: {}. Click to {} its messages.",
+                    status.label(),
+                    if shown { "hide" } else { "show" }
+                ),
+                ConnectionStatus::Failed(why) => format!("{why} Click to open Accounts."),
+                _ => format!("{p}: {}. Click to connect.", status.label()),
+            }
             .into();
             div()
                 .id(SharedString::from(format!("filter-{p}")))
@@ -280,6 +306,19 @@ impl ChatView {
             .border_color(rgb(style::BORDER))
             .children(toggles)
             .child(div().flex_1())
+            .child(header_toggle(
+                "accounts",
+                "Accounts",
+                matches!(self.panel, Panel::Accounts),
+                "Connect or disconnect your platform accounts",
+                cx.listener(|view, _, _, cx| {
+                    view.panel = match view.panel {
+                        Panel::Accounts => Panel::None,
+                        _ => Panel::Accounts,
+                    };
+                    cx.notify();
+                }),
+            ))
             .child(header_toggle(
                 "mentions",
                 "@",

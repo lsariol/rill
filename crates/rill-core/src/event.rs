@@ -133,12 +133,16 @@ pub enum Command {
         choices: Vec<String>,
         seconds: u32,
     },
+    /// Start signing in (shows a code or opens the browser).
+    SignIn,
+    /// Forget the stored account and disconnect.
+    SignOut,
 }
 
 impl Command {
-    /// The capability this command needs.
-    pub fn action(&self) -> Action {
-        match self {
+    /// The capability this command needs; none for account commands.
+    pub fn action(&self) -> Option<Action> {
+        Some(match self {
             Command::Send {
                 reply_to: Some(_), ..
             } => Action::Reply,
@@ -148,7 +152,8 @@ impl Command {
             Command::Ban { .. } => Action::Ban,
             Command::Unban { .. } => Action::Unban,
             Command::Poll { .. } => Action::Poll,
-        }
+            Command::SignIn | Command::SignOut => return None,
+        })
     }
 }
 
@@ -157,6 +162,17 @@ impl Command {
 pub struct Request {
     pub id: RequestId,
     pub command: Command,
+}
+
+/// What the user must do to finish signing in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignInPrompt {
+    /// The page to open.
+    pub url: String,
+    /// The code to enter there, for device-code sign-in.
+    pub code: Option<String>,
+    /// When the code stops working, in Unix milliseconds.
+    pub expires_at_ms: i64,
 }
 
 /// How serious a notice is.
@@ -177,6 +193,11 @@ pub enum Event {
         capabilities: Capabilities,
     },
     Message(ChatMessage),
+    /// Signing in needs the user: show this prompt until the status changes.
+    SignIn {
+        platform: Platform,
+        prompt: SignInPrompt,
+    },
     Deleted {
         platform: Platform,
         message_id: String,
