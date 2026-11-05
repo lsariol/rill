@@ -12,9 +12,18 @@ path = "src/main.rs"
 
 [dependencies]
 rill-core.workspace = true
+rill-sim.workspace = true
+rill-os.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 gpui-component.workspace = true
+gpui-kit-assets.workspace = true
+gpui-pre-reqwest-client = "=0.3.9"
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+chrono.workspace = true
 
 [lints]
 workspace = true

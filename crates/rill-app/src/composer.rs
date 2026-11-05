@@ -1,137 +1,294 @@
-//! The chat window spike: sent messages above, the destination-aware composer below.
+//! The composer: destination outline and label, Tab cycling, `/` autocomplete and submitting.
 
 use gpui::{
-    App, AppContext, Context, Entity, InteractiveElement, IntoElement, KeyBinding, ParentElement,
-    Render, SharedString, Styled, Subscription, Window, actions, div, linear_color_stop,
-    linear_gradient, prelude::FluentBuilder, px, rgb,
+    App, Context, InteractiveElement, IntoElement, KeyBinding, ParentElement,
+    StatefulInteractiveElement, Styled, Window, actions, div, linear_color_stop, linear_gradient,
+    prelude::FluentBuilder, px, rgb,
 };
-use gpui_component::input::{InputEvent, Textarea, TextareaState};
-use rill_core::{Destination, Platform};
+use gpui_component::input::{Position, Textarea};
+use rill_core::command::{self, CommandSpec};
+use rill_core::{Destination, Submitted, now_ms};
 
+use crate::chat_view::ChatView;
+use crate::panels::Panel;
 use crate::style;
 
-actions!(composer, [NextDestination, PrevDestination]);
+actions!(
+    composer,
+    [
+        NextDestination,
+        PrevDestination,
+        NextCompletion,
+        PrevCompletion,
+        Dismiss
+    ]
+);
 
 const CONTEXT: &str = "Composer";
+const MAX_COMPLETIONS: usize = 6;
 
-/// Binds Tab and Shift+Tab inside the composer's text box to destination cycling.
+/// Binds the composer's keys inside its text box.
 pub fn init(cx: &mut App) {
     let input = Some("Composer > Input");
     cx.bind_keys([
         KeyBinding::new("tab", NextDestination, input),
         KeyBinding::new("shift-tab", PrevDestination, input),
+        KeyBinding::new("down", NextCompletion, input),
+        KeyBinding::new("up", PrevCompletion, input),
+        KeyBinding::new("escape", Dismiss, input),
     ]);
 }
 
-/// The spike's only window.
-pub struct ChatWindow {
-    input: Entity<TextareaState>,
-    destination: Destination,
-    connected: Vec<Platform>,
-    sent: Vec<(Vec<Platform>, SharedString)>,
-    _subscriptions: Vec<Subscription>,
-}
-
-impl ChatWindow {
-    /// Creates the window with every platform shown as connected.
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .auto_grow(1, 6)
-                .submit_on_enter(true)
-                .placeholder("Send a message")
-        });
-        let subscription = cx.subscribe_in(&input, window, Self::on_input);
-        input.update(cx, |state, cx| state.focus(window, cx));
-        Self {
-            input,
-            destination: Destination::All,
-            connected: Platform::ALL.to_vec(),
-            sent: Vec::new(),
-            _subscriptions: vec![subscription],
+impl ChatView {
+    /// Commands matching the composer text, unless dismissed with Esc.
+    fn completions(&self, cx: &App) -> Vec<&'static CommandSpec> {
+        let text = self.input.read(cx).value();
+        if self.completions_dismissed.as_ref() == Some(&text) {
+            return Vec::new();
         }
+        let mut c = command::completions(&text);
+        c.truncate(MAX_COMPLETIONS);
+        c
     }
 
-    fn on_input(
+    fn selected_completion(&self, cx: &App) -> Option<&'static CommandSpec> {
+        let c = self.completions(cx);
+        c.get(self.completion_ix.min(c.len().saturating_sub(1)))
+            .copied()
+    }
+
+    fn accept_completion(
         &mut self,
-        input: &Entity<TextareaState>,
-        event: &InputEvent,
+        spec: &CommandSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let InputEvent::PressEnter { shift: false, .. } = event else {
-            return;
-        };
-        let text = input.read(cx).value();
-        if text.trim().is_empty() {
-            return;
-        }
-        let targets = self.destination.targets(&self.connected);
-        self.sent.push((targets, text));
-        input.update(cx, |state, cx| state.set_value("", window, cx));
+        let text = format!("/{} ", spec.name);
+        let len = text.len() as u32;
+        self.input.update(cx, |state, cx| {
+            state.set_value(text, window, cx);
+            state.set_cursor_position(Position::new(0, len), window, cx);
+        });
+        self.completion_ix = 0;
         cx.notify();
     }
 
-    fn next_destination(&mut self, _: &NextDestination, _: &mut Window, cx: &mut Context<Self>) {
-        self.destination = self.destination.next(&self.connected);
+    fn next_destination(
+        &mut self,
+        _: &NextDestination,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(spec) = self.selected_completion(cx) {
+            self.accept_completion(spec, window, cx);
+            return;
+        }
+        self.destination = self.destination.next(&self.session.connected());
         cx.notify();
     }
 
     fn prev_destination(&mut self, _: &PrevDestination, _: &mut Window, cx: &mut Context<Self>) {
-        self.destination = self.destination.prev(&self.connected);
+        if !self.completions(cx).is_empty() {
+            self.move_completion(-1, cx);
+            return;
+        }
+        self.destination = self.destination.prev(&self.session.connected());
         cx.notify();
     }
 
-    fn label(&self) -> SharedString {
-        match self.destination {
-            Destination::All => "To: All platforms".into(),
-            Destination::One(p) => format!("To: {p}").into(),
+    fn next_completion(&mut self, _: &NextCompletion, _: &mut Window, cx: &mut Context<Self>) {
+        if self.completions(cx).is_empty() {
+            cx.propagate();
+            return;
+        }
+        self.move_completion(1, cx);
+    }
+
+    fn prev_completion(&mut self, _: &PrevCompletion, _: &mut Window, cx: &mut Context<Self>) {
+        if self.completions(cx).is_empty() {
+            cx.propagate();
+            return;
+        }
+        self.move_completion(-1, cx);
+    }
+
+    fn move_completion(&mut self, by: isize, cx: &mut Context<Self>) {
+        let n = self.completions(cx).len() as isize;
+        if n > 0 {
+            self.completion_ix = (self.completion_ix as isize + by).rem_euclid(n) as usize;
+            cx.notify();
         }
     }
-}
 
-impl Render for ChatWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let messages = div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .justify_end()
-            .gap_1()
-            .p_3()
-            .children(self.sent.iter().map(|(targets, text)| {
-                div()
-                    .flex()
-                    .gap_2()
-                    .children(targets.iter().map(|p| {
-                        div()
-                            .text_xs()
-                            .text_color(style::platform_color(*p))
-                            .child(p.name())
-                    }))
-                    .child(div().text_color(rgb(style::TEXT)).child(text.clone()))
-            }));
+    fn dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.completions(cx).is_empty() {
+            self.completions_dismissed = Some(self.input.read(cx).value());
+        } else if !matches!(self.panel, Panel::None) {
+            self.panel = Panel::None;
+        } else if self.composer_error.is_some() {
+            self.composer_error = None;
+        } else {
+            cx.propagate();
+            return;
+        }
+        cx.notify();
+    }
 
-        let label_color = match self.destination {
-            Destination::All => rgb(style::TEXT),
-            Destination::One(p) => style::platform_color(p),
+    /// Enter: accept a half-typed command, otherwise submit.
+    pub(crate) fn on_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.input.read(cx).value();
+        if let Some(spec) = self.selected_completion(cx)
+            && text.trim() != format!("/{}", spec.name)
+        {
+            self.accept_completion(spec, window, cx);
+            return;
+        }
+        let submitted = self.session.submit(&text, self.destination, now_ms());
+        if self.handle_submitted(submitted, window, cx) {
+            self.input
+                .update(cx, |state, cx| state.set_value("", window, cx));
+        }
+    }
+
+    /// Acts on a submit result. Returns whether the composer text was used up.
+    pub(crate) fn handle_submitted(
+        &mut self,
+        submitted: Submitted,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let used = match submitted {
+            Submitted::Nothing => false,
+            Submitted::Send(out) => {
+                self.dispatch(out);
+                self.jump_to_latest(cx);
+                true
+            }
+            Submitted::Local => true,
+            Submitted::NeedsTarget {
+                plan,
+                prompt,
+                choices,
+            } => {
+                self.panel = Panel::Target {
+                    plan,
+                    prompt,
+                    choices,
+                };
+                true
+            }
+            Submitted::PollDialog(platform) => {
+                self.open_poll(platform, window, cx);
+                true
+            }
+            Submitted::Rejected(why) => {
+                self.composer_error = Some(why.into());
+                false
+            }
         };
+        self.sync_list();
+        cx.notify();
+        used
+    }
 
-        let composer = div()
+    pub(crate) fn render_composer(
+        &mut self,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let connected = self.session.connected();
+        let (label, label_color) = match self.destination {
+            _ if connected.is_empty() => {
+                ("To: nothing connected yet".to_string(), rgb(style::FAINT))
+            }
+            Destination::All => ("To: All platforms".to_string(), rgb(style::TEXT)),
+            Destination::One(p) => (format!("To: {p}"), style::platform_color(p)),
+        };
+        let icons: Vec<_> = self.destination.targets(&connected);
+        let completions = self.completions(cx);
+        let selected = self.completion_ix.min(completions.len().saturating_sub(1));
+        let popup = (!completions.is_empty()).then(|| {
+            div()
+                .flex()
+                .flex_col()
+                .mb_1()
+                .p_1()
+                .rounded_md()
+                .bg(rgb(style::PANEL))
+                .border_1()
+                .border_color(rgb(style::BORDER))
+                .children(completions.iter().enumerate().map(|(i, spec)| {
+                    let spec: &'static CommandSpec = spec;
+                    let kind = match spec.kind {
+                        command::CommandKind::Local => "Rill",
+                        command::CommandKind::Platform(_) => "Platform",
+                    };
+                    div()
+                        .id(spec.name)
+                        .flex()
+                        .gap_2()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .when(i == selected, |d| d.bg(rgb(style::RAISED)))
+                        .hover(|s| s.bg(rgb(style::RAISED)))
+                        .child(div().flex_none().child(spec.usage))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(rgb(style::MUTED))
+                                .child(spec.summary),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_xs()
+                                .text_color(rgb(style::FAINT))
+                                .child(kind),
+                        )
+                        .on_click(cx.listener(move |view, _, window, cx| {
+                            view.accept_completion(spec, window, cx);
+                        }))
+                }))
+        });
+
+        div()
             .key_context(CONTEXT)
             .on_action(cx.listener(Self::next_destination))
             .on_action(cx.listener(Self::prev_destination))
+            .on_action(cx.listener(Self::next_completion))
+            .on_action(cx.listener(Self::prev_completion))
+            .on_action(cx.listener(Self::dismiss))
             .flex()
             .flex_col()
             .gap_1()
-            .p_3()
+            .px_3()
+            .pb_3()
+            .pt_1()
+            .children(popup)
             .child(
                 div()
                     .flex()
+                    .items_center()
                     .justify_between()
                     .text_xs()
-                    .child(div().text_color(label_color).child(self.label()))
-                    .child(div().text_color(rgb(style::MUTED)).child("Tab to switch")),
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_color(label_color)
+                            .child(label)
+                            .children(icons.into_iter().map(|p| style::platform_icon(p, 12.))),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(style::FAINT))
+                            .child("Tab switches · / for commands"),
+                    ),
             )
             .child(
                 outline(self.destination).child(
@@ -141,15 +298,10 @@ impl Render for ChatWindow {
                             .aria_label("Message"),
                     ),
                 ),
-            );
-
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(rgb(style::BACKGROUND))
-            .child(messages)
-            .child(composer)
+            )
+            .when_some(self.composer_error.clone(), |d, why| {
+                d.child(div().text_xs().text_color(rgb(style::ERROR)).child(why))
+            })
     }
 }
 
