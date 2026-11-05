@@ -1,0 +1,17 @@
+[package]
+name = "rill-sim"
+description = "Simulated chat traffic for Rill: an adapter for prototyping and benchmarks."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rill-core.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync", "test-util"] }
+
+[lints]
+workspace = true
