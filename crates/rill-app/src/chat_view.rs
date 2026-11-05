@@ -192,6 +192,24 @@ impl ChatView {
     }
 
     /// Jumps to the newest message and follows again.
+    /// Whether the feed is following new messages.
+    pub(crate) fn is_following(&self) -> bool {
+        self.following
+    }
+
+    /// Scrolls the feed by whole viewports (negative is up).
+    pub(crate) fn scroll_feed_pages(&mut self, pages: f32, cx: &mut Context<Self>) {
+        let height = self.list.viewport_bounds().size.height;
+        let mut distance = height * (pages * 0.9);
+        // While following, the list's offset is the end of the content, a full viewport below its top.
+        if self.following && pages < 0. {
+            distance -= height;
+        }
+        self.list.scroll_by(distance);
+        self.following = self.list.is_following_tail();
+        cx.notify();
+    }
+
     pub(crate) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
         self.list.set_follow_mode(gpui::FollowMode::Tail);
         self.following = true;

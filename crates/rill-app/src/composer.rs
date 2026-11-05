@@ -20,7 +20,9 @@ actions!(
         PrevDestination,
         NextCompletion,
         PrevCompletion,
-        Dismiss
+        Dismiss,
+        PageUp,
+        PageDown
     ]
 );
 
@@ -36,6 +38,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("down", NextCompletion, input),
         KeyBinding::new("up", PrevCompletion, input),
         KeyBinding::new("escape", Dismiss, input),
+        KeyBinding::new("pageup", PageUp, input),
+        KeyBinding::new("pagedown", PageDown, input),
     ]);
 }
 
@@ -125,6 +129,9 @@ impl ChatView {
             self.completions_dismissed = Some(self.input.read(cx).value());
         } else if !matches!(self.panel, Panel::None) {
             self.panel = Panel::None;
+        } else if !self.is_following() {
+            self.jump_to_latest(cx);
+            return;
         } else if self.composer_error.is_some() {
             self.composer_error = None;
         } else {
@@ -132,6 +139,14 @@ impl ChatView {
             return;
         }
         cx.notify();
+    }
+
+    fn page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
+        self.scroll_feed_pages(-1.0, cx);
+    }
+
+    fn page_down(&mut self, _: &PageDown, _: &mut Window, cx: &mut Context<Self>) {
+        self.scroll_feed_pages(1.0, cx);
     }
 
     /// Enter: accept a half-typed command, otherwise submit.
@@ -262,6 +277,8 @@ impl ChatView {
             .on_action(cx.listener(Self::next_completion))
             .on_action(cx.listener(Self::prev_completion))
             .on_action(cx.listener(Self::dismiss))
+            .on_action(cx.listener(Self::page_up))
+            .on_action(cx.listener(Self::page_down))
             .flex()
             .flex_col()
             .gap_1()
@@ -287,7 +304,7 @@ impl ChatView {
                     .child(
                         div()
                             .text_color(rgb(style::FAINT))
-                            .child("Tab switches · / for commands"),
+                            .child("Tab switches · / commands · PgUp scrolls"),
                     ),
             )
             .child(
