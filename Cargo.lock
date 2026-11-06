@@ -5532,6 +5532,7 @@ name = "rill-app"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "embed-resource",
  "futures",
  "gpui-base",
  "gpui-component",
