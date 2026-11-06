@@ -50,7 +50,8 @@ folder; the benchmark scripts use `.dev\bench\data`.
   Twitch, and the three services' global emotes everywhere.
 - **Header:** click a platform icon to hide or show its messages (or to connect it), `@` for
   mentions only, `≡` for compact mode. Narrow windows go compact by themselves.
-- **Accounts:** connect and disconnect platforms.
+- **Accounts:** connect and disconnect platforms. Connect opens the platform's sign-in page in the
+  default browser; Copy link is there for signing in with another browser.
 - **Search:** Ctrl+F (Cmd+F on macOS) shows only the messages whose text or author name contains
   what you type, with a count of matches. Esc closes it.
 - **Scrolling:** scroll up (or press PgUp) to pause the feed; a scrollbar appears for dragging
@@ -62,8 +63,8 @@ folder; the benchmark scripts use `.dev\bench\data`.
 
 ## Platform setup
 
-Rill needs an app registration on each platform. Until release builds carry them, put them in
-`settings.json` (in `.dev/` for debug runs):
+Twitch, YouTube and Kick each need an app registration. Until release builds carry them, put them
+in `settings.json` (in `.dev/` for debug runs):
 
 ```json
 {
