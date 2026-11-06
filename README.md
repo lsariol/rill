@@ -35,6 +35,10 @@ go to Windows Credential Manager under `rill-dev`. Release builds use `%LOCALAPP
 - **Header:** click a platform icon to hide or show its messages (or to connect it), `@` for
   mentions only, `≡` for compact mode. Narrow windows go compact by themselves.
 - **Accounts:** connect and disconnect platforms.
+- **Search:** Ctrl+F (Cmd+F on macOS) shows only the messages whose text or author name contains
+  what you type, with a count of matches. Esc closes it.
+- **Scrolling:** scroll up (or press PgUp) to pause the feed; a scrollbar appears for dragging
+  back through older messages, and a button jumps back to live chat.
 - **Keyboard:** F6 moves between the composer and the buttons; Tab and Shift+Tab move between
   buttons, and Enter or Space presses one. In the composer, press Esc (with nothing to close),
   then Tab, to leave it. Esc anywhere else returns to the composer.

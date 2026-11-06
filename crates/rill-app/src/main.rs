@@ -8,6 +8,7 @@ mod focus;
 mod image_cache;
 mod panels;
 mod row;
+mod search;
 mod style;
 
 use std::process::ExitCode;
@@ -199,6 +200,7 @@ fn main() -> ExitCode {
         Theme::change(ThemeMode::Dark, None, cx);
         composer::init(cx);
         focus::init(cx);
+        search::init(cx);
 
         let bounds = Bounds::centered(None, size(px(440.), px(720.)), cx);
         let window_options = WindowOptions {

@@ -62,6 +62,8 @@ pub struct Notice {
 pub struct Filter {
     pub hidden: BTreeSet<Platform>,
     pub mentions_only: bool,
+    /// Only messages containing this (or written by a matching name). Lowercase; see [`Filter::search_for`].
+    pub search: Option<String>,
 }
 
 impl Filter {
@@ -84,7 +86,27 @@ impl Filter {
                     ..
                 })
             );
-        platform_ok && mention_ok
+        platform_ok && mention_ok && self.found(entry)
+    }
+
+    /// Sets the search text: case-insensitive, and empty means no search.
+    pub fn search_for(&mut self, text: &str) {
+        let q = text.trim().to_lowercase();
+        self.search = (!q.is_empty()).then_some(q);
+    }
+
+    fn found(&self, entry: &Entry) -> bool {
+        let Some(q) = &self.search else {
+            return true;
+        };
+        let has = |s: &str| s.to_lowercase().contains(q.as_str());
+        match &entry.item {
+            Item::Chat(m) => {
+                has(&m.plain_text()) || has(&m.author.display_name) || has(&m.author.login)
+            }
+            Item::Sent(s) => has(&s.text),
+            Item::Notice(_) => false,
+        }
     }
 }
 
@@ -418,6 +440,33 @@ mod tests {
             ..Filter::default()
         });
         assert_eq!(f.visible_len(), 2);
+    }
+
+    #[test]
+    fn search_matches_text_and_names_ignoring_case() {
+        let mut f = Feed::new(10);
+        f.push(chat(Platform::Twitch, "1", "alice", "Buy FOLLOWERS now"), 0);
+        f.push(chat(Platform::Kick, "2", "bob", "nice stream"), 0);
+        f.push(chat(Platform::YouTube, "3", "FollowerBot", "hi"), 0);
+        f.push(
+            Item::Notice(Notice {
+                platform: None,
+                level: Level::Info,
+                text: "followers".into(),
+            }),
+            0,
+        );
+        let mut filter = Filter::default();
+        filter.search_for("  followers ");
+        f.set_filter(filter.clone());
+        assert_eq!(f.visible_len(), 1);
+        filter.search_for("follower");
+        f.set_filter(filter.clone());
+        assert_eq!(f.visible_len(), 2, "text and the author's name");
+        filter.search_for("");
+        assert_eq!(filter.search, None);
+        f.set_filter(filter);
+        assert_eq!(f.visible_len(), 4);
     }
 
     #[test]

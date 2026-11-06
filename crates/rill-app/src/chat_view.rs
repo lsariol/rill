@@ -51,6 +51,8 @@ pub struct ChatView {
     /// Set by Esc in the composer: the next Tab leaves it instead of switching the destination.
     pub(crate) tab_leaves: bool,
     pub(crate) panel: Panel,
+    /// The Ctrl+F bar, while open.
+    pub(crate) search: Option<crate::search::Search>,
     /// The Kick channel name box in Accounts.
     pub(crate) kick_channel: Entity<gpui_component::input::InputState>,
     pub(crate) compact: bool,
@@ -117,6 +119,7 @@ impl ChatView {
             composer_error: None,
             tab_leaves: false,
             panel: Panel::None,
+            search: None,
             kick_channel: cx.new(|cx| {
                 gpui_component::input::InputState::new(window, cx).placeholder("Kick channel name")
             }),
@@ -255,7 +258,7 @@ impl ChatView {
         self.set_filter(filter, cx);
     }
 
-    fn set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
+    pub(crate) fn set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
         self.session.feed.set_filter(filter);
         self.sync_list();
         self.jump_to_latest(cx);
@@ -430,8 +433,10 @@ impl ChatView {
                 )
                 .size_full(),
             )
-            // Always shown, so older messages are one drag away.
-            .child(Scrollbar::vertical(&self.list).mode(ScrollbarMode::Always))
+            // Out of the way while following live chat; once scrolled up, older messages are a drag away.
+            .when(!self.following, |d| {
+                d.child(Scrollbar::vertical(&self.list).mode(ScrollbarMode::Always))
+            })
             .children(jump)
     }
 }
@@ -503,6 +508,7 @@ impl Render for ChatView {
             .on_action(cx.listener(Self::on_focus_prev))
             .on_action(cx.listener(Self::on_switch_region))
             .on_action(cx.listener(Self::on_to_composer))
+            .on_action(cx.listener(Self::on_find))
             .size_full()
             .flex()
             .flex_col()
@@ -510,6 +516,7 @@ impl Render for ChatView {
             .text_color(rgb(style::TEXT))
             .text_sm()
             .child(self.render_header(cx))
+            .children(self.render_search(cx))
             .child(self.render_feed(cx))
             .child(self.render_panel(window, cx))
             .child(self.render_composer(window, cx))

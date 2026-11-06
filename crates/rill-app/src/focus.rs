@@ -95,14 +95,17 @@ impl ChatView {
         }
     }
 
-    /// Esc: back to the composer, or, already there with nothing to close, lets Tab leave it.
+    /// Esc: closes the search bar when in it; else back to the composer, or, already there with
+    /// nothing to close, lets Tab leave it.
     pub(crate) fn on_to_composer(
         &mut self,
         _: &ToComposer,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.composer_focused(window, cx) {
+        if self.search_focused(window, cx) {
+            self.close_search(window, cx);
+        } else if self.composer_focused(window, cx) {
             self.tab_leaves = !self.tab_leaves;
             cx.notify();
         } else {
