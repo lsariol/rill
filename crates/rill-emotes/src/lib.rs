@@ -5,11 +5,12 @@ mod live;
 pub mod seven_tv;
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use rill_core::backoff::Backoff;
 use rill_core::{ChatMessage, Enrich, Fragment, replace_words};
+use tokio::sync::OnceCell;
 use tokio::task::JoinHandle;
 
 pub use seven_tv::Config;
@@ -41,7 +42,8 @@ pub type EmoteSet = HashMap<String, Emote>;
 
 #[derive(Default)]
 struct Sets {
-    global: EmoteSet,
+    /// Shared by every chat, so it's downloaded once.
+    global: Arc<EmoteSet>,
     channel: EmoteSet,
 }
 
@@ -72,7 +74,7 @@ impl Emotes {
         self.sets.write().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub(crate) fn set_global(&self, set: EmoteSet) {
+    pub(crate) fn set_global(&self, set: Arc<EmoteSet>) {
         self.write().global = set;
     }
 
@@ -143,11 +145,18 @@ pub fn follow(http: reqwest::Client, cfg: Config, channel: Option<Channel>) -> F
 async fn run(http: reqwest::Client, cfg: Config, channel: Option<Channel>, emotes: Arc<Emotes>) {
     let global = async {
         let mut backoff = Backoff::new(Duration::from_secs(5), Duration::from_secs(600));
+        let cell = global_cell(&cfg);
         loop {
-            match seven_tv::global(&http, &cfg).await {
-                Ok(set) => {
+            let loaded = cell
+                .get_or_try_init(|| async {
+                    let set = seven_tv::global(&http, &cfg).await?;
                     tracing::debug!(count = set.len(), "7TV global emotes loaded");
-                    emotes.set_global(set);
+                    Ok::<_, String>(Arc::new(set))
+                })
+                .await;
+            match loaded {
+                Ok(set) => {
+                    emotes.set_global(set.clone());
                     return;
                 }
                 Err(e) => {
@@ -163,6 +172,18 @@ async fn run(http: reqwest::Client, cfg: Config, channel: Option<Channel>, emote
         }
     };
     tokio::join!(global, channel);
+}
+
+/// The global set for one 7TV address, loaded once per run and shared by every chat.
+fn global_cell(cfg: &Config) -> Arc<OnceCell<Arc<EmoteSet>>> {
+    static CELLS: Mutex<Vec<(String, Arc<OnceCell<Arc<EmoteSet>>>)>> = Mutex::new(Vec::new());
+    let mut cells = CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, cell)) = cells.iter().find(|(api, _)| *api == cfg.api) {
+        return cell.clone();
+    }
+    let cell = Arc::new(OnceCell::new());
+    cells.push((cfg.api.clone(), cell.clone()));
+    cell
 }
 
 /// Loads the channel's set, then follows its changes; after a lost connection, loads it again.
@@ -244,10 +265,10 @@ mod tests {
     #[test]
     fn channel_emotes_win_over_global_ones() {
         let e = Emotes::default();
-        e.set_global(HashMap::from([
+        e.set_global(Arc::new(HashMap::from([
             ("EZ".into(), emote("EZ", "G1")),
             ("Clap".into(), emote("Clap", "G2")),
-        ]));
+        ])));
         e.set_channel(HashMap::from([("EZ".into(), emote("EZ", "C1"))]));
         let mut m = message("EZ Clap ez");
         e.enrich(&mut m);
