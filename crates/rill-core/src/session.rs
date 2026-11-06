@@ -348,6 +348,18 @@ impl Session {
             .into_iter()
             .filter(|p| self.can(*p, Action::Send))
             .collect();
+        // Refuse before anything is sent, rather than reaching some platforms and not others.
+        let chars = text.chars().count();
+        if let Some((p, max)) = targets
+            .iter()
+            .filter_map(|p| p.max_message_chars().map(|max| (*p, max)))
+            .filter(|(_, max)| chars > *max)
+            .min_by_key(|(_, max)| *max)
+        {
+            return Submitted::Rejected(format!(
+                "{p} takes messages of up to {max} characters; this one has {chars}. Shorten it, or press Tab to send it elsewhere."
+            ));
+        }
         if targets.is_empty() {
             return Submitted::Rejected(match destination {
                 Destination::One(p) if !connected.contains(&p) => {
@@ -786,6 +798,22 @@ mod tests {
         // Someone else saying the same thing is shown.
         s.apply(msg(Platform::Twitch, "t10", "other", "hi there"), 0);
         assert_eq!(s.feed.len(), 2);
+    }
+
+    #[test]
+    fn a_message_too_long_for_one_target_is_refused_before_sending() {
+        let mut s = Session::new(10);
+        connect(&mut s, Platform::Twitch, ALL_CAPS);
+        connect(&mut s, Platform::YouTube, ALL_CAPS);
+        let long = "x".repeat(250);
+        assert!(matches!(
+            s.submit(&long, Destination::All, 0),
+            Submitted::Rejected(why) if why.starts_with("YouTube takes messages of up to 200")
+        ));
+        assert!(matches!(
+            s.submit(&long, Destination::One(Platform::Twitch), 0),
+            Submitted::Send(out) if out.len() == 1
+        ));
     }
 
     #[test]

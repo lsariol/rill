@@ -31,6 +31,17 @@ impl Platform {
     }
 }
 
+impl Platform {
+    /// The longest chat message the platform takes, in characters.
+    pub fn max_message_chars(self) -> Option<usize> {
+        match self {
+            Platform::Twitch | Platform::Kick => Some(500),
+            Platform::YouTube => Some(200),
+            Platform::Rumble => None,
+        }
+    }
+}
+
 impl fmt::Display for Platform {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())

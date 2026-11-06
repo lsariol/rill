@@ -246,6 +246,20 @@ impl ChatView {
             Destination::One(p) => (format!("To: {p}"), style::platform_color(p)),
         };
         let icons: Vec<_> = self.destination.targets(&connected);
+        // A count once a message nears the strictest target's limit.
+        let limit = icons.iter().filter_map(|p| p.max_message_chars()).min();
+        let typed = self.input.read(cx).value().chars().count();
+        let count = limit
+            .filter(|max| typed * 5 >= max * 4 && !self.input.read(cx).value().starts_with('/'))
+            .map(|max| {
+                div()
+                    .text_color(rgb(if typed > max {
+                        style::ERROR
+                    } else {
+                        style::WARN
+                    }))
+                    .child(format!("{typed}/{max}"))
+            });
         let completions = self.completions(cx);
         let selected = self.completion_ix.min(completions.len().saturating_sub(1));
         let popup = (!completions.is_empty()).then(|| {
@@ -329,12 +343,19 @@ impl ChatView {
                     )
                     .child(
                         div()
-                            .text_color(rgb(style::FAINT))
-                            .child(if self.tab_leaves {
-                                "Tab leaves the composer · Esc stays"
-                            } else {
-                                "Tab switches · / commands · PgUp scrolls"
-                            }),
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_color(rgb(style::FAINT))
+                                    .child(if self.tab_leaves {
+                                        "Tab leaves the composer · Esc stays"
+                                    } else {
+                                        "Tab switches · / commands · PgUp scrolls"
+                                    }),
+                            )
+                            .children(count),
                     ),
             )
             .child(

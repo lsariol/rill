@@ -24,7 +24,8 @@ go to Windows Credential Manager under `rill-dev`. Release builds use `%LOCALAPP
 
 - **Composer:** Enter sends, Shift+Enter starts a new line. Tab and Shift+Tab switch the
   destination: all platforms (rainbow outline) or one platform (its color); the label above says
-  which.
+  which. Near the shortest limit among the destinations (200 characters on YouTube, 500 on Twitch
+  and Kick) a count appears, and a message that's too long isn't sent anywhere.
 - **Commands:** type `/` for the list, or `/help`. Moderation: `/ban`, `/timeout`, `/unban`, and
   `/purge <user>` to clear someone's messages with a one-second timeout. Twitch chat modes:
   `/slow [3s-2m|off]`, `/followers [10m|off]`, `/subscribers`, `/emoteonly` and `/uniquechat`
