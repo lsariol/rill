@@ -32,6 +32,8 @@ pub enum Item {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SentMessage {
     pub text: String,
+    /// The text with emotes picked out, from the emote lists, then from a platform's echo.
+    pub fragments: Vec<Fragment>,
     pub deliveries: Vec<Delivery>,
 }
 
