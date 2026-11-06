@@ -94,7 +94,21 @@ folder; the benchmark scripts use `.dev\bench\data`.
   doesn't appear in the chat, the header or Accounts; its sign-in is kept for when you turn it
   back on. The choice is saved in `settings.json` as `disabled_platforms`. **Show deleted
   messages** keeps the text of deleted messages, faded and struck through, instead of "message
-  deleted" (`show_deleted_messages`).
+  deleted" (`show_deleted_messages`). **Message history** sets how many chat lines Rill keeps
+  for scrolling back, searching and user cards (`message_history`):
+
+  | Lines | Rill's memory with it full | |
+  |---|---|---|
+  | 1,000 | about 100 MB | lightest |
+  | 5,000 | about 110 MB | recommended, the default |
+  | 20,000 | about 140 MB | long streams |
+  | 50,000 | about 190 MB | big events |
+  | 100,000 | about 280 MB | most |
+
+  Each 1,000 lines takes about 2 MB (measured with simulated chat; long messages take a little
+  more). Only what's on screen is drawn, so more history doesn't slow chat down, though a search
+  goes through all of it. Settings also says how long each choice lasts at the current pace of
+  chat. `--history <n>` overrides the setting for one run.
 - **Search:** Ctrl+F (Cmd+F on macOS) shows only the messages whose text or author name contains
   what you type, with a count of matches. Esc closes it.
 - **Scrolling:** scroll up (or press PgUp) to pause the feed; a scrollbar appears for dragging

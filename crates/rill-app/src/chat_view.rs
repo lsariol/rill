@@ -27,7 +27,15 @@ use crate::platforms::Platforms;
 use crate::style;
 
 /// Feed entries kept in memory.
-pub const FEED_CAPACITY: usize = 5_000;
+/// The history choices in Settings: chat lines, a short note, and Rill's memory use with that
+/// history full (measured under simulated chat, so long messages use somewhat more).
+pub const HISTORY_CHOICES: [(usize, &str, u32); 5] = [
+    (1_000, "Lightest", 100),
+    (5_000, "Recommended", 110),
+    (20_000, "Long streams", 140),
+    (50_000, "Big events", 190),
+    (100_000, "Most", 280),
+];
 /// Emote and badge images kept loaded.
 const IMAGE_LIMIT: usize = 512;
 /// Below this width the feed switches to compact mode by itself.
@@ -110,6 +118,7 @@ impl ChatView {
         platforms: Platforms,
         events: mpsc::Receiver<Event>,
         startup_errors: Vec<String>,
+        history: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -147,7 +156,11 @@ impl ChatView {
 
         let pump = cx.spawn(async move |this, cx| pump_events(this, events, cx).await);
 
-        let mut session = Session::new(FEED_CAPACITY);
+        let history = history
+            .or(saved.as_ref().map(|s| s.message_history))
+            .unwrap_or(rill_core::feed::DEFAULT_CAPACITY)
+            .clamp(100, 1_000_000);
+        let mut session = Session::new(history);
         for e in startup_errors {
             session.notice(None, rill_core::Level::Error, &e, now_ms());
         }
@@ -328,6 +341,37 @@ impl ChatView {
             filter.hidden.insert(p);
         }
         self.set_filter(filter, cx);
+    }
+
+    /// Keeps this many chat lines from now on, and saves the choice. A smaller number drops the
+    /// oldest lines at once.
+    pub(crate) fn set_history(&mut self, lines: usize, cx: &mut Context<Self>) {
+        self.session.feed.set_capacity(lines);
+        if self.platforms.saves()
+            && let Err(e) = rill_os::settings::update(|s| s.message_history = lines)
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+        }
+        self.sync_list();
+        cx.notify();
+    }
+
+    /// Chat lines arriving per minute, over the last five minutes (or since the first line).
+    pub(crate) fn lines_per_minute(&self) -> Option<f64> {
+        let now = now_ms();
+        let since = now - 5 * 60_000;
+        let mut count = 0usize;
+        let mut first = now;
+        for e in self.session.feed.entries().rev() {
+            if e.received_ms < since {
+                break;
+            }
+            count += 1;
+            first = e.received_ms;
+        }
+        let minutes = ((now - first) as f64 / 60_000.).max(0.5);
+        (count >= 10).then(|| count as f64 / minutes)
     }
 
     /// Turns link previews on or off, and saves the choice.

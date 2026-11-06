@@ -6,7 +6,7 @@ Rill's first release, in progress.
 
 ### Added
 - One chronological chat feed for Twitch, YouTube, Kick and Rumble. Each message shows its platform's icon, the time, badges, the name in the user's color, and emote images. Mentions of you are highlighted in red, whichever platform's name they use.
-- The feed keeps the newest 5,000 lines and only draws what's on screen. Scrolling up pauses the feed and shows a scrollbar for dragging back through older messages, with a "new messages" button to jump back.
+- The feed keeps the newest 5,000 lines by default (Settings offers 1,000 to 100,000, with the memory each takes and how long it lasts at the current pace of chat) and only draws what's on screen. Scrolling up pauses the feed and shows a scrollbar for dragging back through older messages, with a "new messages" button to jump back.
 - Header filters: hide or show each platform, show only mentions, and a compact mode that also turns on by itself in narrow windows.
 - Connection dots on the header's platform icons: green working, a green ring while YouTube waits for you to go live, pulsing yellow while connecting, yellow when a platform works but needs something (a Twitch sign-in from an older Rill, Kick read without signing in), red when it isn't working and grey when it isn't signed in. The tooltip gives the reasons, and clicking a dot that needs fixing opens Accounts.
 - The composer's outline shows where a message goes: a rainbow for every platform, or the platform's own color, with a text label. Tab and Shift+Tab switch the destination without losing what's typed. Enter sends; Shift+Enter starts a new line.
