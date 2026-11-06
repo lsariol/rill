@@ -470,7 +470,7 @@ mod tests {
         let (mut rx, tx, task) = start(&base);
         let seen = until(
             &mut rx,
-            |e| matches!(e, Event::Message(m) if m.plain_text().starts_with("Rant $20.00")),
+            |e| matches!(e, Event::Message(m) if m.plain_text().starts_with("sent a $20.00 Rant")),
         )
         .await;
         let texts: Vec<String> = seen
@@ -481,7 +481,7 @@ mod tests {
             })
             .collect();
         // What was in chat at connect isn't replayed; the new message and Rant appear once.
-        assert_eq!(texts, ["just got here", "Rant $20.00: hi"]);
+        assert_eq!(texts, ["just got here", "sent a $20.00 Rant: hi"]);
         assert!(seen.iter().any(|e| matches!(
             e,
             Event::Status { status: ConnectionStatus::Connected, account: Some(a), .. } if a.display_name == "Some Streamer"

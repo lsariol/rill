@@ -1007,7 +1007,7 @@ mod sessions {
         assert!(matches!(end, Ws::Lost(_)));
         assert_eq!(
             subscriptions(&seen).len(),
-            4,
+            eventsub::SUBSCRIPTIONS.len(),
             "a moved session keeps its subscriptions"
         );
         let sent: Vec<Value> = seen

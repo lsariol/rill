@@ -12,11 +12,12 @@ use crate::helix::Badges;
 pub const URL: &str = "wss://eventsub.wss.twitch.tv/ws";
 
 /// The chat events Rill subscribes to.
-pub const SUBSCRIPTIONS: [&str; 4] = [
+pub const SUBSCRIPTIONS: [&str; 5] = [
     "channel.chat.message",
     "channel.chat.message_delete",
     "channel.chat.clear_user_messages",
     "channel.chat.clear",
+    "channel.chat.notification",
 ];
 
 /// A decoded WebSocket message.
@@ -111,8 +112,41 @@ pub fn to_event(kind: &str, timestamp: &str, event: &Value, badges: &Badges) -> 
             user_id: s(&event["target_user_id"]),
         }),
         "channel.chat.clear" => Some(Event::Cleared { platform }),
+        "channel.chat.notification" => notification(timestamp, event, badges).map(Event::Message),
         _ => None,
     }
+}
+
+/// Subs, resubs, gifts, raids, announcements and the like: the system line, then any message.
+fn notification(timestamp: &str, e: &Value, badges: &Badges) -> Option<ChatMessage> {
+    let mut m = chat_message(timestamp, e, badges);
+    let system = e["system_message"].as_str().unwrap_or_default().trim();
+    // The system line starts with the user's name, which the row already shows.
+    let lead = [&m.author.display_name, &m.author.login]
+        .into_iter()
+        .filter(|n| !n.is_empty())
+        .find_map(|n| {
+            system
+                .get(..n.len())
+                .filter(|start| start.eq_ignore_ascii_case(n))
+                .map(|_| system[n.len()..].trim_start())
+        })
+        .unwrap_or(system);
+    let lead = match e["notice_type"].as_str() {
+        Some("announcement") if lead.is_empty() => "announced:",
+        _ => lead,
+    };
+    let mut fragments = Vec::new();
+    if !lead.is_empty() {
+        fragments.push(Fragment::Text(lead.to_string()));
+        if !m.fragments.is_empty() {
+            fragments.push(Fragment::Text(" ".into()));
+        }
+    }
+    fragments.append(&mut m.fragments);
+    m.fragments = merge_text(fragments);
+    m.kind = MessageKind::Event;
+    (!m.plain_text().trim().is_empty()).then_some(m)
 }
 
 /// The Twitch CDN image for an emote: animated when available, dark theme, 2x.
@@ -216,8 +250,60 @@ fn strip_action(fragments: &mut [Fragment]) -> MessageKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const MESSAGE: &str = include_str!("../tests/fixtures/chat_message.json");
+
+    #[test]
+    fn notifications_read_as_one_line() {
+        let sub = json!({
+            "chatter_user_id": "9", "chatter_user_login": "bob", "chatter_user_name": "Bob",
+            "badges": [], "notice_type": "resub", "message_id": "n1",
+            "system_message": "Bob subscribed at Tier 1. They've subscribed for 5 months!",
+            "message": {"text": "love it", "fragments": [{"type": "text", "text": "love it"}]}
+        });
+        let Some(Event::Message(m)) =
+            to_event("channel.chat.notification", "", &sub, &Badges::new())
+        else {
+            panic!("expected a message");
+        };
+        assert_eq!(m.kind, MessageKind::Event);
+        assert_eq!(
+            m.plain_text(),
+            "subscribed at Tier 1. They've subscribed for 5 months! love it"
+        );
+        let raid = json!({
+            "chatter_user_id": "8", "chatter_user_login": "raider", "chatter_user_name": "Raider",
+            "notice_type": "raid", "system_message": "42 raiders from Raider have joined!",
+            "message": {"text": "", "fragments": []}
+        });
+        let Some(Event::Message(m)) =
+            to_event("channel.chat.notification", "", &raid, &Badges::new())
+        else {
+            panic!("expected a message");
+        };
+        assert_eq!(m.plain_text(), "42 raiders from Raider have joined!");
+        let announcement = json!({
+            "chatter_user_id": "1", "chatter_user_login": "mod", "chatter_user_name": "Mod",
+            "notice_type": "announcement", "system_message": "",
+            "message": {"text": "Giveaway at 9", "fragments": [{"type": "text", "text": "Giveaway at 9"}]}
+        });
+        let Some(Event::Message(m)) = to_event(
+            "channel.chat.notification",
+            "",
+            &announcement,
+            &Badges::new(),
+        ) else {
+            panic!("expected a message");
+        };
+        assert_eq!(m.plain_text(), "announced: Giveaway at 9");
+        let empty =
+            json!({"chatter_user_name": "X", "system_message": "", "message": {"text": ""}});
+        assert_eq!(
+            to_event("channel.chat.notification", "", &empty, &Badges::new()),
+            None
+        );
+    }
 
     #[test]
     fn parses_welcome_and_keepalive() {

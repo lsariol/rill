@@ -53,7 +53,7 @@ impl Said {
         let (kind, fragments) = match self.rant_cents {
             Some(cents) => {
                 let mut f = vec![Fragment::Text(format!(
-                    "Rant ${}.{:02}: ",
+                    "sent a ${}.{:02} Rant: ",
                     cents / 100,
                     cents % 100
                 ))];
@@ -209,7 +209,7 @@ mod tests {
         assert!(live.messages[3].to_message().author.roles.subscriber);
         let rant = live.messages[2].to_message();
         assert_eq!(rant.kind, MessageKind::Event);
-        assert_eq!(rant.plain_text(), "Rant $5.00: great stream");
+        assert_eq!(rant.plain_text(), "sent a $5.00 Rant: great stream");
     }
 
     #[test]

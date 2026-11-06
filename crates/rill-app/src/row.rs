@@ -193,7 +193,9 @@ fn chat_body(m: &ChatMessage, deleted: bool) -> AnyElement {
             .with_highlights(highlights)
             .into_any_element();
     }
-    let sep = if action { "" } else { ":" };
+    // Actions and platform events read as one sentence: "Bob subscribed", not "Bob: subscribed".
+    let sentence = action || m.kind == MessageKind::Event;
+    let sep = if sentence { "" } else { ":" };
     let mut words: Vec<AnyElement> = vec![
         div()
             .font_weight(FontWeight::BOLD)
@@ -315,7 +317,8 @@ fn styled_message(
 ) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
     let mut text = m.author.display_name.clone();
     let mut highlights = vec![(0..text.len(), bold(name_color))];
-    text.push_str(if action { " " } else { ": " });
+    let sentence = action || m.kind == MessageKind::Event;
+    text.push_str(if sentence { " " } else { ": " });
     let body_start = text.len();
     for f in &m.fragments {
         let start = text.len();
