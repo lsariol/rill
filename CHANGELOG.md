@@ -40,4 +40,5 @@ Rill's first release, in progress.
 - Ctrl+F (Cmd+F on macOS) searches the feed: only messages whose text or author matches stay visible, with a count. Esc closes the search.
 - Keyboard use: F6 moves between the composer and the messages; arrow keys pick a message and Enter opens its user card; Tab and Shift+Tab move between buttons; Esc closes a card and returns to the composer, and Esc then Tab leaves the composer.
 - Rill reopens at the size and place it was closed (kept in `window.json` beside `settings.json`), unless that spot is no longer on a screen.
+- An app icon (a chat bubble with three streams in the platforms' colors) for the window, the taskbar and Explorer.
 - `--sim` shows simulated chat, with options for rate, bursts, emotes, failures and dropped connections.

@@ -32,5 +32,8 @@ tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 chrono.workspace = true
 
+[build-dependencies]
+embed-resource = "3.0.12"
+
 [lints]
 workspace = true

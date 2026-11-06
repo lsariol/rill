@@ -1,0 +1,2 @@
+// Windows resources: the app icon, which GPUI loads as resource 1 for windows and the taskbar.
+1 ICON "rill.ico"
