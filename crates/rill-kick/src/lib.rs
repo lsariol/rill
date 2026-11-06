@@ -18,7 +18,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::pusher::{Frame, SubBadges};
 
 /// Prefix of errors where Kick's socket refused Rill outright; retrying won't help.
-const REFUSED: &str = "Kick: the chat socket refused Rill; Kick may have changed it. Reading Kick chat needs a Rill update.";
+const REFUSED: &str = "Kick: Kick's chat refused Rill; Kick may have changed it. Reading Kick chat needs a Rill update.";
 const READ_ONLY: &str =
     "Kick is read-only in this version of Rill: send and moderate from kick.com for now.";
 
@@ -58,6 +58,7 @@ impl Adapter for KickAdapter {
 /// What the channel page tells us.
 struct Channel {
     slug: String,
+    id: u64,
     chatroom_id: u64,
     sub_badges: SubBadges,
 }
@@ -70,6 +71,8 @@ enum Interrupt {
 }
 
 struct Ctx {
+    /// A random ID for this run, like an anonymous viewer's.
+    client_id: String,
     events: EventSink,
     requests: mpsc::Receiver<Request>,
     http: reqwest::Client,
@@ -92,6 +95,7 @@ async fn run(adapter: KickAdapter, io: AdapterIo) {
         }
     };
     let mut ctx = Ctx {
+        client_id: random_client_id(),
         events,
         requests,
         http,
@@ -116,6 +120,20 @@ async fn run(adapter: KickAdapter, io: AdapterIo) {
             }
         }
     }
+}
+
+/// A random version-4 UUID, as Kick's web player makes for anonymous viewers.
+fn random_client_id() -> String {
+    let mut rng = rill_core::backoff::SmallRng::from_time();
+    let (a, b) = (rng.next_u64(), rng.next_u64());
+    format!(
+        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
+        a >> 32,
+        (a >> 16) & 0xffff,
+        a & 0x0fff,
+        0x8000 | ((b >> 48) & 0x3fff),
+        b & 0xffff_ffff_ffff
+    )
 }
 
 fn remember(channel: Option<&str>) {
@@ -194,7 +212,10 @@ async fn follow(ctx: &mut Ctx, slug: &str) -> Interrupt {
         .await;
     loop {
         let result = match lookup(&ctx.http, slug).await {
-            Ok(channel) => connection(ctx, &channel).await,
+            Ok(channel) => match socket(&ctx.http, &ctx.client_id, channel.id).await {
+                Ok(url) => connection(ctx, &channel, &url).await,
+                Err(why) => Err(why),
+            },
             Err(Lookup::Missing) => {
                 let why = format!(
                     "Kick: there's no channel named \"{slug}\". Check the name in Accounts."
@@ -271,6 +292,9 @@ async fn lookup(http: &reqwest::Client, slug: &str) -> Result<Channel, Lookup> {
         .json()
         .await
         .map_err(|e| Lookup::Retry(format!("Kick: unexpected channel data ({e}).")))?;
+    let id = v["id"].as_u64().ok_or_else(|| {
+        Lookup::Retry("Kick: the channel data has no ID; Kick may have changed it.".into())
+    })?;
     let chatroom_id = v["chatroom"]["id"].as_u64().ok_or_else(|| {
         Lookup::Retry("Kick: the channel data has no chatroom; Kick may have changed it.".into())
     })?;
@@ -287,16 +311,53 @@ async fn lookup(http: &reqwest::Client, slug: &str) -> Result<Channel, Lookup> {
         .collect();
     Ok(Channel {
         slug: slug.to_string(),
+        id,
         chatroom_id,
         sub_badges,
     })
 }
 
+/// Asks Kick where this channel's chat socket is, as an anonymous viewer would.
+async fn socket(
+    http: &reqwest::Client,
+    client_id: &str,
+    channel_id: u64,
+) -> Result<String, String> {
+    let res = http
+        .post(pusher::connection_url(channel_id))
+        .header("Accept", "application/json")
+        .header("x-app-platform", "web")
+        .json(&pusher::connection_body(client_id))
+        .send()
+        .await
+        .map_err(|e| {
+            format!("Kick: can't reach web.kick.com ({e}). Check the internet connection.")
+        })?;
+    let status = res.status();
+    if !status.is_success() {
+        let why = format!("Kick refused the chat settings request ({status})");
+        return Err(if status.is_client_error() {
+            format!("{REFUSED} ({why})")
+        } else {
+            format!("{why}. Rill will keep trying.")
+        });
+    }
+    let v: Value = res
+        .json()
+        .await
+        .map_err(|e| format!("Kick: unexpected chat settings ({e})."))?;
+    pusher::socket_from_settings(&v).map_err(|why| format!("{REFUSED} ({why})"))
+}
+
 /// One socket connection. `Ok(Some)` when interrupted, `Ok(None)` after a long healthy run, `Err` when lost early.
-async fn connection(ctx: &mut Ctx, channel: &Channel) -> Result<Option<Interrupt>, String> {
+async fn connection(
+    ctx: &mut Ctx,
+    channel: &Channel,
+    url: &str,
+) -> Result<Option<Interrupt>, String> {
     let (mut ws, _) = timeout(
         Duration::from_secs(15),
-        tokio_tungstenite::connect_async(pusher::URL),
+        tokio_tungstenite::connect_async(url),
     )
     .await
     .map_err(|_| "Kick: the chat socket didn't answer in 15 s.".to_string())?
@@ -380,6 +441,17 @@ async fn connection(ctx: &mut Ctx, channel: &Channel) -> Result<Option<Interrupt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_ids_look_like_uuids() {
+        let id = random_client_id();
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(
+            parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+            [8, 4, 4, 4, 12]
+        );
+        assert!(parts[2].starts_with('4'));
+    }
 
     #[test]
     fn cleans_channel_names_and_urls() {

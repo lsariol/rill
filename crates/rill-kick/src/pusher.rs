@@ -6,8 +6,59 @@ use rill_core::{
 };
 use serde_json::{Value, json};
 
-/// Kick's public Pusher app. Unofficial: Kick may change it without notice.
-pub const URL: &str = "wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0&flash=false";
+/// Where Kick hands out chat socket settings, per channel. Unofficial: Kick may change it.
+pub fn connection_url(channel_id: u64) -> String {
+    format!("https://web.kick.com/api/v1/realtime/channels/{channel_id}/chat/connection")
+}
+
+/// The body Kick's web player sends: an anonymous client and the providers it accepts.
+pub fn connection_body(client_id: &str) -> Value {
+    json!({
+        "client": {"id": client_id, "type": "web"},
+        "capabilities": {"accepted_providers": [{"provider": "pusher"}]},
+    })
+}
+
+/// A Pusher socket URL for an app key and cluster.
+pub fn socket_url(app_key: &str, cluster: &str) -> String {
+    format!(
+        "wss://ws-{cluster}.pusher.com/app/{app_key}?protocol=7&client=js&version=8.4.0&flash=false"
+    )
+}
+
+/// Reads Kick's connection settings into a socket URL. Accepts the body bare or under `data`.
+pub fn socket_from_settings(v: &Value) -> Result<String, String> {
+    let d = if v["provider"].is_string() {
+        v
+    } else {
+        &v["data"]
+    };
+    match d["provider"].as_str() {
+        Some("pusher") => {
+            let c = &d["credentials"];
+            match (c["app_key"].as_str(), c["cluster"].as_str()) {
+                (Some(key), Some(cluster)) if !key.is_empty() && !cluster.is_empty() => {
+                    Ok(socket_url(key, cluster))
+                }
+                _ => Err("Kick's chat settings have no Pusher key or cluster".into()),
+            }
+        }
+        Some(other) => Err(format!(
+            "Kick offered the \"{other}\" chat provider, which Rill doesn't support yet"
+        )),
+        None => Err(format!(
+            "Kick's chat settings weren't in the expected shape (fields: {})",
+            field_names(v)
+        )),
+    }
+}
+
+/// Top-level field names, for diagnosing a changed response without logging its values.
+fn field_names(v: &Value) -> String {
+    v.as_object()
+        .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
+        .unwrap_or_else(|| "none".into())
+}
 
 /// A decoded socket frame.
 #[derive(Debug, PartialEq)]
@@ -210,6 +261,27 @@ mod tests {
         );
         let sub = r#"{"event":"pusher_internal:subscription_succeeded","data":"{}","channel":"chatrooms.668.v2"}"#;
         assert_eq!(parse(sub).unwrap(), Frame::Subscribed);
+    }
+
+    #[test]
+    fn reads_socket_settings() {
+        let pusher =
+            json!({"provider": "pusher", "credentials": {"app_key": "abc", "cluster": "us2"}});
+        assert_eq!(
+            socket_from_settings(&pusher).unwrap(),
+            socket_url("abc", "us2")
+        );
+        let wrapped = json!({ "data": pusher });
+        assert!(socket_from_settings(&wrapped).is_ok());
+        let centrifugo = json!({"provider": "centrifugo", "credentials": {"url": "wss://x"}});
+        assert!(
+            socket_from_settings(&centrifugo)
+                .unwrap_err()
+                .contains("centrifugo")
+        );
+        let odd = json!({"token": "secret-value"});
+        let err = socket_from_settings(&odd).unwrap_err();
+        assert!(err.contains("token") && !err.contains("secret-value"));
     }
 
     #[test]
