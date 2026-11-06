@@ -251,10 +251,17 @@ fn chat_message(timestamp: &str, e: &Value, badges: &Badges) -> ChatMessage {
             "subscriber" | "founder" => roles.subscriber = true,
             _ => {}
         }
-        let (title, url) = badges
+        let (mut title, url) = badges
             .get(&key)
             .map(|(t, u)| (t.clone(), Some(u.clone())))
             .unwrap_or_else(|| (set.to_string(), None));
+        // For subscribers, `info` is how many months they've subscribed.
+        if matches!(set, "subscriber" | "founder")
+            && let Some(months) = b["info"].as_str().and_then(|m| m.parse::<u64>().ok())
+            && months > 0
+        {
+            title = format!("{title} · {}", rill_core::message::tenure(months));
+        }
         author_badges.push(Badge {
             id: key,
             title,

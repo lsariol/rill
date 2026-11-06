@@ -261,12 +261,23 @@ fn copy_text(text: &str, copies: &[(Range<usize>, String)], range: Range<usize>)
 /// Placeholder ranges and the emote name each copies as.
 type Copies = Vec<(Range<usize>, String)>;
 
+/// What a line copies as.
+#[derive(Default)]
+struct Content {
+    text: String,
+    copies: Copies,
+    /// Put before the line when it's copied from its start: the row's time.
+    prefix: Option<String>,
+    /// Copies nothing: the time column, which the line next to it copies instead.
+    silent: bool,
+}
+
 /// What the element keeps between frames.
 #[derive(Clone)]
 pub(crate) struct State {
     handle: TextSelectionHandle,
     /// The text and placeholders, for copying.
-    content: Rc<RefCell<(String, Copies)>>,
+    content: Rc<RefCell<Content>>,
     /// The selected part of this line, as last painted.
     selected: Rc<RefCell<Option<Range<usize>>>>,
     /// Where the left button went down, to tell a click from a drag.
@@ -284,6 +295,8 @@ pub(crate) struct ChatText {
     on_hover: Option<HoverFn>,
     built: Built,
     styled: StyledText,
+    prefix: Option<String>,
+    silent: bool,
 }
 
 impl ChatText {
@@ -297,7 +310,21 @@ impl ChatText {
             on_hover: None,
             built: Built::default(),
             styled: StyledText::new(""),
+            prefix: None,
+            silent: false,
         }
+    }
+
+    /// Copied before the line when the selection includes its start (the row's time).
+    pub fn copy_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.prefix = Some(prefix.into());
+        self
+    }
+
+    /// Selectable, but copies nothing itself.
+    pub fn silent(mut self) -> Self {
+        self.silent = true;
+        self
     }
 
     pub fn on_click(mut self, f: ClickFn) -> Self {
@@ -415,9 +442,16 @@ impl Element for ChatText {
                     let (content, selected) = (state.content.clone(), state.selected.clone());
                     state.handle.copy_with(
                         move |_| {
-                            let (text, copies) = &*content.borrow();
-                            let range = selected.borrow().clone().unwrap_or(0..text.len());
-                            copy_text(text, copies, range)
+                            let c = &*content.borrow();
+                            if c.silent {
+                                return String::new();
+                            }
+                            let range = selected.borrow().clone().unwrap_or(0..c.text.len());
+                            let line = copy_text(&c.text, &c.copies, range.clone());
+                            match &c.prefix {
+                                Some(prefix) if range.start == 0 => format!("{prefix}{line}"),
+                                _ => line,
+                            }
                         },
                         cx,
                     );
@@ -426,7 +460,12 @@ impl Element for ChatText {
                 (state.clone(), state)
             },
         );
-        *state.content.borrow_mut() = (b.text.clone(), b.copies.clone());
+        *state.content.borrow_mut() = Content {
+            text: b.text.clone(),
+            copies: b.copies.clone(),
+            prefix: self.prefix.clone(),
+            silent: self.silent,
+        };
 
         // Lines with images are as tall as the images.
         let tall = (!b.images.is_empty()).then(|| TextStyleRefinement {

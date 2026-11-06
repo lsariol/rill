@@ -56,9 +56,13 @@ folder; the benchmark scripts use `.dev\bench\data`.
   Replies in chat show the message they answer.
 - **Moderation:** click a name to open the user card, which floats over the chat beside the
   message while chat keeps moving: delete, timeouts, ban and unban, showing only what that
-  platform allows, and every message from that user still in the chat.
-- **Copying:** drag across messages to select them and press Ctrl+C. Emotes copy as their names,
-  and each message is a line of its own.
+  platform allows, and every message from that user still in the chat. Actions leave the card
+  open and the chat where it is; clicking anywhere else closes it.
+- **Badges:** hovering a badge says what it is, with how long a subscriber has subscribed.
+  Channels' own badges are used: custom subscriber badges on Twitch and Kick, and the moderator
+  and VIP badges a Twitch channel sets on FrankerFaceZ.
+- **Copying:** drag across messages to select them and press Ctrl+C. Each message copies as a
+  line with its time (`15:44 name: message`), and emotes copy as their names.
 - **Links:** links open in the default browser. Hovering one shows the page's title, description
   and picture; **Link previews** in Settings turns that off (`link_previews`), and hovering then
   shows only the address. Rill fetches a preview only for the link you're hovering, and never for

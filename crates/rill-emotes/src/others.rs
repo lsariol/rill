@@ -157,10 +157,64 @@ pub(crate) async fn ffz_channel(
     Ok(ffz_emotes(&v["sets"], None))
 }
 
+/// A Twitch channel's custom moderator and VIP badges on FrankerFaceZ, as image addresses.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoomBadges {
+    pub moderator: Option<String>,
+    pub vip: Option<String>,
+}
+
+/// Reads the custom badges from a FrankerFaceZ room (the biggest image of each).
+pub(crate) fn room_badges(room: &Value) -> RoomBadges {
+    let biggest = |v: &Value| {
+        ["4", "2", "1"]
+            .iter()
+            .find_map(|k| v[*k].as_str())
+            .map(str::to_string)
+    };
+    RoomBadges {
+        moderator: biggest(&room["mod_urls"])
+            .or_else(|| room["moderator_badge"].as_str().map(str::to_string)),
+        vip: biggest(&room["vip_badge"]),
+    }
+}
+
+pub(crate) async fn ffz_room_badges(
+    http: &reqwest::Client,
+    base: &str,
+    twitch_id: &str,
+) -> Result<RoomBadges, String> {
+    let url = format!("{base}/room/id/{twitch_id}");
+    let Some(body) = get(http, &url, "FrankerFaceZ").await? else {
+        return Ok(RoomBadges::default());
+    };
+    let v: Value = serde_json::from_slice(&body)
+        .map_err(|e| format!("FrankerFaceZ: unexpected channel data ({e})."))?;
+    Ok(room_badges(&v["room"]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn reads_custom_room_badges() {
+        let room = json!({
+            "moderator_badge": "https://ffz/mod/1",
+            "mod_urls": {"1": "https://ffz/mod/1", "2": "https://ffz/mod/2"},
+            "vip_badge": {"1": "https://ffz/vip/1", "4": "https://ffz/vip/4"}
+        });
+        assert_eq!(
+            room_badges(&room),
+            RoomBadges {
+                moderator: Some("https://ffz/mod/2".into()),
+                vip: Some("https://ffz/vip/4".into()),
+            }
+        );
+        let plain = json!({"moderator_badge": null, "vip_badge": null, "mod_urls": null});
+        assert_eq!(room_badges(&plain), RoomBadges::default());
+    }
 
     #[test]
     fn reads_bttv_and_ffz_sets() {

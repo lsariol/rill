@@ -315,10 +315,12 @@ fn make_user(rng: &mut SmallRng, platform: Platform, i: usize) -> Author {
         subscriber: rng.unit() < 0.3,
     };
     let mut badges = Vec::new();
+    let months = 1 + (i as u64 * 7) % 40;
+    let sub = format!("Subscriber · {}", rill_core::message::tenure(months));
     for (has, id, title) in [
         (roles.moderator, "moderator/1", "Moderator"),
         (roles.vip, "vip/1", "VIP"),
-        (roles.subscriber, "subscriber/0", "Subscriber"),
+        (roles.subscriber, "subscriber/0", sub.as_str()),
     ] {
         if has {
             badges.push(Badge {

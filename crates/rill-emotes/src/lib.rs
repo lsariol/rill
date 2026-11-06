@@ -17,7 +17,20 @@ use rill_core::{
 use tokio::sync::OnceCell;
 use tokio::task::JoinHandle;
 
+pub use others::RoomBadges;
 pub use seven_tv::Config;
+
+/// A Twitch channel's custom moderator and VIP badges, from FrankerFaceZ. None when it has none
+/// or FrankerFaceZ can't be reached.
+pub async fn room_badges(http: &reqwest::Client, twitch_id: &str) -> RoomBadges {
+    let base = Config::default().ffz;
+    others::ffz_room_badges(http, &base, twitch_id)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(err = %e, "FrankerFaceZ badges not loaded");
+            RoomBadges::default()
+        })
+}
 
 /// One emote: the name chat uses, its 1x image, and its size there.
 #[derive(Debug, Clone, PartialEq, Eq)]
