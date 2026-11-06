@@ -81,6 +81,16 @@ impl Api {
         self.token.lock().await.clone()
     }
 
+    /// Counts quota spent outside [`Api::call`], such as opening the chat stream.
+    pub fn spend(&self, units: u64) {
+        self.units.fetch_add(units, Ordering::Relaxed);
+    }
+
+    /// A valid access token for calls made elsewhere (the chat stream).
+    pub async fn bearer(&self, force_refresh: bool) -> Result<String, ApiError> {
+        self.access(force_refresh).await
+    }
+
     async fn access(&self, force_refresh: bool) -> Result<String, ApiError> {
         let mut token = self.token.lock().await;
         if force_refresh || token.stale() {
