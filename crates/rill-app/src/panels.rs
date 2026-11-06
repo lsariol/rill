@@ -314,6 +314,7 @@ impl ChatView {
             };
             let prompt_box = prompt.map(|pr| {
                 let url = pr.url.clone();
+                let link = pr.url.clone();
                 let code = pr.code.clone();
                 let short = url
                     .trim_start_matches("https://")
@@ -344,6 +345,18 @@ impl ChatView {
                                     .primary()
                                     .label("Open page")
                                     .on_click(move |_, _, cx| cx.open_url(&url)),
+                            )
+                            .child(
+                                // For signing in with a browser other than the default one.
+                                Button::new(SharedString::from(format!("copy-link-{p}")))
+                                    .xsmall()
+                                    .outline()
+                                    .label("Copy link")
+                                    .on_click(move |_, _, cx| {
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                            link.to_string(),
+                                        ));
+                                    }),
                             )
                             .children(code.map(|c| {
                                 Button::new(SharedString::from(format!("copy-{p}")))
