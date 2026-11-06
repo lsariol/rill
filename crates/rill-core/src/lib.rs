@@ -10,7 +10,7 @@ pub mod message;
 pub mod platform;
 pub mod session;
 
-pub use adapter::{Adapter, AdapterIo, EventSink, Hub};
+pub use adapter::{Adapter, AdapterIo, Enrich, EventSink, Hub};
 pub use destination::Destination;
 pub use event::{
     Account, Action, Capabilities, Command, ConnectionStatus, Event, Level, Request, RequestId,
@@ -18,7 +18,8 @@ pub use event::{
 };
 pub use feed::{Entry, Feed, Filter, Item};
 pub use message::{
-    Author, Badge, ChatMessage, Fragment, MessageKind, ReplyRef, Roles, merge_text, split_text,
+    Author, Badge, ChatMessage, Fragment, MessageKind, ReplyRef, Roles, merge_text, replace_words,
+    split_text,
 };
 pub use platform::Platform;
 pub use session::{Outgoing, Plan, Session, Submitted};

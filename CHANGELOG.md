@@ -17,5 +17,6 @@ Rill's first release, in progress.
 - Twitch: chat, deletions and clears over EventSub, sending and replies, moderation and polls, with automatic token refresh and reconnects.
 - YouTube: the live chat of your current stream, sending, deleting, timeouts, bans and unbans, with a warning before the daily API quota runs out.
 - Kick: read-only chat for any channel, without an account, over whichever chat socket Kick offers.
+- 7TV emotes: the channel's set on Twitch and Kick and 7TV's global set everywhere, animated, at their own sizes, with zero-width emotes drawn over the emote before them. Emotes the streamer adds, removes or renames update live.
 - Keyboard use: F6 moves between the composer and the buttons, Tab and Shift+Tab move between buttons, Esc returns to the composer, and Esc then Tab leaves it.
 - `--sim` shows simulated chat, with options for rate, bursts, emotes, failures and dropped connections.

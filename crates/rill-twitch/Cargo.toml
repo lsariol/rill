@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 rill-core.workspace = true
 rill-os.workspace = true
+rill-emotes.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "macros", "sync"] }
 reqwest = { version = "0.13", features = ["json", "form", "query"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }

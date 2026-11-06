@@ -134,10 +134,7 @@ pub fn content_fragments(content: &str) -> Vec<Fragment> {
         match parsed {
             Some((id, name, end)) => {
                 out.extend(split_text(&rest[..start]));
-                out.push(Fragment::Emote {
-                    url: Some(emote_url(&id)),
-                    name,
-                });
+                out.push(Fragment::emote(name, Some(emote_url(&id))));
                 rest = &after[end + 1..];
             }
             None => {
@@ -162,10 +159,7 @@ mod tests {
             content_fragments("hi [emote:37226:KEKW] @bob [emote:x:y]"),
             vec![
                 Fragment::Text("hi ".into()),
-                Fragment::Emote {
-                    name: "KEKW".into(),
-                    url: Some(emote_url("37226"))
-                },
+                Fragment::emote("KEKW", Some(emote_url("37226"))),
                 Fragment::Text(" ".into()),
                 Fragment::Mention("bob".into()),
                 Fragment::Text(" [emote:x:y]".into()),

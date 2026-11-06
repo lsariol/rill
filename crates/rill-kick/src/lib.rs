@@ -67,6 +67,8 @@ struct Channel {
     slug: String,
     chatroom_id: u64,
     sub_badges: SubBadges,
+    /// The IDs 7TV may know the channel by: the owner's user ID, then the channel ID.
+    seven_tv_ids: Vec<String>,
 }
 
 /// What interrupted a wait or a connection.
@@ -217,18 +219,34 @@ async fn answer(ctx: &mut Ctx, req: Request) -> Option<Interrupt> {
 /// Reads one channel until told to stop or switch, reconnecting with backoff.
 async fn follow(ctx: &mut Ctx, slug: &str) -> Interrupt {
     let mut backoff = Backoff::chat();
+    // The channel's 7TV emotes, loaded once and kept current while Rill reads this channel.
+    let mut emotes: Option<rill_emotes::Follow> = None;
     ctx.events
         .status(ConnectionStatus::Connecting, None, Capabilities::NONE)
         .await;
     loop {
         let result = match lookup(&ctx.http, slug).await {
-            Ok(channel) => match socket(&ctx.http, &ctx.client_id).await {
-                Ok(transport) => {
-                    tracing::debug!(transport = transport.name(), "Kick chat socket chosen");
-                    connection(ctx, &channel, &transport).await
+            Ok(channel) => {
+                if emotes.is_none() {
+                    let f = rill_emotes::follow(
+                        ctx.http.clone(),
+                        rill_emotes::Config::default(),
+                        Some(rill_emotes::Channel {
+                            platform: "kick",
+                            ids: channel.seven_tv_ids.clone(),
+                        }),
+                    );
+                    ctx.events.set_enrich(Some(f.enrich()));
+                    emotes = Some(f);
                 }
-                Err(why) => Err(why),
-            },
+                match socket(&ctx.http, &ctx.client_id).await {
+                    Ok(transport) => {
+                        tracing::debug!(transport = transport.name(), "Kick chat socket chosen");
+                        connection(ctx, &channel, &transport).await
+                    }
+                    Err(why) => Err(why),
+                }
+            }
             Err(Lookup::Missing) => {
                 let why = format!(
                     "Kick: there's no channel named \"{slug}\". Check the name in Accounts."
@@ -319,10 +337,15 @@ async fn lookup(http: &reqwest::Client, slug: &str) -> Result<Channel, Lookup> {
             ))
         })
         .collect();
+    let seven_tv_ids = [&v["user_id"], &v["id"]]
+        .into_iter()
+        .filter_map(|id| id.as_u64().map(|n| n.to_string()))
+        .collect();
     Ok(Channel {
         slug: slug.to_string(),
         chatroom_id,
         sub_badges,
+        seven_tv_ids,
     })
 }
 
@@ -701,6 +724,7 @@ mod sessions {
             slug: "someone".into(),
             chatroom_id: 42,
             sub_badges: Vec::new(),
+            seven_tv_ids: Vec::new(),
         }
     }
 

@@ -15,6 +15,7 @@ rill-os = { path = "crates/rill-os" }
 rill-twitch = { path = "crates/rill-twitch" }
 rill-youtube = { path = "crates/rill-youtube" }
 rill-kick = { path = "crates/rill-kick" }
+rill-emotes = { path = "crates/rill-emotes" }
 tokio = { version = "1", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }

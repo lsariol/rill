@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, RwLock};
 
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
@@ -34,20 +35,50 @@ pub struct AdapterIo {
     pub requests: mpsc::Receiver<Request>,
 }
 
+/// Changes a message on its way to the core, such as swapping in third-party emotes.
+pub trait Enrich: Send + Sync {
+    fn enrich(&self, message: &mut ChatMessage);
+}
+
 /// Sends one adapter's events to the core.
 #[derive(Clone)]
 pub struct EventSink {
     platform: Platform,
     tx: mpsc::Sender<Event>,
+    /// Shared by clones, so an adapter can set it once for all its tasks.
+    enrich: Arc<RwLock<Option<Arc<dyn Enrich>>>>,
 }
 
 impl EventSink {
+    fn new(platform: Platform, tx: mpsc::Sender<Event>) -> EventSink {
+        EventSink {
+            platform,
+            tx,
+            enrich: Arc::default(),
+        }
+    }
+
+    /// Sets (or clears) what every later message passes through.
+    pub fn set_enrich(&self, enrich: Option<Arc<dyn Enrich>>) {
+        *self.enrich.write().unwrap_or_else(|e| e.into_inner()) = enrich;
+    }
+
     pub fn platform(&self) -> Platform {
         self.platform
     }
 
     /// Sends an event; returns false once the core is gone.
-    pub async fn send(&self, event: Event) -> bool {
+    pub async fn send(&self, mut event: Event) -> bool {
+        if let Event::Message(m) = &mut event {
+            let enrich = self
+                .enrich
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            if let Some(enrich) = enrich {
+                enrich.enrich(m);
+            }
+        }
         self.tx.send(event).await.is_ok()
     }
 
@@ -91,7 +122,7 @@ impl EventSink {
     /// A sink for tests and tools, with its receiving end.
     pub fn channel(platform: Platform, size: usize) -> (EventSink, mpsc::Receiver<Event>) {
         let (tx, rx) = mpsc::channel(size);
-        (EventSink { platform, tx }, rx)
+        (EventSink::new(platform, tx), rx)
     }
 }
 
@@ -116,10 +147,7 @@ impl Hub {
             let (req_tx, req_rx) = mpsc::channel(COMMAND_QUEUE);
             requests.insert(platform, req_tx);
             let io = AdapterIo {
-                events: EventSink {
-                    platform,
-                    tx: tx.clone(),
-                },
+                events: EventSink::new(platform, tx.clone()),
                 requests: req_rx,
             };
             runtime.spawn(adapter.run(io));

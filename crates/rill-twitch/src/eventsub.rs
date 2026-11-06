@@ -149,10 +149,10 @@ fn chat_message(timestamp: &str, e: &Value, badges: &Badges) -> ChatMessage {
     for f in e["message"]["fragments"].as_array().into_iter().flatten() {
         let text = s(&f["text"]);
         match f["type"].as_str() {
-            Some("emote") => fragments.push(Fragment::Emote {
-                url: f["emote"]["id"].as_str().map(emote_url),
-                name: text,
-            }),
+            Some("emote") => fragments.push(Fragment::emote(
+                text,
+                f["emote"]["id"].as_str().map(emote_url),
+            )),
             Some("mention") => fragments.push(Fragment::Mention(
                 f["mention"]["user_login"]
                     .as_str()
@@ -274,10 +274,7 @@ mod tests {
             m.fragments,
             vec![
                 Fragment::Text("Hi chat ".into()),
-                Fragment::Emote {
-                    name: "Kappa".into(),
-                    url: Some(emote_url("25"))
-                },
+                Fragment::emote("Kappa", Some(emote_url("25"))),
                 Fragment::Text(" ".into()),
                 Fragment::Mention("rill_dev".into()),
                 Fragment::Text(" see ".into()),

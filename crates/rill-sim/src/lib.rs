@@ -81,7 +81,6 @@ const EMOTES: &[(&str, &str)] = &[
     ("Kappa", "25"),
     ("PogChamp", "305954156"),
     ("LUL", "425618"),
-    ("BibleThump", "86"),
     ("Kreygasm", "41"),
     ("ResidentSleeper", "245"),
     ("4Head", "354"),
@@ -90,6 +89,18 @@ const EMOTES: &[(&str, &str)] = &[
     ("HeyGuys", "30259"),
     ("VoHiYo", "81274"),
     ("DansGame", "33"),
+];
+
+/// 7TV global emotes: name, ID, width and height at 1x, and whether it's zero-width.
+const SEVEN_TV: &[(&str, &str, u16, u16, bool)] = &[
+    ("PepePls", "01GAFTZ9K80003DHH026MC7JW0", 24, 32, false),
+    ("EZ", "01GB4CK01800090V9B3D8CGEEX", 32, 32, false),
+    ("forsenPls", "01GB8EQNJ8000497KFBZWNSDFZ", 43, 32, false),
+    ("7Cinema", "01GBFDVP18000CRDCG0DV7KEMY", 85, 32, false),
+    ("peepoHappy", "01GAZ199Z8000FEWHS6AT5QZV0", 32, 32, false),
+    ("Clap", "01GAM8EFQ00004MXFXAJYKA859", 22, 32, false),
+    ("RainTime", "01FCY771D800007PQ2DF3GDTN6", 32, 32, true),
+    ("SteerR", "01HM2F7Q1R00022X3E2804NBNQ", 32, 32, true),
 ];
 
 const WORDS: &[&str] = &[
@@ -216,13 +227,23 @@ impl Sim {
             }
             let roll = self.rng.unit();
             if roll < emote_share {
-                let (name, id) = *self.rng.pick(EMOTES);
-                fragments.push(Fragment::Emote {
-                    name: name.into(),
-                    url: Some(format!(
-                        "https://static-cdn.jtvnw.net/emoticons/v2/{id}/default/dark/1.0"
-                    )),
-                });
+                if self.rng.unit() < 0.4 {
+                    let (name, id, w, h, overlay) = *self.rng.pick(SEVEN_TV);
+                    fragments.push(Fragment::Emote {
+                        name: name.into(),
+                        url: Some(format!("https://cdn.7tv.app/emote/{id}/1x.webp")),
+                        size: Some((w, h)),
+                        overlay,
+                    });
+                } else {
+                    let (name, id) = *self.rng.pick(EMOTES);
+                    fragments.push(Fragment::emote(
+                        name,
+                        Some(format!(
+                            "https://static-cdn.jtvnw.net/emoticons/v2/{id}/default/dark/1.0"
+                        )),
+                    ));
+                }
             } else if roll < emote_share + 0.004 {
                 fragments.push(Fragment::Mention(ME.into()));
             } else if roll < emote_share + 0.006 {

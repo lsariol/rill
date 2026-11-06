@@ -1,0 +1,61 @@
+{
+  "id": "1001",
+  "platform": "TWITCH",
+  "username": "somechannel",
+  "emote_set_id": "S1",
+  "emote_set": {
+    "id": "S1",
+    "name": "somechannel's Emotes",
+    "emotes": [
+      {
+        "id": "E1",
+        "name": "wideDance",
+        "flags": 0,
+        "data": {
+          "id": "E1",
+          "name": "wideDance",
+          "flags": 0,
+          "animated": true,
+          "host": {
+            "url": "//cdn.7tv.app/emote/E1",
+            "files": [
+              {"name": "1x.avif", "width": 96, "height": 32, "format": "AVIF"},
+              {"name": "1x.webp", "width": 96, "height": 32, "format": "WEBP"},
+              {"name": "2x.webp", "width": 192, "height": 64, "format": "WEBP"}
+            ]
+          }
+        }
+      },
+      {
+        "id": "E2",
+        "name": "myAlias",
+        "flags": 1,
+        "data": {
+          "id": "E2",
+          "name": "OriginalName",
+          "flags": 0,
+          "host": {
+            "url": "//cdn.7tv.app/emote/E2",
+            "files": [{"name": "1x.webp", "width": 32, "height": 32, "format": "WEBP"}]
+          }
+        }
+      },
+      {
+        "id": "E3",
+        "name": "rainOver",
+        "flags": 0,
+        "data": {
+          "id": "E3",
+          "name": "rainOver",
+          "flags": 256,
+          "host": {
+            "url": "//cdn.7tv.app/emote/E3",
+            "files": [{"name": "1x.webp", "width": 32, "height": 32, "format": "WEBP"}]
+          }
+        }
+      },
+      {"id": "E4", "name": "noData", "flags": 0, "data": null}
+    ]
+  },
+  "user": {"id": "U1", "username": "somechannel"}
+}

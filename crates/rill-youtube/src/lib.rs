@@ -85,6 +85,8 @@ struct Ctx {
     min_poll: Duration,
     /// The Data API's address; tests use a local server.
     api_base: String,
+    /// Where to load 7TV's global emotes from; tests leave it out.
+    seven_tv: Option<rill_emotes::Config>,
 }
 
 enum Outcome {
@@ -139,6 +141,7 @@ async fn run(adapter: YouTubeAdapter, io: AdapterIo) {
         client,
         min_poll: adapter.min_poll,
         api_base: api::API.into(),
+        seven_tv: Some(rill_emotes::Config::default()),
     };
     let mut failure: Option<String> = None;
     loop {
@@ -301,6 +304,12 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
         }
     };
     tracing::info!("YouTube signed in");
+    // 7TV has no YouTube channel sets; its global emotes still apply.
+    let _emotes = ctx.seven_tv.clone().map(|cfg| {
+        let f = rill_emotes::follow(ctx.http.clone(), cfg, None);
+        ctx.events.set_enrich(Some(f.enrich()));
+        f
+    });
     let mut told_not_live = false;
     let mut told_not_enabled = false;
     let mut warned_quota = false;
@@ -733,6 +742,7 @@ mod sessions {
             },
             min_poll: Duration::from_millis(20),
             api_base: base.into(),
+            seven_tv: None,
         };
         let token = Token {
             access: "access".into(),

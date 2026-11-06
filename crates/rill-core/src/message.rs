@@ -56,6 +56,10 @@ pub enum Fragment {
     Emote {
         name: String,
         url: Option<String>,
+        /// The image's size in pixels at 1x, when the provider says; `None` means square.
+        size: Option<(u16, u16)>,
+        /// A zero-width emote, drawn over the emote before it.
+        overlay: bool,
     },
     /// An `@name` mention, without the `@`.
     Mention(String),
@@ -106,6 +110,51 @@ impl ChatMessage {
     }
 }
 
+impl Fragment {
+    /// A square platform emote.
+    pub fn emote(name: impl Into<String>, url: Option<String>) -> Fragment {
+        Fragment::Emote {
+            name: name.into(),
+            url,
+            size: None,
+            overlay: false,
+        }
+    }
+}
+
+/// Replaces whole words in text fragments with the emotes `find` knows; spaces stay as text.
+pub fn replace_words(
+    fragments: Vec<Fragment>,
+    find: impl Fn(&str) -> Option<Fragment>,
+) -> Vec<Fragment> {
+    let mut out = Vec::with_capacity(fragments.len());
+    for f in fragments {
+        let Fragment::Text(text) = f else {
+            out.push(f);
+            continue;
+        };
+        let mut plain = String::new();
+        for (i, word) in text.split(' ').enumerate() {
+            if i > 0 {
+                plain.push(' ');
+            }
+            match (!word.is_empty()).then(|| find(word)).flatten() {
+                Some(emote) => {
+                    if !plain.is_empty() {
+                        out.push(Fragment::Text(std::mem::take(&mut plain)));
+                    }
+                    out.push(emote);
+                }
+                None => plain.push_str(word),
+            }
+        }
+        if !plain.is_empty() {
+            out.push(Fragment::Text(plain));
+        }
+    }
+    out
+}
+
 /// Splits plain text into text, `@mention` and link fragments.
 pub fn split_text(text: &str) -> Vec<Fragment> {
     let mut out: Vec<Fragment> = Vec::new();
@@ -154,6 +203,34 @@ pub fn merge_text(fragments: Vec<Fragment>) -> Vec<Fragment> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replace_words_swaps_whole_words_only() {
+        let find = |w: &str| (w == "KEKW").then(|| Fragment::emote("KEKW", Some("u".into())));
+        let out = replace_words(
+            vec![
+                Fragment::Text("lol KEKW KEKWx KEKW".into()),
+                Fragment::Mention("KEKW".into()),
+                Fragment::Text(" KEKW".into()),
+            ],
+            find,
+        );
+        let kekw = Fragment::emote("KEKW", Some("u".into()));
+        assert_eq!(
+            out,
+            vec![
+                Fragment::Text("lol ".into()),
+                kekw.clone(),
+                Fragment::Text(" KEKWx ".into()),
+                kekw.clone(),
+                Fragment::Mention("KEKW".into()),
+                Fragment::Text(" ".into()),
+                kekw,
+            ]
+        );
+        let none = replace_words(vec![Fragment::Text("a  b ".into())], find);
+        assert_eq!(none, vec![Fragment::Text("a  b ".into())]);
+    }
 
     #[test]
     fn split_finds_mentions_and_links() {

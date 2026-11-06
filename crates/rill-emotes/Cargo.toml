@@ -1,0 +1,24 @@
+[package]
+name = "rill-emotes"
+description = "Rill's third-party emotes: loads 7TV emote sets and keeps them current."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rill-core.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync"] }
+reqwest = { version = "0.13", features = ["json", "gzip", "brotli"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros", "sync", "net", "io-util"] }
+
+[lints]
+workspace = true

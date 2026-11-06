@@ -309,6 +309,16 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
         display_name: id.me.display_name.clone(),
     };
     tracing::info!(channel = %id.channel.login, "Twitch signed in");
+    // The channel's 7TV emotes, kept current for as long as this session runs.
+    let emotes = rill_emotes::follow(
+        ctx.http.clone(),
+        rill_emotes::Config::default(),
+        Some(rill_emotes::Channel {
+            platform: "twitch",
+            ids: vec![id.channel.id.clone()],
+        }),
+    );
+    ctx.events.set_enrich(Some(emotes.enrich()));
 
     let mut url = eventsub::URL.to_string();
     let mut fresh = true;

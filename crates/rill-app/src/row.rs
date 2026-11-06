@@ -184,48 +184,71 @@ fn chat_body(m: &ChatMessage, deleted: bool) -> AnyElement {
             .child(format!("{}{sep}", m.author.display_name))
             .into_any_element(),
     ];
+    // The last emote drawn, which a zero-width emote after it sits on.
+    let mut base: Option<usize> = None;
     for f in &m.fragments {
         match f {
-            Fragment::Text(t) => words.extend(t.split_whitespace().map(|w| {
-                div()
-                    .when(action, |d| d.italic().text_color(name_color))
-                    .child(w.to_string())
-                    .into_any_element()
-            })),
-            Fragment::Emote { name, url } => {
-                let fallback = name.clone();
-                words.push(match url {
-                    Some(url) => img(url.clone())
-                        .h(px(EMOTE))
-                        .flex_none()
-                        .with_fallback(move || {
-                            div()
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(rgb(style::MUTED))
-                                .child(fallback.clone())
-                                .into_any_element()
-                        })
-                        .into_any_element(),
-                    None => div()
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(style::MUTED))
-                        .child(name.clone())
-                        .into_any_element(),
-                });
+            Fragment::Text(t) => {
+                if !t.trim().is_empty() {
+                    base = None;
+                }
+                words.extend(t.split_whitespace().map(|w| {
+                    div()
+                        .when(action, |d| d.italic().text_color(name_color))
+                        .child(w.to_string())
+                        .into_any_element()
+                }));
             }
-            Fragment::Mention(n) => words.push(
-                div()
-                    .font_weight(FontWeight::BOLD)
-                    .child(format!("@{n}"))
-                    .into_any_element(),
-            ),
-            Fragment::Link(l) => words.push(
-                div()
-                    .text_color(rgb(style::LINK))
-                    .underline()
-                    .child(l.clone())
-                    .into_any_element(),
-            ),
+            Fragment::Emote {
+                name,
+                url,
+                size,
+                overlay,
+            } => {
+                let image = emote_image(name, url.as_deref(), *size);
+                match base {
+                    Some(i) if *overlay => {
+                        let under = std::mem::replace(&mut words[i], div().into_any_element());
+                        words[i] = div()
+                            .relative()
+                            .flex_none()
+                            .child(under)
+                            .child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(image),
+                            )
+                            .into_any_element();
+                    }
+                    _ => {
+                        words.push(image);
+                        base = Some(words.len() - 1);
+                    }
+                }
+            }
+            Fragment::Mention(n) => {
+                base = None;
+                words.push(
+                    div()
+                        .font_weight(FontWeight::BOLD)
+                        .child(format!("@{n}"))
+                        .into_any_element(),
+                );
+            }
+            Fragment::Link(l) => {
+                base = None;
+                words.push(
+                    div()
+                        .text_color(rgb(style::LINK))
+                        .underline()
+                        .child(l.clone())
+                        .into_any_element(),
+                );
+            }
         }
     }
     div()
@@ -236,6 +259,35 @@ fn chat_body(m: &ChatMessage, deleted: bool) -> AnyElement {
         .gap_x(px(4.))
         .children(words)
         .into_any_element()
+}
+
+/// An emote image at its own proportions (third-party emotes vary), or its name without one.
+fn emote_image(name: &str, url: Option<&str>, size: Option<(u16, u16)>) -> AnyElement {
+    let label = |name: String| {
+        div()
+            .font_weight(FontWeight::BOLD)
+            .text_color(rgb(style::MUTED))
+            .child(name)
+            .into_any_element()
+    };
+    let Some(url) = url else {
+        return label(name.to_string());
+    };
+    let fallback = name.to_string();
+    let image = img(url.to_string())
+        .flex_none()
+        .with_fallback(move || label(fallback.clone()));
+    match size {
+        // 7TV's 1x images are 32 px tall where Twitch's are 28: keep the same ratio to EMOTE.
+        Some((w, h)) => {
+            let scale = EMOTE / 28.;
+            image
+                .w(px(f32::from(w) * scale))
+                .h(px(f32::from(h.min(32)) * scale))
+                .into_any_element()
+        }
+        None => image.h(px(EMOTE)).into_any_element(),
+    }
 }
 
 /// The whole message as one string with styled ranges.

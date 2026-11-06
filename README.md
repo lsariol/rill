@@ -30,6 +30,8 @@ go to Windows Credential Manager under `rill-dev`. Release builds use `%LOCALAPP
   Start a message with `//` to send a literal slash.
 - **Moderation:** click a message to open the user card (delete, timeouts, ban, unban), showing
   only what that platform allows.
+- **Emotes:** platform emotes, plus 7TV: the channel's 7TV set on Twitch and Kick and 7TV's global
+  emotes everywhere. Changes to the channel's set show up without a restart.
 - **Header:** click a platform icon to hide or show its messages (or to connect it), `@` for
   mentions only, `≡` for compact mode. Narrow windows go compact by themselves.
 - **Accounts:** connect and disconnect platforms.
@@ -79,6 +81,7 @@ powershell -File scripts/soak.ps1 -Minutes 480   # long-stream memory check
 | `rill-twitch` | Twitch: device-code sign-in, EventSub chat, Helix actions |
 | `rill-youtube` | YouTube: desktop sign-in with PKCE, live chat polling, moderation |
 | `rill-kick` | Kick: asks Kick which chat socket to use (Centrifugo or Pusher) and reads chat from it |
+| `rill-emotes` | 7TV emotes: loads global and channel sets and follows changes over 7TV's event socket |
 | `rill-os` | Data folders, `settings.json`, the OS credential store |
 | `rill-app` | The GPUI app; the only crate that depends on GPUI |
 
