@@ -20,6 +20,7 @@ use crate::focus;
 use crate::image_cache::BoundedImageCache;
 use crate::navigate;
 use crate::panels::Panel;
+use crate::platforms::Platforms;
 use crate::style;
 
 /// Feed entries kept in memory.
@@ -42,6 +43,7 @@ pub struct Stats {
 pub struct ChatView {
     pub(crate) session: Session,
     pub(crate) hub: Hub,
+    pub(crate) platforms: Platforms,
     pub(crate) list: ListState,
     pub(crate) input: Entity<TextareaState>,
     pub(crate) destination: Destination,
@@ -82,6 +84,7 @@ impl ChatView {
     /// Creates the view and starts draining the hub's events.
     pub fn new(
         hub: Hub,
+        platforms: Platforms,
         events: mpsc::Receiver<Event>,
         startup_errors: Vec<String>,
         window: &mut Window,
@@ -122,6 +125,7 @@ impl ChatView {
         let mut view = Self {
             session,
             hub,
+            platforms,
             list,
             input,
             destination: Destination::All,
@@ -164,6 +168,10 @@ impl ChatView {
         self.stats.events += batch.len() as u64;
         self.stats.batches += 1;
         for event in batch {
+            // Late events from a platform that was just turned off.
+            if !self.platforms.is_on(event.platform()) {
+                continue;
+            }
             if let Event::SignIn { prompt, .. } = &event {
                 self.panel = Panel::Accounts;
                 // Straight to the sign-in page; Accounts keeps Open page and Copy link.
@@ -280,6 +288,42 @@ impl ChatView {
         self.set_filter(filter, cx);
     }
 
+    /// Turns a platform on (connecting it) or off (disconnecting it and hiding it everywhere). Sign-ins
+    /// are kept either way. The last platform that's on stays on.
+    pub(crate) fn set_platform_on(&mut self, p: Platform, on: bool, cx: &mut Context<Self>) {
+        if on == self.platforms.is_on(p) || (!on && self.platforms.on() == [p]) {
+            return;
+        }
+        if let Err(e) = self.platforms.set(p, on) {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+        }
+        let mut filter = self.session.feed.filter().clone();
+        if on {
+            filter.hidden.remove(&p);
+            if let Err(e) = self.hub.add(self.platforms.make(p)) {
+                let why = format!("{p} couldn't start: {e}. Restart Rill.");
+                self.session
+                    .notice(None, rill_core::Level::Error, &why, now_ms());
+            }
+        } else {
+            self.hub.stop(p);
+            self.session.forget(p);
+            filter.hidden.insert(p);
+            if self.destination == Destination::One(p) {
+                self.destination = Destination::All;
+            }
+            if self.replying.as_ref().is_some_and(|r| r.platform == p) {
+                self.replying = None;
+                self.before_reply = None;
+            }
+            if matches!(&self.panel, Panel::User(card) if card.platform == p) {
+                self.panel = Panel::Settings;
+            }
+        }
+        self.set_filter(filter, cx);
+    }
+
     pub(crate) fn set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
         self.session.feed.set_filter(filter);
         self.sync_list();
@@ -312,7 +356,7 @@ impl ChatView {
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let filter = self.session.feed.filter().clone();
-        let toggles = Platform::ALL.into_iter().map(|p| {
+        let toggles = self.platforms.on().into_iter().map(|p| {
             let status = self
                 .session
                 .link(p)
@@ -383,6 +427,19 @@ impl ChatView {
                     view.panel = match view.panel {
                         Panel::Accounts => Panel::None,
                         _ => Panel::Accounts,
+                    };
+                    view.after_click(click, window, cx);
+                }),
+            ))
+            .child(header_toggle(
+                "settings",
+                "Settings",
+                matches!(self.panel, Panel::Settings),
+                "Choose which platforms Rill uses",
+                cx.listener(|view, click, window, cx| {
+                    view.panel = match view.panel {
+                        Panel::Settings => Panel::None,
+                        _ => Panel::Settings,
                     };
                     view.after_click(click, window, cx);
                 }),

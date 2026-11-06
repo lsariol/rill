@@ -7,7 +7,8 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState, Textarea, TextareaState};
-use gpui_component::{Sizable, StyledExt as _};
+use gpui_component::switch::Switch;
+use gpui_component::{Disableable, Sizable, StyledExt as _};
 use rill_core::command::format_duration;
 use rill_core::session::Batch;
 use rill_core::{Action, Author, Command, ConnectionStatus, Plan, Platform, UserRef, now_ms};
@@ -34,6 +35,7 @@ pub enum Panel {
     },
     Poll(PollForm),
     Accounts,
+    Settings,
     /// A batch (such as a nuke) waiting for the user to confirm it.
     Confirm {
         prompt: String,
@@ -202,6 +204,7 @@ impl ChatView {
             }
             Panel::Poll(form) => self.render_poll(form, cx),
             Panel::Accounts => self.render_accounts(cx),
+            Panel::Settings => self.render_settings(cx),
             Panel::Confirm { prompt, .. } => div()
                 .flex()
                 .flex_col()
@@ -281,7 +284,7 @@ impl ChatView {
     }
 
     fn render_accounts(&self, cx: &mut Context<Self>) -> AnyElement {
-        let rows = Platform::ALL.into_iter().map(|p| {
+        let rows = self.platforms.on().into_iter().map(|p| {
             let link = self.session.link(p);
             let status = link.map(|l| l.status.clone()).unwrap_or_default();
             let account = link
@@ -543,6 +546,66 @@ impl ChatView {
             .flex_col()
             .gap_2()
             .child(div().font_bold().child("Accounts"))
+            .children(rows)
+            .children((self.platforms.on().len() < Platform::ALL.len()).then(|| {
+                div()
+                    .text_xs()
+                    .text_color(rgb(style::FAINT))
+                    .child("Platforms turned off in Settings aren't listed.")
+            }))
+            .into_any_element()
+    }
+
+    fn render_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        let last = self.platforms.on();
+        let rows = Platform::ALL.into_iter().map(|p| {
+            let on = self.platforms.is_on(p);
+            let what = match p {
+                Platform::Twitch | Platform::Kick => "Chat, moderation and channel tools",
+                Platform::YouTube => "Live chat and moderation",
+                Platform::Rumble => "Read-only chat and Rants",
+            };
+            let only = on && last == [p];
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(style::platform_icon(p, 16.))
+                .child(div().w(px(64.)).child(p.name()))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(rgb(style::MUTED))
+                        .child(what),
+                )
+                .child(
+                    Switch::new(SharedString::from(format!("use-{p}")))
+                        .small()
+                        .checked(on)
+                        .disabled(only)
+                        .accessibility_label(format!("Use {p}"))
+                        .when(only, |s| s.tooltip("At least one platform stays on"))
+                        .on_click(cx.listener(move |view, on: &bool, _, cx| {
+                            view.set_platform_on(p, *on, cx);
+                        })),
+                )
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().font_bold().child("Settings"))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(div().font_bold().text_sm().child("Platforms"))
+                    .child(div().text_xs().text_color(rgb(style::FAINT)).child(
+                        "A platform you turn off disconnects and disappears from the chat, the header                          and Accounts. Its sign-in is kept for when you turn it back on.",
+                    )),
+            )
             .children(rows)
             .into_any_element()
     }

@@ -10,6 +10,8 @@ use crate::data_dir;
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Platforms turned off in Settings, by name ("rumble"): not connected and not shown.
+    pub disabled_platforms: Vec<String>,
     pub twitch: TwitchSettings,
     pub youtube: YouTubeSettings,
     pub kick: KickSettings,
@@ -98,5 +100,6 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"kick":{"channel":"xqc"}}"#).unwrap();
         assert_eq!(s.kick.channel.as_deref(), Some("xqc"));
         assert!(s.twitch.client_id.is_none());
+        assert!(s.disabled_platforms.is_empty());
     }
 }

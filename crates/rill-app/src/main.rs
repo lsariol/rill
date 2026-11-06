@@ -8,6 +8,7 @@ mod focus;
 mod image_cache;
 mod navigate;
 mod panels;
+mod platforms;
 mod row;
 mod search;
 mod style;
@@ -20,8 +21,10 @@ use gpui::{
     App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, px, size,
 };
 use gpui_component::{Root, Theme, ThemeMode};
-use rill_core::{Adapter, Hub, Platform};
+use rill_core::{Hub, Platform};
 use rill_sim::{Profile, SimAdapter};
+
+use crate::platforms::{MakeAdapter, Platforms};
 
 const USAGE: &str = "\
 Usage: rill [options]
@@ -134,21 +137,26 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     Some(guard)
 }
 
-/// The platform connections from settings.json, and any problem loading it.
-fn real_adapters() -> (Vec<Box<dyn Adapter>>, Vec<String>) {
+/// The real platforms, set up from settings.json, and any problem loading it.
+fn real_platforms() -> (Platforms, Vec<String>) {
     let mut errors = Vec::new();
     let settings = rill_os::settings::load().unwrap_or_else(|e| {
         tracing::error!(err = %e, "settings not loaded; using defaults");
         errors.push(e);
         rill_os::settings::Settings::default()
     });
-    let adapters: Vec<Box<dyn Adapter>> = vec![
-        Box::new(rill_twitch::TwitchAdapter::new(&settings.twitch)),
-        Box::new(rill_youtube::YouTubeAdapter::new(&settings.youtube)),
-        Box::new(rill_kick::KickAdapter::new(&settings.kick)),
-        Box::new(rill_rumble::RumbleAdapter::new()),
-    ];
-    (adapters, errors)
+    // Read again for each start, so a platform turned on later uses the current file.
+    let make: MakeAdapter = Box::new(|p| {
+        let s = rill_os::settings::load().unwrap_or_default();
+        match p {
+            Platform::Twitch => Box::new(rill_twitch::TwitchAdapter::new(&s.twitch)),
+            Platform::YouTube => Box::new(rill_youtube::YouTubeAdapter::new(&s.youtube)),
+            Platform::Kick => Box::new(rill_kick::KickAdapter::new(&s.kick)),
+            Platform::Rumble => Box::new(rill_rumble::RumbleAdapter::new()),
+        }
+    });
+    let off = Platforms::parse(&settings.disabled_platforms);
+    (Platforms::new(off, make, true), errors)
 }
 
 fn main() -> ExitCode {
@@ -177,29 +185,26 @@ fn main() -> ExitCode {
     {
         tracing::warn!("TLS provider was already installed");
     }
-    let (adapters, startup_errors) = if let Some(url) = &options.firehose {
+    let (platforms, startup_errors) = if let Some(url) = &options.firehose {
         // The firehose takes Twitch's slot; the others connect quietly so every icon is live.
         let quiet = rill_sim::Profile {
             rate: 0.,
             ..options.profile.clone()
         };
-        let mut all: Vec<Box<dyn Adapter>> = vec![Box::new(rill_sim::FirehoseAdapter::new(url))];
-        all.extend(
-            [Platform::YouTube, Platform::Kick, Platform::Rumble]
-                .into_iter()
-                .map(|p| Box::new(SimAdapter::new(p, quiet.clone())) as Box<dyn Adapter>),
-        );
-        (all, Vec::new())
+        let url = url.clone();
+        let make: MakeAdapter = Box::new(move |p| match p {
+            Platform::Twitch => Box::new(rill_sim::FirehoseAdapter::new(url.clone())),
+            _ => Box::new(SimAdapter::new(p, quiet.clone())),
+        });
+        (Platforms::new(Default::default(), make, false), Vec::new())
     } else if options.sim {
-        let sims = Platform::ALL
-            .into_iter()
-            .map(|p| Box::new(SimAdapter::new(p, options.profile.clone())) as Box<dyn Adapter>)
-            .collect();
-        (sims, Vec::new())
+        let profile = options.profile.clone();
+        let make: MakeAdapter = Box::new(move |p| Box::new(SimAdapter::new(p, profile.clone())));
+        (Platforms::new(Default::default(), make, false), Vec::new())
     } else {
-        real_adapters()
+        real_platforms()
     };
-    let (hub, events) = match Hub::start(adapters) {
+    let (hub, events) = match Hub::start(platforms.start()) {
         Ok(started) => started,
         Err(e) => {
             tracing::error!(err = %e, "network runtime failed to start");
@@ -255,7 +260,7 @@ fn main() -> ExitCode {
         };
         let mut view_handle = None;
         let opened = cx.open_window(window_options, |window, cx| {
-            let view = cx.new(|cx| chat_view::ChatView::new(hub, events, startup_errors, window, cx));
+            let view = cx.new(|cx| chat_view::ChatView::new(hub, platforms, events, startup_errors, window, cx));
             view_handle = Some(view.clone());
             cx.new(|cx| Root::new(view, window, cx))
         });
