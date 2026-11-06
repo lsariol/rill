@@ -38,6 +38,7 @@ Options:
   --emotes            Make most words emotes
   --flaky             Drop and restore connections now and then
   --fail <0-1>        Share of sends and actions that fail (default 0.05)
+  --history <n>       Keep this many chat lines (default: the Settings choice, 5,000)
   --exit-after <s>    Quit after this many seconds (for benchmarks)
   --stats <file>      Write counters to this file on quit (with --exit-after)
   --firehose <url>    Load test: real chat from a public firehose (catquery's jsonBasic
@@ -55,6 +56,8 @@ struct Options {
     profile: Profile,
     exit_after: Option<Duration>,
     stats: Option<std::path::PathBuf>,
+    /// Chat lines to keep, overriding Settings.
+    history: Option<usize>,
 }
 
 fn parse_args() -> Result<Options, String> {
@@ -90,6 +93,7 @@ fn parse_args() -> Result<Options, String> {
                 )?))
             }
             "--stats" => o.stats = Some(value("--stats")?.into()),
+            "--history" => o.history = Some(number(&value("--history")?, "--history")? as usize),
             other => return Err(format!("Unknown option \"{other}\".\n\n{USAGE}")),
         }
     }
@@ -227,6 +231,7 @@ fn main() -> ExitCode {
     }
 
     let exit_after = options.exit_after;
+    let history = options.history;
     let stats_path = options.stats.clone();
     app.run(move |cx: &mut App| {
         gpui_component::init(cx);
@@ -263,7 +268,9 @@ fn main() -> ExitCode {
         };
         let mut view_handle = None;
         let opened = cx.open_window(window_options, |window, cx| {
-            let view = cx.new(|cx| chat_view::ChatView::new(hub, platforms, events, startup_errors, window, cx));
+            let view = cx.new(|cx| {
+                chat_view::ChatView::new(hub, platforms, events, startup_errors, history, window, cx)
+            });
             view_handle = Some(view.clone());
             cx.new(|cx| Root::new(view, window, cx))
         });

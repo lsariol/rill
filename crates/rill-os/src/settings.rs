@@ -16,6 +16,8 @@ pub struct Settings {
     pub show_deleted_messages: bool,
     /// Hovering a link shows the page's title, description and picture (fetched on hover).
     pub link_previews: bool,
+    /// How many chat lines Rill keeps for scrolling back, searching and user cards.
+    pub message_history: usize,
     pub twitch: TwitchSettings,
     pub youtube: YouTubeSettings,
     pub kick: KickSettings,
@@ -27,6 +29,7 @@ impl Default for Settings {
             disabled_platforms: Vec::new(),
             show_deleted_messages: false,
             link_previews: true,
+            message_history: 5_000,
             twitch: TwitchSettings::default(),
             youtube: YouTubeSettings::default(),
             kick: KickSettings::default(),
@@ -120,5 +123,6 @@ mod tests {
         assert!(s.disabled_platforms.is_empty());
         assert!(!s.show_deleted_messages);
         assert!(s.link_previews, "previews are on unless turned off");
+        assert_eq!(s.message_history, 5_000);
     }
 }

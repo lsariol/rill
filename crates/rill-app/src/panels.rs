@@ -38,6 +38,19 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
+/// A count with thousands separators: 20,000.
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Twitch's poll limits, the strictest of the platforms.
 const POLL_TITLE_MAX: usize = 60;
 const POLL_CHOICE_MAX: usize = 25;
@@ -905,6 +918,72 @@ impl ChatView {
                             })),
                     ),
             )
+            .child(self.render_history_choice(cx))
+            .into_any_element()
+    }
+
+    /// Message history: how many chat lines to keep, with what each choice costs and how long it
+    /// lasts at the current pace of chat.
+    fn render_history_choice(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::chat_view::HISTORY_CHOICES;
+        let current = self.session.feed.capacity();
+        let pace = self.lines_per_minute();
+        let lasts = |lines: usize| match pace {
+            Some(per_min) => {
+                let minutes = lines as f64 / per_min;
+                if minutes < 90. {
+                    format!(
+                        "about {} minutes of chat at the current pace",
+                        minutes.round().max(1.)
+                    )
+                } else if minutes < 48. * 60. {
+                    format!(
+                        "about {:.0} hours of chat at the current pace",
+                        minutes / 60.
+                    )
+                } else {
+                    "days of chat at the current pace".to_string()
+                }
+            }
+            None => "how long it lasts shows once chat is moving".to_string(),
+        };
+        let buttons = HISTORY_CHOICES.iter().map(|&(lines, note, _)| {
+            let b = Button::new(("history", lines))
+                .xsmall()
+                .label(thousands(lines))
+                .tooltip(note);
+            let b = if lines == current {
+                b.primary()
+            } else {
+                b.outline()
+            };
+            b.on_click(cx.listener(move |view, _, _, cx| view.set_history(lines, cx)))
+        });
+        let detail = match HISTORY_CHOICES.iter().find(|(l, _, _)| *l == current) {
+            Some((lines, note, mb)) => format!(
+                "{} lines ({note}): Rill uses about {mb} MB in all with it full; {}.",
+                thousands(*lines),
+                lasts(*lines)
+            ),
+            None => format!(
+                "{} lines (set in settings.json); {}.",
+                thousands(current),
+                lasts(current)
+            ),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child("Message history")
+            .child(div().text_xs().text_color(rgb(style::FAINT)).child(
+                "How many chat lines Rill keeps for scrolling back, searching and user cards. \
+                 Each 1,000 lines takes about 2 MB; only what's on screen is drawn, so more \
+                 history doesn't slow chat down, though searching goes through all of it. A \
+                 smaller choice drops the oldest lines at once.",
+            ))
+            .child(div().flex().flex_wrap().gap_1().children(buttons))
+            .child(div().text_xs().text_color(rgb(style::MUTED)).child(detail))
             .into_any_element()
     }
 

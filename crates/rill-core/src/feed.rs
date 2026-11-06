@@ -184,6 +184,23 @@ impl Feed {
             self.changes.appended += 1;
         }
         self.entries.push_back(entry);
+        self.evict();
+        seq
+    }
+
+    /// How many entries the feed keeps.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Keeps at most `capacity` entries from now on, dropping the oldest at once if needed.
+    pub fn set_capacity(&mut self, capacity: usize) {
+        self.capacity = capacity.max(1);
+        self.evict();
+    }
+
+    /// Drops the oldest entries past capacity.
+    fn evict(&mut self) {
         while self.entries.len() > self.capacity {
             let old = self.entries.pop_front().map(|e| e.seq);
             if old.is_some() && self.visible.front().copied() == old {
@@ -197,7 +214,6 @@ impl Feed {
                 }
             }
         }
-        seq
     }
 
     /// The number of visible entries.
@@ -379,6 +395,22 @@ mod tests {
             sent_at_ms: 0,
             reply_to: None,
         })
+    }
+
+    #[test]
+    fn a_smaller_capacity_drops_the_oldest_at_once() {
+        let mut f = Feed::new(10);
+        for i in 0..10 {
+            f.push(chat(Platform::Twitch, &i.to_string(), "a", "hi"), 0);
+        }
+        f.set_capacity(4);
+        assert_eq!(f.capacity(), 4);
+        assert_eq!(f.entries().count(), 4);
+        assert_eq!(f.visible_len(), 4);
+        assert_eq!(f.entries().next().map(|e| e.seq), Some(6));
+        f.set_capacity(20);
+        f.push(chat(Platform::Twitch, "more", "a", "hi"), 0);
+        assert_eq!(f.entries().count(), 5, "a bigger limit keeps what's there");
     }
 
     #[test]
