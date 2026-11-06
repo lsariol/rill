@@ -63,7 +63,7 @@ async fn run(url: String, io: AdapterIo) {
             }
         };
         tracing::info!("Firehose connected");
-        backoff.reset();
+        let opened = tokio::time::Instant::now();
         events
             .status(ConnectionStatus::Connected, None, Capabilities::NONE)
             .await;
@@ -82,7 +82,10 @@ async fn run(url: String, io: AdapterIo) {
                         tracing::warn!(err = %e, "Firehose dropped");
                         break;
                     }
-                    None => break,
+                    None => {
+                        tracing::warn!("Firehose closed the connection");
+                        break;
+                    }
                 },
                 req = requests.recv() => {
                     let Some(req) = req else { return };
@@ -92,7 +95,11 @@ async fn run(url: String, io: AdapterIo) {
                 }
             }
         }
-        sleep(Duration::from_secs(1)).await;
+        // A connection that lasted a while starts the backoff over; quick closes back off.
+        if opened.elapsed() > Duration::from_secs(60) {
+            backoff.reset();
+        }
+        sleep(backoff.next_delay()).await;
     }
 }
 

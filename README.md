@@ -120,7 +120,12 @@ powershell -File scripts/soak.ps1 -Minutes 480   # long-stream memory check
 For a load test with real chat, `--firehose <url>` reads a public Twitch chat firehose (in
 catquery's `jsonBasic` format, about 1,400 messages a second) and spreads it across the four
 platforms; `scripts/soak.ps1 -Firehose <url>` does the same for a long run. It's read-only, and
-nothing it receives is saved.
+nothing it receives is saved. The firehose allows one connection per address, so to run several
+tests at once, start the relay, which keeps one upstream connection and serves every test:
+
+```powershell
+cargo run --release -p rill-sim --bin firehose-relay   # then each test uses --firehose ws://127.0.0.1:9300
+```
 
 ## Layout
 
