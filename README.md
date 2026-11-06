@@ -77,8 +77,13 @@ folder; the benchmark scripts use `.dev\bench\data`.
   Rill started, alphabetically: on the destination's platform, or on every platform for All, with
   the platforms each was seen on. Tab or Enter fills in `@name`. Tab completion on a plain word
   includes these names too, so `moba` then Tab gives `mobasity`.
-- **Header:** click a platform icon to hide or show its messages (or to connect it), `@` for
-  mentions only, `≡` for compact mode. Narrow windows go compact by themselves.
+- **Header:** click a platform icon to hide or show its messages, `@` for mentions only, `≡`
+  for compact mode. Narrow windows go compact by themselves. The dot on each icon shows its
+  connection: green when it's working, a green ring when it's signed in and waiting (YouTube
+  before you go live), pulsing yellow while connecting, yellow when it works but needs something
+  from you (an older sign-in, or Kick read without signing in), red when it isn't working, and
+  grey when it isn't signed in. Hovering the icon says why; clicking a yellow, red or grey one
+  opens Accounts.
 - **Accounts:** connect and disconnect platforms. Connect opens the platform's sign-in page in the
   default browser; Copy link is there for signing in with another browser.
 - **Settings:** turn off the platforms you don't use. A platform that's off isn't connected and

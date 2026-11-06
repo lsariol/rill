@@ -24,7 +24,7 @@ pub use message::{
     split_text,
 };
 pub use platform::Platform;
-pub use session::{Outgoing, Plan, Session, Submitted};
+pub use session::{Health, Outgoing, Plan, Session, Submitted};
 
 /// The current time in Unix milliseconds.
 pub fn now_ms() -> i64 {

@@ -5,17 +5,17 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ListAlignment, ListState, ParentElement, Pixels, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Task, Window, canvas, div, list,
-    prelude::FluentBuilder, px, rgb,
+    Animation, AnimationExt, AnyElement, App, AppContext, Bounds, Context, Entity, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, ListAlignment, ListState, ParentElement, Pixels,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window, canvas,
+    div, list, prelude::FluentBuilder, pulsating_between, px, rgb,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{InputEvent, TextareaState};
 use gpui_component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_component::{Selectable, Sizable};
 use rill_core::{
-    ConnectionStatus, Destination, Event, Filter, Hub, Outgoing, Platform, Session, now_ms,
+    ConnectionStatus, Destination, Event, Filter, Health, Hub, Outgoing, Platform, Session, now_ms,
 };
 use tokio::sync::mpsc;
 
@@ -313,7 +313,9 @@ impl ChatView {
         let usable = self.session.link(p).is_some_and(|l| {
             matches!(
                 l.status,
-                ConnectionStatus::Connected | ConnectionStatus::Reconnecting { .. }
+                ConnectionStatus::Connected
+                    | ConnectionStatus::Reconnecting { .. }
+                    | ConnectionStatus::Waiting(_)
             )
         });
         if !usable {
@@ -484,24 +486,35 @@ impl ChatView {
                 .map(|l| l.status.clone())
                 .unwrap_or_default();
             let shown = !filter.hidden.contains(&p);
-            let dot = match status {
-                ConnectionStatus::Connected => Some(style::OK),
-                ConnectionStatus::Connecting | ConnectionStatus::Reconnecting { .. } => {
-                    Some(style::WARN)
-                }
-                ConnectionStatus::Failed(_) => Some(style::ERROR),
-                ConnectionStatus::Disconnected => None,
+            let (health, why) = self.session.health(p);
+            // Yellow, red and grey need something done, which happens in Accounts.
+            let fix = matches!(
+                health,
+                Health::Attention | Health::Broken | Health::SignedOut
+            );
+            let headline = match health {
+                Health::Good => "connected".to_string(),
+                Health::Waiting => "ready, waiting".into(),
+                Health::Busy => status.label().to_lowercase(),
+                Health::Attention => "connected, but needs attention".into(),
+                Health::Broken => "not working".into(),
+                Health::SignedOut => "not signed in".into(),
             };
-            let tip: SharedString = match status {
-                ConnectionStatus::Connected | ConnectionStatus::Reconnecting { .. } => format!(
-                    "{p}: {}. Click to {} its messages.",
-                    status.label(),
-                    if shown { "hide" } else { "show" }
-                ),
-                ConnectionStatus::Failed(why) => format!("{why} Click to open Accounts."),
-                _ => format!("{p}: {}. Click to connect.", status.label()),
+            let action = if fix {
+                "Click to open Accounts."
+            } else if shown {
+                "Click to hide its messages."
+            } else {
+                "Click to show its messages."
+            };
+            let mut tip = format!("{p}: {headline}.");
+            for line in &why {
+                tip.push('\n');
+                tip.push_str(line);
             }
-            .into();
+            tip.push('\n');
+            tip.push_str(action);
+            let tip: SharedString = tip.into();
             Button::new(SharedString::from(format!("filter-{p}")))
                 .ghost()
                 .xsmall()
@@ -511,19 +524,14 @@ impl ChatView {
                 .tooltip(tip)
                 .when(!shown, |d| d.opacity(0.35))
                 .child(style::platform_icon(p, 16.))
-                .when_some(dot, |d, color| {
-                    d.child(
-                        div()
-                            .absolute()
-                            .right(px(1.))
-                            .bottom(px(1.))
-                            .size(px(6.))
-                            .rounded_full()
-                            .bg(rgb(color)),
-                    )
-                })
+                .child(status_dot(p, health))
                 .on_click(cx.listener(move |view, click, window, cx| {
-                    view.toggle_platform(p, cx);
+                    if fix {
+                        view.panel = Panel::Accounts;
+                        cx.notify();
+                    } else {
+                        view.toggle_platform(p, cx);
+                    }
                     view.after_click(click, window, cx);
                 }))
         });
@@ -662,6 +670,45 @@ impl ChatView {
             })
             .children(self.render_card(cx))
             .children(self.render_link_preview())
+    }
+}
+
+/// The dot on a platform's header icon: green working, a green ring waiting, pulsing yellow
+/// connecting, yellow needing attention, red broken, grey not signed in.
+fn status_dot(p: Platform, health: Health) -> AnyElement {
+    let (color, ring) = match health {
+        Health::Good => (style::OK, false),
+        Health::Waiting => (style::OK, true),
+        Health::Busy | Health::Attention => (style::WARN, false),
+        Health::Broken => (style::ERROR, false),
+        Health::SignedOut => (style::FAINT, false),
+    };
+    let dot = div()
+        .absolute()
+        .right(px(0.))
+        .bottom(px(0.))
+        .size(px(7.))
+        .rounded_full();
+    let dot = if ring {
+        dot.border_2()
+            .border_color(rgb(color))
+            .bg(rgb(style::BACKGROUND))
+    } else {
+        dot.border_1()
+            .border_color(rgb(style::BACKGROUND))
+            .bg(rgb(color))
+    };
+    if health == Health::Busy {
+        dot.with_animation(
+            SharedString::from(format!("dot-{p}")),
+            Animation::new(Duration::from_millis(1200))
+                .repeat()
+                .with_easing(pulsating_between(0.3, 1.)),
+            |d, t| d.opacity(t),
+        )
+        .into_any_element()
+    } else {
+        dot.into_any_element()
     }
 }
 
