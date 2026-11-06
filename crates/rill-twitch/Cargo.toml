@@ -18,5 +18,8 @@ serde_json.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros", "sync", "net", "io-util"] }
+
 [lints]
 workspace = true

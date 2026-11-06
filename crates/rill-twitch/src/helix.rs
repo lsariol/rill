@@ -63,6 +63,8 @@ pub type Badges = HashMap<String, (String, String)>;
 #[derive(Clone)]
 pub struct Helix {
     http: reqwest::Client,
+    /// Helix's address; tests use a local server.
+    base: String,
     client_id: String,
     token: Arc<Mutex<Token>>,
 }
@@ -71,9 +73,16 @@ impl Helix {
     pub fn new(http: reqwest::Client, client_id: String, token: Token) -> Helix {
         Helix {
             http,
+            base: HELIX.into(),
             client_id,
             token: Arc::new(Mutex::new(token)),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_base(mut self, base: &str) -> Helix {
+        self.base = base.into();
+        self
     }
 
     /// The current access token.
@@ -115,7 +124,7 @@ impl Helix {
             let access = self.access().await;
             let mut req = self
                 .http
-                .request(method.clone(), format!("{HELIX}{path}"))
+                .request(method.clone(), format!("{}{path}", self.base))
                 .header("Client-Id", &self.client_id)
                 .bearer_auth(&access)
                 .query(query);

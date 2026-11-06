@@ -83,6 +83,8 @@ struct Ctx {
     http: reqwest::Client,
     client: Client,
     min_poll: Duration,
+    /// The Data API's address; tests use a local server.
+    api_base: String,
 }
 
 enum Outcome {
@@ -136,6 +138,7 @@ async fn run(adapter: YouTubeAdapter, io: AdapterIo) {
         http,
         client,
         min_poll: adapter.min_poll,
+        api_base: api::API.into(),
     };
     let mut failure: Option<String> = None;
     loop {
@@ -262,7 +265,7 @@ fn expired() -> Outcome {
 
 /// A signed-in session: find the live chat, then poll it.
 async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
-    let api = Api::new(ctx.http.clone(), ctx.client.clone(), token);
+    let api = Api::new(ctx.http.clone(), ctx.client.clone(), token, &ctx.api_base);
     let live = Live::default();
     let mut backoff = Backoff::chat();
     ctx.events
@@ -566,5 +569,367 @@ mod tests {
             login: "nobody".into(),
         };
         assert!(resolve(&live, &stranger).await.is_err());
+    }
+}
+
+/// Signed-in sessions against a local stand-in for the YouTube Data API.
+#[cfg(test)]
+mod sessions {
+    use super::*;
+    use rill_core::{Event, RequestId, UserRef};
+    use serde_json::{Value, json};
+    use std::sync::Mutex as StdMutex;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    const MESSAGES: &str = include_str!("../tests/fixtures/messages.json");
+
+    /// A request the fake API saw: method, path, query, JSON body.
+    #[derive(Debug, Clone)]
+    struct Seen {
+        method: String,
+        path: String,
+        query: String,
+        body: Value,
+    }
+
+    type Log = Arc<StdMutex<Vec<Seen>>>;
+    type Route = fn(&Seen) -> (u16, Value);
+
+    /// A fake Data API: answers with `route` and records every request.
+    async fn api_server(route: Route) -> (String, Log) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let log: Log = Arc::default();
+        let seen = log.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = listener.accept().await.unwrap();
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0; 4096];
+                    let (head, body) = loop {
+                        let n = s.read(&mut chunk).await.unwrap();
+                        assert!(n > 0, "request ended early");
+                        buf.extend_from_slice(&chunk[..n]);
+                        let text = String::from_utf8_lossy(&buf).to_string();
+                        if let Some(end) = text.find("\r\n\r\n") {
+                            let len = text[..end]
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_ascii_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .map(|v| v.trim().parse::<usize>().unwrap())
+                                })
+                                .unwrap_or(0);
+                            if buf.len() >= end + 4 + len {
+                                break (text[..end].to_string(), text[end + 4..].to_string());
+                            }
+                        }
+                    };
+                    let mut first = head.lines().next().unwrap().split(' ');
+                    let method = first.next().unwrap().to_string();
+                    let target = first.next().unwrap();
+                    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+                    let req = Seen {
+                        method,
+                        path: path.to_string(),
+                        query: query.to_string(),
+                        body: serde_json::from_str(&body).unwrap_or(Value::Null),
+                    };
+                    let (status, reply) = route(&req);
+                    seen.lock().unwrap().push(req);
+                    let reply = reply.to_string();
+                    let res = format!(
+                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    );
+                    s.write_all(res.as_bytes()).await.unwrap();
+                });
+            }
+        });
+        (format!("http://{addr}"), log)
+    }
+
+    /// The first page is the fixture; later pages come from `later`.
+    fn route_with(r: &Seen, later: fn() -> (u16, Value)) -> (u16, Value) {
+        match (r.method.as_str(), r.path.as_str()) {
+            ("GET", "/channels") => (
+                200,
+                json!({"items": [{"id": "UC1", "snippet": {"title": "Me"}}]}),
+            ),
+            ("GET", "/liveBroadcasts") => (
+                200,
+                json!({"items": [{"snippet": {"liveChatId": "chat1"}}]}),
+            ),
+            ("GET", "/liveChat/messages") if r.query.contains("pageToken=p2") => later(),
+            ("GET", "/liveChat/messages") => {
+                let mut v: Value = serde_json::from_str(MESSAGES).unwrap();
+                v["nextPageToken"] = json!("p2");
+                v["pollingIntervalMillis"] = json!(10);
+                (200, v)
+            }
+            ("POST", "/liveChat/messages") => (200, json!({"id": "sent-1"})),
+            ("POST", "/liveChat/bans") => (200, json!({"id": "ban-1"})),
+            ("DELETE", "/liveChat/bans") => (204, Value::Null),
+            _ => (404, json!({"error": {"message": "no route"}})),
+        }
+    }
+
+    fn api_error(status: u16, reason: &str) -> (u16, Value) {
+        (
+            status,
+            json!({"error": {"code": status, "message": reason, "errors": [{"reason": reason}]}}),
+        )
+    }
+
+    /// Starts a session; returns its events, a request sender, and whether it stopped cleanly.
+    fn start(
+        base: &str,
+    ) -> (
+        mpsc::Receiver<Event>,
+        mpsc::Sender<Request>,
+        tokio::task::JoinHandle<bool>,
+    ) {
+        let (events, rx) = EventSink::channel(Platform::YouTube, 1_000);
+        let (tx, requests) = mpsc::channel(4);
+        let mut ctx = Ctx {
+            events,
+            requests,
+            http: reqwest::Client::new(),
+            client: Client {
+                id: "client".into(),
+                secret: "secret".into(),
+            },
+            min_poll: Duration::from_millis(20),
+            api_base: base.into(),
+        };
+        let token = Token {
+            access: "access".into(),
+            refresh: "refresh".into(),
+            expires_at_ms: now_ms() + 3_600_000,
+        };
+        let task =
+            tokio::spawn(async move { matches!(session(&mut ctx, token).await, Outcome::Stop) });
+        (rx, tx, task)
+    }
+
+    /// Waits for an event matching `want`, collecting everything seen on the way.
+    async fn until(rx: &mut mpsc::Receiver<Event>, want: impl Fn(&Event) -> bool) -> Vec<Event> {
+        let mut seen = Vec::new();
+        let found = tokio::time::timeout(Duration::from_secs(10), async {
+            while let Some(e) = rx.recv().await {
+                let hit = want(&e);
+                seen.push(e);
+                if hit {
+                    return;
+                }
+            }
+            panic!("the session ended early");
+        })
+        .await;
+        assert!(found.is_ok(), "timed out; saw {seen:#?}");
+        seen
+    }
+
+    async fn request(tx: &mpsc::Sender<Request>, id: u64, command: Command) {
+        tx.send(Request {
+            id: RequestId(id),
+            command,
+        })
+        .await
+        .unwrap();
+    }
+
+    fn done(e: &Event, id: u64) -> bool {
+        matches!(e, Event::Done { request, .. } if *request == RequestId(id))
+    }
+
+    #[tokio::test]
+    async fn polls_pages_sends_and_bans_by_name() {
+        fn route(r: &Seen) -> (u16, Value) {
+            route_with(r, || {
+                (
+                    200,
+                    json!({"items": [], "nextPageToken": "p2", "pollingIntervalMillis": 10}),
+                )
+            })
+        }
+        let (base, log) = api_server(route).await;
+        let (mut rx, tx, task) = start(&base);
+        let seen = until(&mut rx, |e| matches!(e, Event::Message(_))).await;
+        assert!(seen.iter().any(|e| matches!(
+            e,
+            Event::Status { status: ConnectionStatus::Connected, capabilities, .. } if *capabilities == OWNER
+        )));
+
+        request(
+            &tx,
+            1,
+            Command::Send {
+                text: "hello".into(),
+                reply_to: None,
+            },
+        )
+        .await;
+        let seen = until(&mut rx, |e| done(e, 1)).await;
+        assert!(
+            matches!(seen.last(), Some(Event::Done { result: Ok(Some(id)), .. }) if id == "sent-1")
+        );
+
+        let viewer = UserRef {
+            id: None,
+            login: "@Viewer".into(),
+        };
+        request(
+            &tx,
+            2,
+            Command::Ban {
+                user: viewer.clone(),
+                reason: None,
+            },
+        )
+        .await;
+        let seen = until(&mut rx, |e| done(e, 2)).await;
+        assert!(
+            matches!(
+                seen.last(),
+                Some(Event::Done {
+                    result: Ok(None),
+                    ..
+                })
+            ),
+            "{seen:#?}"
+        );
+        request(&tx, 3, Command::Unban { user: viewer }).await;
+        let seen = until(&mut rx, |e| done(e, 3)).await;
+        assert!(
+            matches!(
+                seen.last(),
+                Some(Event::Done {
+                    result: Ok(None),
+                    ..
+                })
+            ),
+            "{seen:#?}"
+        );
+
+        let polled = || {
+            log.lock()
+                .unwrap()
+                .iter()
+                .any(|r| r.path == "/liveChat/messages" && r.query.contains("pageToken=p2"))
+        };
+        for _ in 0..250 {
+            if polled() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(polled(), "the next page was never asked for");
+        drop(tx);
+        assert!(
+            task.await.unwrap(),
+            "the session didn't stop when Rill closed"
+        );
+        let log = log.lock().unwrap().clone();
+        let sent = log
+            .iter()
+            .find(|r| r.method == "POST" && r.path == "/liveChat/messages")
+            .unwrap();
+        assert_eq!(sent.body["snippet"]["liveChatId"], "chat1");
+        assert_eq!(
+            sent.body["snippet"]["textMessageDetails"]["messageText"],
+            "hello"
+        );
+        let ban = log
+            .iter()
+            .find(|r| r.path == "/liveChat/bans" && r.method == "POST")
+            .unwrap();
+        assert_eq!(ban.body["snippet"]["type"], "permanent");
+        assert!(
+            !ban.body["snippet"]["bannedUserDetails"]["channelId"]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            log.iter()
+                .any(|r| r.method == "DELETE" && r.query == "id=ban-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn warns_when_the_quota_runs_out() {
+        fn route(r: &Seen) -> (u16, Value) {
+            route_with(r, || api_error(403, "quotaExceeded"))
+        }
+        let (base, _) = api_server(route).await;
+        let (mut rx, tx, task) = start(&base);
+        let seen = until(&mut rx, |e| {
+            matches!(
+                e,
+                Event::Notice {
+                    level: Level::Error,
+                    ..
+                }
+            )
+        })
+        .await;
+        let Some(Event::Notice { text, .. }) = seen.last() else {
+            unreachable!()
+        };
+        assert!(text.contains("quota"), "{text}");
+        assert!(seen.iter().any(|e| matches!(
+            e,
+            Event::Status {
+                status: ConnectionStatus::Reconnecting { .. },
+                ..
+            }
+        )));
+        // Requests still get answers during the long wait.
+        request(
+            &tx,
+            1,
+            Command::Poll {
+                title: "q".into(),
+                choices: vec![],
+                seconds: 60,
+            },
+        )
+        .await;
+        let seen = until(&mut rx, |e| done(e, 1)).await;
+        assert!(
+            matches!(seen.last(), Some(Event::Done { result: Err(why), .. }) if why.contains("Studio"))
+        );
+        drop(tx);
+        assert!(task.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn looks_for_the_next_broadcast_when_chat_ends() {
+        fn route(r: &Seen) -> (u16, Value) {
+            route_with(r, || api_error(403, "liveChatEnded"))
+        }
+        let (base, log) = api_server(route).await;
+        let (mut rx, tx, task) = start(&base);
+        let seen = until(
+            &mut rx,
+            |e| matches!(e, Event::Notice { text, .. } if text.contains("ended")),
+        )
+        .await;
+        assert!(seen.iter().any(|e| matches!(e, Event::Message(_))));
+        // It goes straight back to finding the live broadcast.
+        until(&mut rx, |e| matches!(e, Event::Message(_))).await;
+        drop(tx);
+        assert!(task.await.unwrap());
+        let lookups = log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.path == "/liveBroadcasts")
+            .count();
+        assert!(lookups >= 2, "{lookups} broadcast lookups");
     }
 }

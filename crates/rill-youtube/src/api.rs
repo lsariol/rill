@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 
 use crate::auth::{self, AuthError, Client, Token};
 
-const API: &str = "https://www.googleapis.com/youtube/v3";
+pub const API: &str = "https://www.googleapis.com/youtube/v3";
 
 /// Approximate quota units per call, from Google's quota table. Default daily quota: 10,000.
 pub mod cost {
@@ -53,15 +53,18 @@ impl ApiError {
 #[derive(Clone)]
 pub struct Api {
     http: reqwest::Client,
+    /// The API's address; tests use a local server.
+    base: String,
     client: Client,
     token: Arc<Mutex<Token>>,
     units: Arc<AtomicU64>,
 }
 
 impl Api {
-    pub fn new(http: reqwest::Client, client: Client, token: Token) -> Api {
+    pub fn new(http: reqwest::Client, client: Client, token: Token, base: &str) -> Api {
         Api {
             http,
+            base: base.into(),
             client,
             token: Arc::new(Mutex::new(token)),
             units: Arc::new(AtomicU64::new(0)),
@@ -106,7 +109,7 @@ impl Api {
             let access = self.access(attempt == 1).await?;
             let mut req = self
                 .http
-                .request(method.clone(), format!("{API}{path}"))
+                .request(method.clone(), format!("{}{path}", self.base))
                 .bearer_auth(access)
                 .query(query);
             if let Some(b) = &body {

@@ -720,3 +720,305 @@ mod tests {
         assert_eq!(a.channel.as_deref(), Some("somechannel"));
     }
 }
+
+/// EventSub connections against local stand-ins for Twitch's servers.
+#[cfg(test)]
+mod sessions {
+    use super::*;
+    use rill_core::{Event, RequestId};
+    use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    const MESSAGE: &str = include_str!("../tests/fixtures/chat_message.json");
+
+    /// Requests the fake Helix saw: method, path, JSON body.
+    type Seen = Arc<Mutex<Vec<(String, String, Value)>>>;
+
+    /// A fake Helix: accepts subscriptions and sends, and records every request.
+    async fn helix_server() -> (String, Seen) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen: Seen = Arc::default();
+        let log = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = listener.accept().await.unwrap();
+                let log = log.clone();
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0; 4096];
+                    let (head, body) = loop {
+                        let n = s.read(&mut chunk).await.unwrap();
+                        assert!(n > 0, "request ended early");
+                        buf.extend_from_slice(&chunk[..n]);
+                        let text = String::from_utf8_lossy(&buf).to_string();
+                        if let Some(end) = text.find("\r\n\r\n") {
+                            let len = text[..end]
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_ascii_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .map(|v| v.trim().parse::<usize>().unwrap())
+                                })
+                                .unwrap_or(0);
+                            if buf.len() >= end + 4 + len {
+                                break (text[..end].to_string(), text[end + 4..].to_string());
+                            }
+                        }
+                    };
+                    let mut first = head.lines().next().unwrap().split(' ');
+                    let method = first.next().unwrap().to_string();
+                    let path = first.next().unwrap().to_string();
+                    let body: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                    let reply = match path.as_str() {
+                        "/eventsub/subscriptions" => json!({"data": [{"status": "enabled"}]}),
+                        "/chat/messages" => {
+                            json!({"data": [{"message_id": "sent-1", "is_sent": true}]})
+                        }
+                        _ => json!({"data": []}),
+                    };
+                    log.lock().unwrap().push((method, path, body));
+                    let reply = reply.to_string();
+                    let res = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    );
+                    s.write_all(res.as_bytes()).await.unwrap();
+                });
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    type Server = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+
+    /// A one-connection EventSub server; `script` plays Twitch's side.
+    async fn socket_server<F, Fut>(script: F) -> String
+    where
+        F: FnOnce(Server) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (s, _) = listener.accept().await.unwrap();
+            script(tokio_tungstenite::accept_async(s).await.unwrap()).await;
+        });
+        format!("ws://{addr}")
+    }
+
+    fn frame(kind: &str, payload: Value) -> Message {
+        let meta = json!({"message_id": "x", "message_type": kind, "message_timestamp": "2026-11-05T12:00:00Z"});
+        Message::text(json!({"metadata": meta, "payload": payload}).to_string())
+    }
+
+    fn welcome(session: &str, keepalive: u64) -> Message {
+        frame(
+            "session_welcome",
+            json!({"session": {"id": session, "status": "connected", "keepalive_timeout_seconds": keepalive}}),
+        )
+    }
+
+    fn user(id: &str, login: &str) -> User {
+        User {
+            id: id.into(),
+            login: login.into(),
+            display_name: login.into(),
+        }
+    }
+
+    fn identity() -> Identity {
+        Identity {
+            me: user("100", "rill_dev"),
+            channel: user("200", "somechannel"),
+            caps: MODERATOR,
+            badges: Badges::new(),
+        }
+    }
+
+    fn account() -> Account {
+        Account {
+            id: "100".into(),
+            login: "rill_dev".into(),
+            display_name: "rill_dev".into(),
+        }
+    }
+
+    fn setup(helix_url: &str) -> (Ctx, Helix, mpsc::Receiver<Event>, mpsc::Sender<Request>) {
+        let (events, rx) = EventSink::channel(Platform::Twitch, 100);
+        let (tx, requests) = mpsc::channel(4);
+        let http = reqwest::Client::new();
+        let token = Token {
+            access: "access".into(),
+            refresh: "refresh".into(),
+        };
+        let helix = Helix::new(http.clone(), "client".into(), token).with_base(helix_url);
+        let ctx = Ctx {
+            events,
+            requests,
+            http,
+            client_id: "client".into(),
+            channel: None,
+        };
+        (ctx, helix, rx, tx)
+    }
+
+    fn drained(rx: &mut mpsc::Receiver<Event>) -> Vec<Event> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
+    fn subscriptions(seen: &Seen) -> Vec<(String, String)> {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, path, _)| path == "/eventsub/subscriptions")
+            .map(|(_, _, b)| {
+                (
+                    b["type"].as_str().unwrap().to_string(),
+                    b["transport"]["session_id"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn subscribes_reads_and_follows_a_reconnect_without_resubscribing() {
+        let (helix_url, seen) = helix_server().await;
+        let watch = seen.clone();
+        let second = socket_server(|mut ws| async move {
+            ws.send(welcome("s2", 10)).await.unwrap();
+            ws.send(Message::text(MESSAGE)).await.unwrap();
+            // Stay up until the send reaches Helix, then drop.
+            for _ in 0..250 {
+                if watch
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(_, p, _)| p == "/chat/messages")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            ws.close(None).await.unwrap();
+        })
+        .await;
+        let moved_to = second.clone();
+        let first = socket_server(|mut ws| async move {
+            ws.send(welcome("s1", 10)).await.unwrap();
+            ws.send(Message::text(MESSAGE)).await.unwrap();
+            let reconnect = json!({"session": {"id": "s1", "status": "reconnecting", "reconnect_url": moved_to}});
+            ws.send(frame("session_reconnect", reconnect)).await.unwrap();
+            let _ = ws.next().await;
+        })
+        .await;
+
+        let (mut ctx, helix, mut rx, tx) = setup(&helix_url);
+        let (id, account) = (identity(), account());
+        let mut url = first;
+        let end = connection(&mut ctx, &helix, &id, &account, &mut url, true).await;
+        assert!(matches!(end, Ws::Moved));
+        assert_eq!(url, second);
+        let subs = subscriptions(&seen);
+        assert_eq!(
+            subs.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            eventsub::SUBSCRIPTIONS
+        );
+        assert!(subs.iter().all(|(_, s)| s == "s1"));
+        let events = drained(&mut rx);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Event::Status {
+                status: ConnectionStatus::Connected,
+                ..
+            }
+        )));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Message(m) if m.plain_text().starts_with("Hi chat")))
+        );
+
+        let command = Command::Send {
+            text: "hello".into(),
+            reply_to: None,
+        };
+        tx.send(Request {
+            id: RequestId(7),
+            command,
+        })
+        .await
+        .unwrap();
+        let end = timeout(
+            Duration::from_secs(10),
+            connection(&mut ctx, &helix, &id, &account, &mut url, false),
+        )
+        .await
+        .expect("connection hung");
+        assert!(matches!(end, Ws::Lost(_)));
+        assert_eq!(
+            subscriptions(&seen).len(),
+            4,
+            "a moved session keeps its subscriptions"
+        );
+        let sent: Vec<Value> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, p, _)| m == "POST" && p == "/chat/messages")
+            .map(|(_, _, b)| b.clone())
+            .collect();
+        assert_eq!(
+            sent,
+            [json!({"broadcaster_id": "200", "sender_id": "100", "message": "hello"})]
+        );
+        let events = drained(&mut rx);
+        assert!(events.iter().any(|e| matches!(e, Event::Message(_))));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Event::Done { request: RequestId(7), result: Ok(Some(id)), .. } if id == "sent-1"
+        )));
+    }
+
+    #[tokio::test]
+    async fn revoked_chat_access_ends_the_connection_with_a_notice() {
+        let (helix_url, _) = helix_server().await;
+        let url = socket_server(|mut ws| async move {
+            ws.send(welcome("s1", 10)).await.unwrap();
+            let sub = json!({"subscription": {"type": "channel.chat.message", "status": "authorization_revoked"}});
+            ws.send(frame("revocation", sub)).await.unwrap();
+            let _ = ws.next().await;
+        })
+        .await;
+        let (mut ctx, helix, mut rx, _tx) = setup(&helix_url);
+        let mut url = url;
+        let end = connection(&mut ctx, &helix, &identity(), &account(), &mut url, true).await;
+        assert!(matches!(end, Ws::Lost(why) if why.contains("revoked")));
+        assert!(drained(&mut rx).iter().any(|e| matches!(
+            e,
+            Event::Notice { text, .. } if text.contains("authorization_revoked")
+        )));
+    }
+
+    #[tokio::test]
+    async fn a_silent_connection_counts_as_lost() {
+        let (helix_url, _) = helix_server().await;
+        let url = socket_server(|mut ws| async move {
+            ws.send(welcome("s1", 1)).await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(ws);
+        })
+        .await;
+        let (mut ctx, helix, _rx, _tx) = setup(&helix_url);
+        let mut url = url;
+        let end = timeout(
+            Duration::from_secs(15),
+            connection(&mut ctx, &helix, &identity(), &account(), &mut url, true),
+        )
+        .await
+        .expect("keepalive timeout never fired");
+        assert!(matches!(end, Ws::Lost(why) if why.contains("quiet")));
+    }
+}
