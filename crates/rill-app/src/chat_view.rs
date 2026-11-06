@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 
 use crate::focus;
 use crate::image_cache::BoundedImageCache;
+use crate::navigate;
 use crate::panels::Panel;
 use crate::style;
 
@@ -53,6 +54,10 @@ pub struct ChatView {
     pub(crate) panel: Panel,
     /// The Ctrl+F bar, while open.
     pub(crate) search: Option<crate::search::Search>,
+    /// The feed, as a focus stop for keyboard access to messages.
+    pub(crate) feed_focus: FocusHandle,
+    /// The message picked with the arrow keys, by feed sequence number.
+    pub(crate) selected: Option<u64>,
     /// The Kick channel name box in Accounts.
     pub(crate) kick_channel: Entity<gpui_component::input::InputState>,
     /// The Rumble Live Stream API link box in Accounts; masked, since the link holds a key.
@@ -122,6 +127,8 @@ impl ChatView {
             tab_leaves: false,
             panel: Panel::None,
             search: None,
+            feed_focus: cx.focus_handle().tab_stop(true),
+            selected: None,
             kick_channel: cx.new(|cx| {
                 gpui_component::input::InputState::new(window, cx).placeholder("Kick channel name")
             }),
@@ -434,6 +441,13 @@ impl ChatView {
             .relative()
             .flex_1()
             .min_h_0()
+            .track_focus(&self.feed_focus)
+            .key_context(navigate::CONTEXT)
+            .on_action(cx.listener(Self::on_select_prev))
+            .on_action(cx.listener(Self::on_select_next))
+            .on_action(cx.listener(Self::on_select_first))
+            .on_action(cx.listener(Self::on_select_last))
+            .on_action(cx.listener(Self::on_open_selected))
             .image_cache(self.images.clone())
             .child(
                 list(

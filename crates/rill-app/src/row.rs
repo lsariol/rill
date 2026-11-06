@@ -19,13 +19,30 @@ const EMOTE: f32 = 22.;
 const ICON: f32 = 14.;
 
 impl ChatView {
-    /// Renders the visible entry at `ix`.
+    /// Renders the visible entry at `ix`, outlined when it's picked with the keyboard.
     pub(crate) fn render_row(
         &mut self,
         ix: usize,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let row = self.row_element(ix, cx);
+        let picked = self.selected.is_some()
+            && self.session.feed.visible(ix).map(|e| e.seq) == self.selected
+            && self.feed_focused(window, cx);
+        if !picked {
+            return row;
+        }
+        div()
+            .w_full()
+            .bg(rgb(style::RAISED))
+            .border_l_2()
+            .border_color(rgb(style::LINK))
+            .child(row)
+            .into_any_element()
+    }
+
+    fn row_element(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         self.stats.rows += 1;
         let compact = self.is_compact();
         let Some(entry) = self.session.feed.visible(ix) else {

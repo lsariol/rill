@@ -88,8 +88,10 @@ impl ChatView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The composer and the messages are the two regions; Tab reaches the buttons from either.
         if self.composer_focused(window, cx) {
-            self.leave_composer(true, window, cx);
+            self.tab_leaves = false;
+            self.focus_feed(window, cx);
         } else {
             self.focus_composer(window, cx);
         }
@@ -109,6 +111,8 @@ impl ChatView {
             self.tab_leaves = !self.tab_leaves;
             cx.notify();
         } else {
+            // From the messages or a card's buttons, Esc also closes the card.
+            self.panel = crate::panels::Panel::None;
             self.focus_composer(window, cx);
         }
     }

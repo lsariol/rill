@@ -6,6 +6,7 @@ mod chat_view;
 mod composer;
 mod focus;
 mod image_cache;
+mod navigate;
 mod panels;
 mod row;
 mod search;
@@ -203,6 +204,7 @@ fn main() -> ExitCode {
         composer::init(cx);
         focus::init(cx);
         search::init(cx);
+        navigate::init(cx);
 
         let bounds = Bounds::centered(None, size(px(440.), px(720.)), cx);
         let window_options = WindowOptions {

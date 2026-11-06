@@ -614,6 +614,7 @@ impl ChatView {
                 false,
             ));
         }
+        let no_actions = actions.is_empty() && self.session.connected().contains(&p);
         let buttons = actions
             .into_iter()
             .enumerate()
@@ -663,6 +664,11 @@ impl ChatView {
                     )
                 },
             ))
+            .when(no_actions, |d| {
+                d.child(div().text_xs().text_color(rgb(style::FAINT)).child(format!(
+                    "This {p} account can't moderate here (read-only, or not a moderator)."
+                )))
+            })
             .into_any_element()
     }
 

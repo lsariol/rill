@@ -51,9 +51,10 @@ go to Windows Credential Manager under `rill-dev`. Release builds use `%LOCALAPP
   what you type, with a count of matches. Esc closes it.
 - **Scrolling:** scroll up (or press PgUp) to pause the feed; a scrollbar appears for dragging
   back through older messages, and a button jumps back to live chat.
-- **Keyboard:** F6 moves between the composer and the buttons; Tab and Shift+Tab move between
+- **Keyboard:** F6 moves between the composer and the messages. In the messages, Up and Down (or
+  Home and End) pick one, and Enter or Space opens its user card. Tab and Shift+Tab move between
   buttons, and Enter or Space presses one. In the composer, press Esc (with nothing to close),
-  then Tab, to leave it. Esc anywhere else returns to the composer.
+  then Tab, to leave it. Esc anywhere else closes an open card and returns to the composer.
 
 ## Platform setup
 
