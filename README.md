@@ -113,6 +113,11 @@ folder; the benchmark scripts use `.dev\bench\data`.
   what you type, with a count of matches. Esc closes it.
 - **Scrolling:** scroll up (or press PgUp) to pause the feed; a scrollbar appears for dragging
   back through older messages, and a button jumps back to live chat.
+- **Highlights:** messages that mention you get a red bar and tint, and events (subscriptions,
+  gifted subs, raids, Rants, redemptions and ad breaks) a purple one. Marks along the right edge
+  show where they are in the history; drag the scrollbar to them, or click one to go there.
+  Settings → Highlights turns each on or off, picks their colors, and hides the marks
+  (`highlights` in `settings.json`).
 - **Keyboard:** F6 moves between the composer and the messages. In the messages, Up and Down (or
   Home and End) pick one, and Enter or Space opens its user card. Tab and Shift+Tab move between
   buttons, and Enter or Space presses one. In the composer, press Esc (with nothing to close),

@@ -149,7 +149,7 @@ impl ChatView {
                 // The message the open card is about stays marked while chat moves on.
                 let carded = matches!(&self.panel, Panel::User(c)
                     if c.platform == m.platform && c.message_id.as_deref() == Some(m.id.as_str()));
-                row_frame(entry.seq, entry.highlighted, compact)
+                row_frame(entry.seq, self.highlight_color(entry), compact)
                     .when(carded, |d| d.bg(rgb(style::RAISED)))
                     .when(!compact, |d| d.child(time(entry.seq, entry.received_ms)))
                     .child(gutter(Some(m.platform)))
@@ -173,14 +173,20 @@ impl ChatView {
                     .unwrap_or_else(|| "You".into());
                 sent_row(entry, s, &name, compact, self.link_hover_fn(cx)).into_any_element()
             }
-            Item::Notice(n) => {
-                notice_row(entry, n, compact, self.link_hover_fn(cx)).into_any_element()
-            }
+            Item::Notice(n) => notice_row(
+                entry,
+                n,
+                compact,
+                self.highlight_color(entry),
+                self.link_hover_fn(cx),
+            )
+            .into_any_element(),
         }
     }
 }
 
-fn row_frame(seq: u64, highlighted: bool, compact: bool) -> gpui::Stateful<gpui::Div> {
+/// A row: a colored bar and tint when it's highlighted (a mention or an event).
+fn row_frame(seq: u64, highlight: Option<u32>, compact: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id(ElementId::NamedInteger("row".into(), seq))
         .w_full()
@@ -190,12 +196,8 @@ fn row_frame(seq: u64, highlighted: bool, compact: bool) -> gpui::Stateful<gpui:
         .px_3()
         .py(px(if compact { 1. } else { 3. }))
         .border_l_2()
-        .border_color(rgb(if highlighted {
-            style::MENTION_BAR
-        } else {
-            style::BACKGROUND
-        }))
-        .when(highlighted, |d| d.bg(rgb(style::MENTION_BG)))
+        .border_color(rgb(highlight.unwrap_or(style::BACKGROUND)))
+        .when_some(highlight, |d, color| d.bg(style::hsla_alpha(color, 0.2)))
         .hover(|s| s.bg(rgb(style::PANEL)))
 }
 
@@ -456,7 +458,7 @@ fn sent_row(
         [one] => style::platform_icon(one.platform, ICON).into_any_element(),
         _ => all_mark().into_any_element(),
     };
-    row_frame(entry.seq, false, compact)
+    row_frame(entry.seq, None, compact)
         .when(!compact, |d| d.child(time(entry.seq, entry.received_ms)))
         .child(div().pt(px(3.)).w(px(ICON)).flex_none().child(mark))
         .child(div().flex_1().min_w_0().child(body).children(failures))
@@ -477,8 +479,14 @@ fn all_mark() -> impl IntoElement {
         )
 }
 
-fn notice_row(entry: &Entry, n: &Notice, compact: bool, hover: HoverFn) -> impl IntoElement {
-    row_frame(entry.seq, false, compact)
+fn notice_row(
+    entry: &Entry,
+    n: &Notice,
+    compact: bool,
+    highlight: Option<u32>,
+    hover: HoverFn,
+) -> impl IntoElement {
+    row_frame(entry.seq, highlight, compact)
         .when(!compact, |d| d.child(time(entry.seq, entry.received_ms)))
         .child(gutter(n.platform))
         .child(
@@ -486,7 +494,10 @@ fn notice_row(entry: &Entry, n: &Notice, compact: bool, hover: HoverFn) -> impl 
                 .flex_1()
                 .min_w_0()
                 .text_color(style::level_color(n.level))
-                .when(n.level == rill_core::Level::Info, |d| d.italic())
+                .when(
+                    matches!(n.level, rill_core::Level::Info | rill_core::Level::Event),
+                    |d| d.italic(),
+                )
                 .children(n.text.lines().enumerate().map(|(i, l)| {
                     let mut parts = Parts::default();
                     parts.linked(l, None);

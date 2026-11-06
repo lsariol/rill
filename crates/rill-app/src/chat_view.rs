@@ -63,6 +63,8 @@ pub struct ChatView {
     pub(crate) show_deleted: bool,
     /// Hovering a link fetches and shows its preview.
     pub(crate) link_previews: bool,
+    /// Which lines stand out, and in what colors.
+    pub(crate) highlights: rill_os::settings::Highlights,
     pub(crate) previews: crate::preview::Previews,
     /// The link under the pointer and where it starts (window coordinates).
     pub(crate) link_hover: Option<(String, gpui::Point<Pixels>)>,
@@ -77,6 +79,8 @@ pub struct ChatView {
     /// Set by Esc in the composer: the next Tab leaves it instead of switching the destination.
     pub(crate) tab_leaves: bool,
     pub(crate) panel: Panel,
+    /// The panel's scroll position, for long panels like Settings.
+    pub(crate) panel_scroll: gpui::ScrollHandle,
     /// Where the open user card's name was clicked (window y), to float the card beside it.
     pub(crate) card_at: Option<Pixels>,
     /// The feed's bounds as last drawn, for placing the user card.
@@ -174,6 +178,10 @@ impl ChatView {
             completion_ix: 0,
             show_deleted,
             link_previews,
+            highlights: saved
+                .as_ref()
+                .map(|s| s.highlights.clone())
+                .unwrap_or_default(),
             previews: Default::default(),
             link_hover: None,
             preview_task: None,
@@ -183,6 +191,7 @@ impl ChatView {
             composer_error: None,
             tab_leaves: false,
             panel: Panel::None,
+            panel_scroll: gpui::ScrollHandle::new(),
             card_at: None,
             feed_bounds: Rc::default(),
             target_focus: cx.focus_handle(),
@@ -372,6 +381,106 @@ impl ChatView {
         }
         let minutes = ((now - first) as f64 / 60_000.).max(0.5);
         (count >= 10).then(|| count as f64 / minutes)
+    }
+
+    /// Changes the highlight settings and saves them.
+    pub(crate) fn set_highlights(
+        &mut self,
+        change: impl Fn(&mut rill_os::settings::Highlights),
+        cx: &mut Context<Self>,
+    ) {
+        change(&mut self.highlights);
+        if self.platforms.saves()
+            && let Err(e) = rill_os::settings::update(|s| change(&mut s.highlights))
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+        }
+        self.list.remeasure();
+        cx.notify();
+    }
+
+    /// The color a line stands out in, if any: mentions first, then events.
+    pub(crate) fn highlight_color(&self, entry: &rill_core::Entry) -> Option<u32> {
+        let h = &self.highlights;
+        if entry.highlighted && h.mentions {
+            Some(style::parse_hex(&h.mention_color).unwrap_or(style::MENTION_BAR))
+        } else if entry.is_event() && h.events {
+            Some(style::parse_hex(&h.event_color).unwrap_or(0xa970ff))
+        } else {
+            None
+        }
+    }
+
+    /// Marks beside the scroll bar where highlighted lines are; clicking one scrolls to it.
+    fn render_marks(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let h = &self.highlights;
+        if !h.scrollbar_marks || !(h.mentions || h.events) {
+            return None;
+        }
+        let total = self.session.feed.visible_len();
+        if total == 0 {
+            return None;
+        }
+        // One mark per slot, so a busy stretch doesn't draw thousands; mentions win a slot.
+        const SLOTS: usize = 300;
+        let mut slots: Vec<Option<(usize, bool)>> = vec![None; SLOTS];
+        for m in self.session.feed.marks() {
+            if !(if m.mention { h.mentions } else { h.events }) {
+                continue;
+            }
+            let slot = (m.ix * SLOTS / total).min(SLOTS - 1);
+            match slots[slot] {
+                Some((_, true)) => {}
+                _ => slots[slot] = Some((m.ix, m.mention)),
+            }
+        }
+        let mention = style::parse_hex(&h.mention_color).unwrap_or(style::MENTION_BAR);
+        let event = style::parse_hex(&h.event_color).unwrap_or(0xa970ff);
+        let marks = slots.into_iter().flatten().map(|(ix, is_mention)| {
+            let top = ix as f32 / total as f32;
+            // A 3 px mark with a taller target around it.
+            div()
+                .id(("mark", ix))
+                .absolute()
+                .top(gpui::relative(top))
+                .mt(px(-2.))
+                .left_0()
+                .w_full()
+                .h(px(7.))
+                .py(px(2.))
+                .cursor_pointer()
+                // The scroll bar underneath mustn't also take the press.
+                .occlude()
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |view, _, _, cx| view.scroll_to_line(ix, cx)))
+                .child(div().size_full().rounded_sm().bg(rgb(if is_mention {
+                    mention
+                } else {
+                    event
+                })))
+        });
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right(px(2.))
+                .w(px(6.))
+                .children(marks)
+                .into_any_element(),
+        )
+    }
+
+    /// Scrolls so a line is in view, a little below the top, and stops following.
+    fn scroll_to_line(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.list.scroll_to(gpui::ListOffset {
+            item_ix: ix.saturating_sub(2),
+            offset_in_item: px(0.),
+        });
+        self.following = self.list.is_following_tail();
+        cx.notify();
     }
 
     /// Turns link previews on or off, and saves the choice.
@@ -702,6 +811,8 @@ impl ChatView {
             .when(!self.following, |d| {
                 d.child(Scrollbar::vertical(&self.list).mode(ScrollbarMode::Always))
             })
+            // Over the scroll bar, so a click on a mark goes to its line.
+            .children(self.render_marks(cx))
             .children(jump)
             .child({
                 let bounds = self.feed_bounds.clone();
