@@ -1,6 +1,6 @@
 [package]
 name = "rill-emotes"
-description = "Rill's third-party emotes: loads 7TV emote sets and keeps them current."
+description = "Rill's third-party emotes: 7TV (kept current), BetterTTV and FrankerFaceZ."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

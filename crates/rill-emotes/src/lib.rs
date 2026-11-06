@@ -2,6 +2,7 @@
 //! set current over 7TV's event socket, and swaps emote names in messages for images.
 
 mod live;
+mod others;
 pub mod seven_tv;
 
 use std::collections::HashMap;
@@ -31,7 +32,8 @@ impl Emote {
         Fragment::Emote {
             name: self.name.clone(),
             url: Some(self.url.clone()),
-            size: Some(self.size),
+            // A provider that doesn't give sizes leaves them 0: drawn at emote height.
+            size: (self.size.0 > 0 && self.size.1 > 0).then_some(self.size),
             overlay: self.overlay,
         }
     }
@@ -42,9 +44,12 @@ pub type EmoteSet = HashMap<String, Emote>;
 
 #[derive(Default)]
 struct Sets {
-    /// Shared by every chat, so it's downloaded once.
+    /// 7TV, BetterTTV and FrankerFaceZ globals, shared by every chat so they're downloaded once.
     global: Arc<EmoteSet>,
+    /// The channel's 7TV set, kept current.
     channel: EmoteSet,
+    /// The channel's BetterTTV and FrankerFaceZ emotes (Twitch only).
+    others: EmoteSet,
 }
 
 /// The emotes one chat shows. A channel's emote wins over a global one with the same name.
@@ -57,13 +62,12 @@ impl Emotes {
     /// How many global and channel emotes are loaded.
     pub fn counts(&self) -> (usize, usize) {
         let s = self.read();
-        (s.global.len(), s.channel.len())
+        (s.global.len(), s.channel.len() + s.others.len())
     }
 
     /// The emote chat means by `word`, if any.
     pub fn find(&self, word: &str) -> Option<Emote> {
-        let s = self.read();
-        s.channel.get(word).or_else(|| s.global.get(word)).cloned()
+        self.read().find(word).cloned()
     }
 
     fn read(&self) -> std::sync::RwLockReadGuard<'_, Sets> {
@@ -82,24 +86,33 @@ impl Emotes {
         self.write().channel = set;
     }
 
+    pub(crate) fn set_others(&self, set: EmoteSet) {
+        self.write().others = set;
+    }
+
     pub(crate) fn change_channel(&self, f: impl FnOnce(&mut EmoteSet)) {
         f(&mut self.write().channel);
+    }
+}
+
+impl Sets {
+    /// The channel's own emotes first (7TV, then BetterTTV and FrankerFaceZ), then the globals.
+    fn find(&self, word: &str) -> Option<&Emote> {
+        self.channel
+            .get(word)
+            .or_else(|| self.others.get(word))
+            .or_else(|| self.global.get(word))
     }
 }
 
 impl Enrich for Emotes {
     fn enrich(&self, message: &mut ChatMessage) {
         let s = self.read();
-        if s.global.is_empty() && s.channel.is_empty() {
+        if s.global.is_empty() && s.channel.is_empty() && s.others.is_empty() {
             return;
         }
         let fragments = std::mem::take(&mut message.fragments);
-        message.fragments = replace_words(fragments, |w| {
-            s.channel
-                .get(w)
-                .or_else(|| s.global.get(w))
-                .map(Emote::fragment)
-        });
+        message.fragments = replace_words(fragments, |w| s.find(w).map(Emote::fragment));
     }
 }
 
@@ -149,8 +162,23 @@ async fn run(http: reqwest::Client, cfg: Config, channel: Option<Channel>, emote
         loop {
             let loaded = cell
                 .get_or_try_init(|| async {
-                    let set = seven_tv::global(&http, &cfg).await?;
-                    tracing::debug!(count = set.len(), "7TV global emotes loaded");
+                    let mut set = seven_tv::global(&http, &cfg).await?;
+                    // BetterTTV and FrankerFaceZ are extras: a failure there doesn't hold up 7TV's.
+                    let (bttv, ffz) = tokio::join!(
+                        others::bttv_global(&http, &cfg.bttv),
+                        others::ffz_global(&http, &cfg.ffz)
+                    );
+                    for extra in [bttv, ffz] {
+                        match extra {
+                            Ok(extra) => {
+                                for (name, e) in extra {
+                                    set.entry(name).or_insert(e);
+                                }
+                            }
+                            Err(e) => tracing::warn!(err = %e, "Global emotes not loaded"),
+                        }
+                    }
+                    tracing::debug!(count = set.len(), "Global emotes loaded");
                     Ok::<_, String>(Arc::new(set))
                 })
                 .await;
@@ -166,12 +194,39 @@ async fn run(http: reqwest::Client, cfg: Config, channel: Option<Channel>, emote
             }
         }
     };
+    let others = async {
+        // BetterTTV and FrankerFaceZ know Twitch channels only.
+        let Some(id) = channel
+            .as_ref()
+            .filter(|c| c.platform == "twitch")
+            .and_then(|c| c.ids.first())
+        else {
+            return;
+        };
+        let (bttv, ffz) = tokio::join!(
+            others::bttv_channel(&http, &cfg.bttv, id),
+            others::ffz_channel(&http, &cfg.ffz, id)
+        );
+        let mut set = EmoteSet::new();
+        for (what, loaded) in [("BetterTTV", bttv), ("FrankerFaceZ", ffz)] {
+            match loaded {
+                Ok(extra) => {
+                    tracing::debug!(count = extra.len(), source = what, "Channel emotes loaded");
+                    for (name, e) in extra {
+                        set.entry(name).or_insert(e);
+                    }
+                }
+                Err(e) => tracing::warn!(err = %e, "Channel emotes not loaded"),
+            }
+        }
+        emotes.set_others(set);
+    };
     let channel = async {
-        if let Some(channel) = channel {
-            follow_channel(&http, &cfg, &channel, &emotes).await;
+        if let Some(channel) = channel.as_ref() {
+            follow_channel(&http, &cfg, channel, &emotes).await;
         }
     };
-    tokio::join!(global, channel);
+    tokio::join!(global, others, channel);
 }
 
 /// A global set that loads once and is then shared.
@@ -319,7 +374,8 @@ mod live_7tv {
         let f = follow(reqwest::Client::new(), Config::default(), Some(channel));
         loop {
             let (global, channel) = f.emotes().counts();
-            if global > 0 && channel > 1000 {
+            // 7TV's 3,000-odd plus the channel's BetterTTV and FrankerFaceZ emotes.
+            if global > 100 && channel > 3_210 {
                 println!(
                     "{global} global and {channel} channel emotes in {:?}",
                     started.elapsed()

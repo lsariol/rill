@@ -234,6 +234,8 @@ mod tests {
         Config {
             api: "http://127.0.0.1:9".into(),
             events,
+            bttv: "http://127.0.0.1:9".into(),
+            ffz: "http://127.0.0.1:9".into(),
         }
     }
 

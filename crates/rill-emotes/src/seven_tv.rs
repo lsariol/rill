@@ -6,11 +6,15 @@ use serde::Deserialize;
 
 use crate::{Emote, EmoteSet};
 
-/// 7TV's API and event socket addresses; tests point them at local servers.
+/// The emote services' addresses; tests point them at local servers.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// 7TV's API.
     pub api: String,
+    /// 7TV's event socket.
     pub events: String,
+    pub bttv: String,
+    pub ffz: String,
 }
 
 impl Default for Config {
@@ -18,6 +22,8 @@ impl Default for Config {
         Config {
             api: "https://7tv.io/v3".into(),
             events: "wss://events.7tv.io/v3".into(),
+            bttv: "https://api.betterttv.net/3".into(),
+            ffz: "https://api.frankerfacez.com/v1".into(),
         }
     }
 }
