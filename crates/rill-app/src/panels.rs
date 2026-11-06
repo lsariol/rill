@@ -315,11 +315,7 @@ impl ChatView {
                     .items_center()
                     .gap_1()
                     .mt_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&self.kick_channel).xsmall()),
-                    )
+                    .child(field(Input::new(&self.kick_channel).xsmall()))
                     .child(
                         Button::new("kick-join")
                             .xsmall()
@@ -361,10 +357,17 @@ impl ChatView {
                     .mt_1()
                     .child(
                         div()
+                            .text_xs()
+                            .font_bold()
+                            .text_color(rgb(style::MUTED))
+                            .child("Live Stream API link (not your stream key)"),
+                    )
+                    .child(
+                        div()
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(div().flex_1().child(Input::new(&self.rumble_link).xsmall()))
+                            .child(field(Input::new(&self.rumble_link).xsmall()))
                             .child(
                                 Button::new("rumble-connect")
                                     .xsmall()
@@ -767,7 +770,7 @@ impl ChatView {
                     .child(style::platform_icon(form.platform, 14.))
                     .child(format!("New poll on {}", form.platform)),
             )
-            .child(Input::new(&form.title).small())
+            .child(field(Input::new(&form.title).small()))
             .child(Textarea::new(&form.choices))
             .child(
                 div()
@@ -799,4 +802,16 @@ impl ChatView {
             .min_w(px(0.))
             .into_any_element()
     }
+}
+
+/// A text box with a visible frame, so it stands out from the panel behind it.
+fn field(input: impl IntoElement) -> gpui::Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .rounded_md()
+        .border_1()
+        .border_color(rgb(style::FAINT))
+        .bg(rgb(style::BACKGROUND))
+        .child(input)
 }
