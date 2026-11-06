@@ -5272,6 +5272,7 @@ dependencies = [
  "rill-core",
  "rill-kick",
  "rill-os",
+ "rill-rumble",
  "rill-sim",
  "rill-twitch",
  "rill-youtube",
@@ -5333,6 +5334,21 @@ dependencies = [
  "keyring",
  "serde",
  "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "rill-rumble"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "reqwest",
+ "rill-core",
+ "rill-emotes",
+ "rill-os",
+ "serde",
+ "serde_json",
+ "tokio",
  "tracing",
 ]
 

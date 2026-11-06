@@ -266,6 +266,8 @@ impl ChatView {
     ) {
         let label = match &command {
             Command::SignOut => format!("Signed out of {p}"),
+            // Rumble's "channel" is a private link: never echo it.
+            Command::Join { .. } if p == Platform::Rumble => format!("Connected {p}"),
             Command::Join { channel } => format!("Joined {p} channel \"{}\"", channel.trim()),
             _ => format!("Signed in to {p}"),
         };
@@ -330,9 +332,72 @@ impl ChatView {
                 && account.is_none()
             {
                 SharedString::from("Reading chat (read-only)")
+            } else if p == Platform::Rumble && status == ConnectionStatus::Connected {
+                SharedString::from(format!(
+                    "Reading {} (read-only)",
+                    account.clone().unwrap_or_else(|| "chat".into())
+                ))
             } else {
                 line
             };
+            // Rumble connects with the private link from the account's Live Stream API page.
+            let rumble_link = (p == Platform::Rumble
+                && set_up
+                && !matches!(
+                    status,
+                    ConnectionStatus::Connected
+                        | ConnectionStatus::Reconnecting { .. }
+                        | ConnectionStatus::Connecting
+                ))
+            .then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .mt_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(div().flex_1().child(Input::new(&self.rumble_link).xsmall()))
+                            .child(
+                                Button::new("rumble-connect")
+                                    .xsmall()
+                                    .primary()
+                                    .label("Connect")
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        let link = view.rumble_link.read(cx).value().to_string();
+                                        view.rumble_link
+                                            .update(cx, |s, cx| s.set_value("", window, cx));
+                                        view.account(
+                                            Platform::Rumble,
+                                            Command::Join { channel: link },
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_xs()
+                            .text_color(rgb(style::FAINT))
+                            .child("Copy it from rumble.com/account/livestream-api.")
+                            .child(
+                                Button::new("rumble-page")
+                                    .xsmall()
+                                    .ghost()
+                                    .label("Open page")
+                                    .on_click(|_, _, cx| {
+                                        cx.open_url("https://rumble.com/account/livestream-api")
+                                    }),
+                            ),
+                    )
+            });
             // Kick reads without an account; signing in adds sending and moderation.
             let kick_sign_in =
                 (p == Platform::Kick && set_up && account.is_none() && prompt.is_none()).then(
@@ -347,7 +412,7 @@ impl ChatView {
                             }))
                     },
                 );
-            let button = if !set_up || read_only_kick {
+            let button = if !set_up || read_only_kick || rumble_link.is_some() {
                 None
             } else {
                 match status {
@@ -464,6 +529,7 @@ impl ChatView {
                 .children(error.map(|e| div().text_xs().text_color(rgb(style::ERROR)).child(e)))
                 .children(prompt_box)
                 .children(kick_join)
+                .children(rumble_link)
         });
         div()
             .flex()

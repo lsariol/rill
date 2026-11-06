@@ -62,6 +62,8 @@ impl SimAdapter {
             Platform::YouTube | Platform::Kick => {
                 Capabilities::of(&[Send, Delete, Timeout, Ban, Unban])
             }
+            // Rumble's Live Stream API only reads.
+            Platform::Rumble => Capabilities::NONE,
         }
     }
 }

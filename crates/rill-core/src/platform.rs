@@ -8,11 +8,17 @@ pub enum Platform {
     Twitch,
     YouTube,
     Kick,
+    Rumble,
 }
 
 impl Platform {
     /// Every platform, in the order the composer cycles through them.
-    pub const ALL: [Platform; 3] = [Platform::Twitch, Platform::YouTube, Platform::Kick];
+    pub const ALL: [Platform; 4] = [
+        Platform::Twitch,
+        Platform::YouTube,
+        Platform::Kick,
+        Platform::Rumble,
+    ];
 
     /// The platform's display name.
     pub fn name(self) -> &'static str {
@@ -20,6 +26,7 @@ impl Platform {
             Platform::Twitch => "Twitch",
             Platform::YouTube => "YouTube",
             Platform::Kick => "Kick",
+            Platform::Rumble => "Rumble",
         }
     }
 }

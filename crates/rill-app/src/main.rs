@@ -134,6 +134,7 @@ fn real_adapters() -> (Vec<Box<dyn Adapter>>, Vec<String>) {
         Box::new(rill_twitch::TwitchAdapter::new(&settings.twitch)),
         Box::new(rill_youtube::YouTubeAdapter::new(&settings.youtube)),
         Box::new(rill_kick::KickAdapter::new(&settings.kick)),
+        Box::new(rill_rumble::RumbleAdapter::new()),
     ];
     (adapters, errors)
 }

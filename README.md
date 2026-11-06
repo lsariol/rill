@@ -1,6 +1,6 @@
 # Rill
 
-A fast native desktop chat client for multistreamers: Twitch, YouTube and Kick chat in one
+A fast native desktop chat client for multistreamers: Twitch, YouTube, Kick and Rumble chat in one
 chronological feed, with one composer that sends to every platform or just one.
 
 Rust, [GPUI](https://gpui.rs) and Tokio. Windows first; macOS and Linux later from the same code.
@@ -77,6 +77,10 @@ Rill needs an app registration on each platform. Until release builds carry them
   secret, so a development build takes `client_secret` from `settings.json`; a release build instead
   sets `auth_helper` to a small token-exchange service that holds the secret. Sign-in listens on
   port 47831 while it waits for Kick. Kick timeouts last at most 7 days.
+- **Rumble:** read-only. In Accounts, paste the private link from rumble.com/account/livestream-api
+  (it starts `https://rumble.com/-livestream-api/get-data?key=`); Rill keeps it in the system's
+  credential store, not in `settings.json`. Rumble's Live Stream API is polled every 10 seconds,
+  so its chat arrives up to 10 seconds late, and Rants show as events with their amount.
 
 Release builds can carry the IDs instead: set `RILL_TWITCH_CLIENT_ID`, `RILL_YOUTUBE_CLIENT_ID` and
 `RILL_YOUTUBE_CLIENT_SECRET` when building.
@@ -98,6 +102,7 @@ powershell -File scripts/soak.ps1 -Minutes 480   # long-stream memory check
 | `rill-twitch` | Twitch: device-code sign-in, EventSub chat, Helix actions |
 | `rill-youtube` | YouTube: desktop sign-in with PKCE, live chat polling, moderation |
 | `rill-kick` | Kick: reads chat from Kick's chat socket (Centrifugo or Pusher); signs in, sends and moderates through the official API |
+| `rill-rumble` | Rumble: polls the Live Stream API for live chat and Rants (read-only) |
 | `rill-emotes` | 7TV emotes: loads global and channel sets and follows changes over 7TV's event socket |
 | `rill-os` | Data folders, `settings.json`, the OS credential store |
 | `rill-app` | The GPUI app; the only crate that depends on GPUI |

@@ -17,6 +17,10 @@ const OWN: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/youtube.svg"),
     ),
     ("icons/kick.svg", include_bytes!("../assets/icons/kick.svg")),
+    (
+        "icons/rumble.svg",
+        include_bytes!("../assets/icons/rumble.svg"),
+    ),
 ];
 
 impl AssetSource for Assets {

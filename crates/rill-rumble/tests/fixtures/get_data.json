@@ -1,0 +1,52 @@
+{
+  "now": 1762408800,
+  "type": "channel",
+  "user_id": "_u1",
+  "username": "somestreamer",
+  "channel_id": "_c1",
+  "channel_name": "Some Streamer",
+  "max_num_results": 50,
+  "followers": {
+    "num_followers": 10,
+    "num_followers_total": 120,
+    "latest_follower": {"username": "newfan", "followed_on": "2026-11-06T05:59:00+00:00"},
+    "recent_followers": [{"username": "newfan", "followed_on": "2026-11-06T05:59:00+00:00"}]
+  },
+  "subscribers": {
+    "num_subscribers": 1,
+    "num_subscribers_total": 5,
+    "latest_subscriber": null,
+    "recent_subscribers": []
+  },
+  "livestreams": [
+    {
+      "id": "v1old",
+      "title": "Yesterday",
+      "created_on": "2026-11-05T20:00:00+00:00",
+      "is_live": false,
+      "chat": {"latest_message": null, "recent_messages": [], "latest_rant": null, "recent_rants": []}
+    },
+    {
+      "id": "v2live",
+      "title": "Live now",
+      "created_on": "2026-11-06T05:00:00+00:00",
+      "is_live": true,
+      "categories": {"primary": {"slug": "gaming", "title": "Gaming"}},
+      "likes": 3,
+      "dislikes": 0,
+      "watching_now": 42,
+      "chat": {
+        "latest_message": {"username": "viewer2", "badges": ["premium"], "text": "second", "created_on": "2026-11-06T06:00:05+00:00"},
+        "recent_messages": [
+          {"username": "viewer1", "badges": [], "text": "first @somestreamer", "created_on": "2026-11-06T06:00:00+00:00"},
+          {"username": "mod1", "badges": ["moderator"], "text": "be nice", "created_on": "2026-11-06T06:00:01+00:00"},
+          {"username": "viewer2", "badges": ["premium"], "text": "second", "created_on": "2026-11-06T06:00:05+00:00"}
+        ],
+        "latest_rant": {"username": "bigfan", "badges": [], "text": "great stream", "created_on": "2026-11-06T06:00:03+00:00", "expires_on": "2026-11-06T06:05:03+00:00", "amount_cents": 500, "amount_dollars": 5},
+        "recent_rants": [
+          {"username": "bigfan", "badges": [], "text": "great stream", "created_on": "2026-11-06T06:00:03+00:00", "expires_on": "2026-11-06T06:05:03+00:00", "amount_cents": 500, "amount_dollars": 5}
+        ]
+      }
+    }
+  ]
+}

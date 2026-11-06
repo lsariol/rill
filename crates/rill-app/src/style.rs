@@ -26,6 +26,7 @@ pub fn platform_color(p: Platform) -> Rgba {
         Platform::Twitch => 0x9146ff,
         Platform::YouTube => 0xff0000,
         Platform::Kick => 0x53fc18,
+        Platform::Rumble => 0x85c742,
     })
 }
 
@@ -35,6 +36,7 @@ pub fn platform_icon(p: Platform, size: f32) -> Svg {
         Platform::Twitch => "icons/twitch.svg",
         Platform::YouTube => "icons/youtube.svg",
         Platform::Kick => "icons/kick.svg",
+        Platform::Rumble => "icons/rumble.svg",
     };
     svg()
         .path(path)

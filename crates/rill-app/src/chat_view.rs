@@ -55,6 +55,8 @@ pub struct ChatView {
     pub(crate) search: Option<crate::search::Search>,
     /// The Kick channel name box in Accounts.
     pub(crate) kick_channel: Entity<gpui_component::input::InputState>,
+    /// The Rumble Live Stream API link box in Accounts; masked, since the link holds a key.
+    pub(crate) rumble_link: Entity<gpui_component::input::InputState>,
     pub(crate) compact: bool,
     effective_compact: bool,
     following: bool,
@@ -122,6 +124,11 @@ impl ChatView {
             search: None,
             kick_channel: cx.new(|cx| {
                 gpui_component::input::InputState::new(window, cx).placeholder("Kick channel name")
+            }),
+            rumble_link: cx.new(|cx| {
+                gpui_component::input::InputState::new(window, cx)
+                    .placeholder("Live Stream API link")
+                    .masked(true)
             }),
             compact: false,
             effective_compact: false,
