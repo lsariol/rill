@@ -331,12 +331,14 @@ impl Feed {
         let Item::Chat(m) = item else {
             return false;
         };
-        let Some(me) = self.own_names.get(&m.platform) else {
-            return false;
-        };
+        // Any of your names counts on any platform: viewers often use one name everywhere.
+        let names: Vec<&String> = self.own_names.values().collect();
         m.fragments.iter().any(|f| match f {
-            Fragment::Mention(name) => name.to_lowercase() == *me,
-            Fragment::Text(t) => contains_word(&t.to_lowercase(), me),
+            Fragment::Mention(name) => names.iter().any(|me| name.to_lowercase() == **me),
+            Fragment::Text(t) => {
+                let t = t.to_lowercase();
+                names.iter().any(|me| contains_word(&t, me))
+            }
             _ => false,
         })
     }
@@ -433,13 +435,15 @@ mod tests {
         f.push(chat(Platform::Twitch, "2", "a", "rill_dev: hi"), 0);
         f.push(chat(Platform::Twitch, "3", "a", "rill_devs are fun"), 0);
         f.push(chat(Platform::Kick, "4", "a", "@rill_dev"), 0);
+        f.push(chat(Platform::Kick, "5", "a", "@someone_else"), 0);
         let hl: Vec<bool> = f.entries().map(|e| e.highlighted).collect();
-        assert_eq!(hl, [true, true, false, false]);
+        // The Twitch name counts on Kick too.
+        assert_eq!(hl, [true, true, false, true, false]);
         f.set_filter(Filter {
             mentions_only: true,
             ..Filter::default()
         });
-        assert_eq!(f.visible_len(), 2);
+        assert_eq!(f.visible_len(), 3);
     }
 
     #[test]
