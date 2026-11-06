@@ -19,8 +19,9 @@ Rill's first release, in progress.
 - `/purge`, Twitch chat modes (`/slow`, `/followers`, `/subscribers`, `/emoteonly`, `/uniquechat`), `/announce`, `/shoutout` and `/search`. A command that only one connected platform can run goes there without asking. A Twitch sign-in from before these commands says to reconnect, instead of looking expired.
 - `/nuke`, `/meganuke` and `/unnuke`: time out or ban everyone who recently said a phrase, on every platform or one, after a confirmation that shows the count per platform; undo the last one. Moderators, VIPs, the broadcaster and you are left out, and Twitch rate limits are waited out instead of failing.
 - Replies: from a user card or with R on a picked message, on Twitch and Kick; the composer quotes the message, and replies in chat show what they answer.
-- Clicking a name opens a user card with the moderation actions that platform allows: delete, timeouts, ban and unban. It floats over the chat beside the message, which stays marked while chat keeps moving, and lists everything that user said that's still in the chat.
-- Chat text can be selected across messages and copied, with emotes copied as their names.
+- Clicking a name opens a user card with the moderation actions that platform allows: delete, timeouts, ban and unban. It floats over the chat beside the message, which stays marked while chat keeps moving, and lists everything that user said that's still in the chat. Its actions leave the card open and the chat where it is, and a click anywhere else closes it.
+- Chat text can be selected across messages and copied, each line with its time, and emotes as their names. The time is the first column of every row.
+- Hovering a badge says what it is, including how long a subscriber has subscribed. Twitch channels' custom moderator and VIP badges from FrankerFaceZ are shown, along with Twitch and Kick channels' own subscriber badges.
 - Links are clickable on every platform and open in the browser. Hovering one shows a preview with the page's title, description and picture, fetched only while hovering and never for local addresses; "Link previews" in Settings turns previews off.
 - A poll form (question, 2 to 5 choices, length) for Twitch.
 - Accounts: connect Twitch with a device code, YouTube through the browser, and pick a Kick channel to read. Tokens are kept in the system's credential store.

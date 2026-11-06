@@ -222,9 +222,14 @@ fn chat_message(d: &Value, sub_badges: &SubBadges) -> ChatMessage {
             }
             _ => {}
         }
+        let mut title = b["text"].as_str().unwrap_or(kind).to_string();
+        let months = b["count"].as_u64().unwrap_or(0);
+        if matches!(kind, "subscriber" | "founder") && months > 0 {
+            title = format!("{title} · {}", rill_core::message::tenure(months));
+        }
         badges.push(Badge {
             id: format!("{kind}/1"),
-            title: b["text"].as_str().unwrap_or(kind).to_string(),
+            title,
             image_url,
         });
     }

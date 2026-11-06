@@ -464,10 +464,26 @@ async fn identify(
             }
         }
     };
-    let badges = helix.badges(&channel.id).await.unwrap_or_else(|e| {
+    let mut badges = helix.badges(&channel.id).await.unwrap_or_else(|e| {
         tracing::warn!(err = %e.message(), "Twitch badges not loaded");
         Badges::new()
     });
+    // Channels can set their own moderator and VIP badges on FrankerFaceZ.
+    let custom = rill_emotes::room_badges(http, &channel.id).await;
+    for (set, url) in [("moderator", custom.moderator), ("vip", custom.vip)] {
+        let Some(url) = url else { continue };
+        let title = badges
+            .get(&format!("{set}/1"))
+            .map(|(t, _)| t.clone())
+            .unwrap_or_else(|| {
+                if set == "vip" {
+                    "VIP".into()
+                } else {
+                    "Moderator".into()
+                }
+            });
+        badges.insert(format!("{set}/1"), (title, url));
+    }
     let missing = auth::SCOPES
         .split_whitespace()
         .filter(|s| !validated.scopes.iter().any(|have| have == s))

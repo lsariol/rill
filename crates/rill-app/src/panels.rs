@@ -194,6 +194,13 @@ impl ChatView {
             .shadow_lg()
             // It floats over the messages: clicks stop here, scrolling still passes.
             .block_mouse_except_scroll()
+            // A press anywhere else closes it (a name pressed opens that name's card instead).
+            .on_mouse_down_out(cx.listener(|view, _, _, cx| {
+                if matches!(view.panel, Panel::User(_)) {
+                    view.panel = Panel::None;
+                    cx.notify();
+                }
+            }))
             .flex()
             .gap_2()
             .child(
@@ -278,6 +285,27 @@ impl ChatView {
     fn on_target_cancel(&mut self, _: &TargetCancel, window: &mut Window, cx: &mut Context<Self>) {
         self.panel = Panel::None;
         self.focus_composer(window, cx);
+    }
+
+    /// A moderation button on the user card: runs it and leaves everything where it is: the
+    /// card stays open and the chat doesn't jump to the newest message.
+    fn run_card_action(
+        &mut self,
+        platform: Platform,
+        plan: Plan,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.session.execute(platform, plan) {
+            rill_core::Submitted::Send(out) => {
+                self.dispatch(out);
+                self.sync_list();
+                cx.notify();
+            }
+            other => {
+                self.handle_submitted(other, window, cx);
+            }
+        }
     }
 
     fn run_plan(
@@ -880,9 +908,23 @@ impl ChatView {
             .into_any_element()
     }
 
+    /// Whether the feed shows this message as deleted.
+    fn message_deleted(&self, p: Platform, id: &str) -> bool {
+        self.session.feed.entries().any(|e| {
+            e.deleted
+                && matches!(&e.item, rill_core::Item::Chat(m) if m.platform == p && m.id == id)
+        })
+    }
+
     fn render_user_card(&self, card: UserCard, cx: &mut Context<Self>) -> AnyElement {
         let p = card.platform;
         let a = &card.author;
+        // Read live: a message deleted while the card is open loses its Delete and Reply.
+        let deleted = card.deleted
+            || card
+                .message_id
+                .as_ref()
+                .is_some_and(|id| self.message_deleted(p, id));
         let user = UserRef {
             id: Some(a.id.clone()),
             login: a.login.clone(),
@@ -932,7 +974,7 @@ impl ChatView {
         if let Some(id) = card
             .message_id
             .clone()
-            .filter(|_| !card.deleted && can(Action::Delete))
+            .filter(|_| !deleted && can(Action::Delete))
         {
             actions.push((
                 "Delete message".into(),
@@ -985,7 +1027,7 @@ impl ChatView {
         let reply = card
             .message_id
             .clone()
-            .filter(|_| !card.deleted && can(Action::Reply))
+            .filter(|_| !deleted && can(Action::Reply))
             .map(|message_id| {
                 let replying = Replying {
                     platform: p,
@@ -1010,7 +1052,7 @@ impl ChatView {
                 let b = Button::new(("mod", i)).xsmall().label(label);
                 let b = if danger { b.danger() } else { b.outline() };
                 b.on_click(cx.listener(move |view, _, window, cx| {
-                    view.run_plan(p, plan.clone(), window, cx);
+                    view.run_card_action(p, plan.clone(), window, cx);
                 }))
             });
         let login =

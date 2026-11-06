@@ -5,8 +5,8 @@ use std::rc::Rc;
 use chrono::TimeZone;
 use gpui::{
     AnyElement, Context, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, ParentElement, Styled, StyledImage, Window, div, img, prelude::FluentBuilder, px,
-    rgb,
+    IntoElement, ParentElement, StatefulInteractiveElement, Styled, StyledImage, Window, div, img,
+    prelude::FluentBuilder, px, rgb,
 };
 use rill_core::feed::{DeliveryState, Notice, SentMessage};
 use rill_core::{Badge, ChatMessage, Entry, Fragment, Item, MessageKind, Platform};
@@ -15,6 +15,8 @@ use crate::chat_text::{self, ChatText, ClickFn, HoverFn, Parts, Target};
 use crate::chat_view::ChatView;
 use crate::panels::{Panel, UserCard};
 use crate::style;
+use gpui::SharedString;
+use gpui_component::tooltip::Tooltip;
 
 pub(crate) const EMOTE: f32 = 22.;
 const ICON: f32 = 14.;
@@ -31,17 +33,18 @@ impl ChatView {
     /// A chat message's selectable text; clicking the name opens the user card.
     fn chat_text(
         &self,
-        seq: u64,
+        entry: &Entry,
         m: &ChatMessage,
-        deleted: bool,
         card: UserCard,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let (seq, deleted) = (entry.seq, entry.deleted);
         let soft = deleted && self.show_deleted;
         let parts = chat_parts(m, deleted && !soft);
         let view = cx.entity().downgrade();
         let hover = self.link_hover_fn(cx);
-        let text = ChatText::new(("chat-text", seq), order(seq, 0), parts)
+        let text = ChatText::new(("chat-text", seq), order(seq, 1), parts)
+            .copy_prefix(copy_time(entry.received_ms))
             .on_hover(hover)
             .on_click(Rc::new(move |target, at, window, cx| match target {
                 Target::Name => {
@@ -148,17 +151,17 @@ impl ChatView {
                     if c.platform == m.platform && c.message_id.as_deref() == Some(m.id.as_str()));
                 row_frame(entry.seq, entry.highlighted, compact)
                     .when(carded, |d| d.bg(rgb(style::RAISED)))
+                    .when(!compact, |d| d.child(time(entry.seq, entry.received_ms)))
                     .child(gutter(Some(m.platform)))
-                    .when(!compact, |d| d.child(time(entry.received_ms)))
                     .when(!compact && !m.author.badges.is_empty(), |d| {
-                        d.child(badges(&m.author.badges))
+                        d.child(badges(entry.seq, &m.author.badges))
                     })
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .children(quote)
-                            .child(self.chat_text(entry.seq, m, entry.deleted, card, cx)),
+                            .child(self.chat_text(entry, m, card, cx)),
                     )
                     .into_any_element()
             }
@@ -205,29 +208,58 @@ fn gutter(platform: Option<Platform>) -> impl IntoElement {
         .children(platform.map(|p| style::platform_icon(p, ICON)))
 }
 
-fn time(ms: i64) -> impl IntoElement {
-    let text = chrono::Local
+/// A time as the row shows it.
+fn clock(ms: i64) -> String {
+    chrono::Local
         .timestamp_millis_opt(ms)
         .single()
         .map(|t| t.format("%H:%M").to_string())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// What a row's text copies with in front of it: its time.
+fn copy_time(ms: i64) -> String {
+    format!("{} ", clock(ms))
+}
+
+/// The time column, at the far left. A drag can start on it; the line beside it copies the time.
+fn time(seq: u64, ms: i64) -> impl IntoElement {
+    let mut parts = Parts::default();
+    parts.text(clock(ms), None);
     div()
         .flex_none()
         .text_xs()
         .pt(px(2.))
         .text_color(rgb(style::FAINT))
-        .child(text)
+        .child(ChatText::new(("time", seq), order(seq, 0), parts).silent())
 }
 
-fn badges(badges: &[Badge]) -> impl IntoElement {
+/// Badges, each saying what it is on hover ("Subscriber · 1 year, 4 months").
+fn badges(seq: u64, badges: &[Badge]) -> impl IntoElement {
     div()
         .flex()
         .flex_none()
         .gap(px(2.))
         .pt(px(3.))
-        .children(badges.iter().take(4).map(|b| match &b.image_url {
-            Some(url) => img(url.clone()).size(px(ICON)).into_any_element(),
-            None => badge_chip(b).into_any_element(),
+        .children(badges.iter().take(4).enumerate().map(|(i, b)| {
+            let image = match &b.image_url {
+                // FrankerFaceZ's custom moderator badges are drawn on moderator green.
+                Some(url) if b.id.starts_with("moderator/") && url.contains("frankerfacez.com") => {
+                    div()
+                        .size(px(ICON))
+                        .rounded_sm()
+                        .bg(rgb(0x34ae0a))
+                        .child(img(url.clone()).size(px(ICON)))
+                        .into_any_element()
+                }
+                Some(url) => img(url.clone()).size(px(ICON)).into_any_element(),
+                None => badge_chip(b).into_any_element(),
+            };
+            let title = SharedString::from(b.title.clone());
+            div()
+                .id(ElementId::NamedInteger(format!("badge-{i}").into(), seq))
+                .child(image)
+                .tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
         }))
 }
 
@@ -415,7 +447,8 @@ fn sent_row(
     } else {
         fragment_parts(&mut parts, &s.fragments, None);
     }
-    let body = ChatText::new(("sent-text", entry.seq), order(entry.seq, 0), parts)
+    let body = ChatText::new(("sent-text", entry.seq), order(entry.seq, 1), parts)
+        .copy_prefix(copy_time(entry.received_ms))
         .on_click(open_links())
         .on_hover(hover);
     // One mark in the icon column, like received messages, so the text lines up with them.
@@ -424,8 +457,8 @@ fn sent_row(
         _ => all_mark().into_any_element(),
     };
     row_frame(entry.seq, false, compact)
+        .when(!compact, |d| d.child(time(entry.seq, entry.received_ms)))
         .child(div().pt(px(3.)).w(px(ICON)).flex_none().child(mark))
-        .when(!compact, |d| d.child(time(entry.received_ms)))
         .child(div().flex_1().min_w_0().child(body).children(failures))
         .child(div().flex().flex_none().gap_1().pt(px(1.)).children(marks))
 }
@@ -446,8 +479,8 @@ fn all_mark() -> impl IntoElement {
 
 fn notice_row(entry: &Entry, n: &Notice, compact: bool, hover: HoverFn) -> impl IntoElement {
     row_frame(entry.seq, false, compact)
+        .when(!compact, |d| d.child(time(entry.seq, entry.received_ms)))
         .child(gutter(n.platform))
-        .when(!compact, |d| d.child(time(entry.received_ms)))
         .child(
             div()
                 .flex_1()
@@ -457,13 +490,17 @@ fn notice_row(entry: &Entry, n: &Notice, compact: bool, hover: HoverFn) -> impl 
                 .children(n.text.lines().enumerate().map(|(i, l)| {
                     let mut parts = Parts::default();
                     parts.linked(l, None);
-                    ChatText::new(
+                    let line = ChatText::new(
                         ElementId::NamedInteger(format!("notice-{i}").into(), entry.seq),
-                        order(entry.seq, i),
+                        order(entry.seq, i + 1),
                         parts,
-                    )
-                    .on_click(open_links())
-                    .on_hover(hover.clone())
+                    );
+                    let line = if i == 0 {
+                        line.copy_prefix(copy_time(entry.received_ms))
+                    } else {
+                        line
+                    };
+                    line.on_click(open_links()).on_hover(hover.clone())
                 })),
         )
 }

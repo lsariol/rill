@@ -49,6 +49,22 @@ pub struct Badge {
     pub image_url: Option<String>,
 }
 
+/// How long someone has subscribed, in words: "8 months", "1 year", "2 years, 3 months".
+pub fn tenure(months: u64) -> String {
+    let plural = |n: u64, one: &str| {
+        if n == 1 {
+            format!("1 {one}")
+        } else {
+            format!("{n} {one}s")
+        }
+    };
+    match (months / 12, months % 12) {
+        (0, m) => plural(m, "month"),
+        (y, 0) => plural(y, "year"),
+        (y, m) => format!("{}, {}", plural(y, "year"), plural(m, "month")),
+    }
+}
+
 /// One piece of a message's text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fragment {
@@ -203,6 +219,15 @@ pub fn merge_text(fragments: Vec<Fragment>) -> Vec<Fragment> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tenure_reads_naturally() {
+        assert_eq!(tenure(1), "1 month");
+        assert_eq!(tenure(8), "8 months");
+        assert_eq!(tenure(12), "1 year");
+        assert_eq!(tenure(18), "1 year, 6 months");
+        assert_eq!(tenure(25), "2 years, 1 month");
+    }
 
     #[test]
     fn replace_words_swaps_whole_words_only() {
