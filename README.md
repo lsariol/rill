@@ -28,6 +28,13 @@ go to Windows Credential Manager under `rill-dev`. Release builds use `%LOCALAPP
 - **Commands:** type `/` for the list. `/ban`, `/timeout`, `/unban` and `/poll` run on a platform's
   API; with "All platforms" selected Rill asks which platform. `/clear` and `/help` are Rill's own.
   Start a message with `//` to send a literal slash.
+- **Nukes:** for bot raids and spam waves. `/nuke <phrase>` times out everyone who said the phrase
+  in the last 5 minutes for 24 hours; `/nuke haha 48h` sets the timeout, and `/nuke haha 48h 15m`
+  also looks back 15 minutes. `/meganuke <phrase> [lookback]` bans instead. Put a platform first
+  (`/nuke twitch haha`) to act on one platform only, and quotes around a phrase that starts with a
+  platform name or ends with a duration. The broadcaster, moderators, VIPs and you are never
+  included. Rill shows how many users each platform would hit and waits for Enter, then reports
+  one summary line. `/unnuke` lifts the last nuke's bans and timeouts.
 - **Moderation:** click a message to open the user card (delete, timeouts, ban, unban), showing
   only what that platform allows.
 - **Emotes:** platform emotes, plus 7TV: the channel's 7TV set on Twitch and Kick and 7TV's global

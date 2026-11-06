@@ -165,6 +165,10 @@ impl ChatView {
     /// Enter: accept a half-typed command, otherwise submit.
     pub(crate) fn on_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.input.read(cx).value();
+        if text.trim().is_empty() && matches!(self.panel, Panel::Confirm { .. }) {
+            self.confirm_batch(window, cx);
+            return;
+        }
         if let Some(spec) = self.selected_completion(cx)
             && text.trim() != format!("/{}", spec.name)
         {
@@ -213,6 +217,10 @@ impl ChatView {
                 self.composer_error = Some(why.into());
                 false
             }
+            Submitted::Confirm { prompt, batch } => {
+                self.panel = Panel::Confirm { prompt, batch };
+                true
+            }
         };
         self.sync_list();
         cx.notify();
@@ -247,9 +255,9 @@ impl ChatView {
                 .border_color(rgb(style::BORDER))
                 .children(completions.iter().enumerate().map(|(i, spec)| {
                     let spec: &'static CommandSpec = spec;
-                    let kind = match spec.kind {
-                        command::CommandKind::Local => "Rill",
-                        command::CommandKind::Platform(_) => "Platform",
+                    let kind = match spec.is_platform() {
+                        false => "Rill",
+                        true => "Platform",
                     };
                     div()
                         .id(spec.name)

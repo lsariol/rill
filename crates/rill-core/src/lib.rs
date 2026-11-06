@@ -3,6 +3,7 @@
 pub mod adapter;
 pub mod backoff;
 pub mod command;
+mod commands;
 pub mod destination;
 pub mod event;
 pub mod feed;

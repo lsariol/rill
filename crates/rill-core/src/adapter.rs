@@ -16,7 +16,7 @@ use crate::{
 /// Events waiting for the UI before adapters have to wait.
 const EVENT_QUEUE: usize = 8_192;
 /// Requests waiting for one adapter before sends are refused.
-const COMMAND_QUEUE: usize = 256;
+const COMMAND_QUEUE: usize = 2_048;
 
 /// A boxed, sendable future.
 pub type BoxFuture = Pin<Box<dyn Future<Output = ()> + Send>>;

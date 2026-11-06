@@ -8,7 +8,8 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState, Textarea, TextareaState};
 use gpui_component::{Sizable, StyledExt as _};
 use rill_core::command::format_duration;
-use rill_core::{Action, Author, Command, ConnectionStatus, Plan, Platform, UserRef};
+use rill_core::session::Batch;
+use rill_core::{Action, Author, Command, ConnectionStatus, Plan, Platform, UserRef, now_ms};
 
 use crate::chat_view::ChatView;
 use crate::style;
@@ -31,6 +32,11 @@ pub enum Panel {
     },
     Poll(PollForm),
     Accounts,
+    /// A batch (such as a nuke) waiting for the user to confirm it.
+    Confirm {
+        prompt: String,
+        batch: Batch,
+    },
 }
 
 /// A clicked user, with the message they were clicked on.
@@ -80,7 +86,7 @@ impl ChatView {
         cx.notify();
     }
 
-    fn close_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.panel = Panel::None;
         self.input.update(cx, |s, cx| s.focus(window, cx));
         cx.notify();
@@ -100,6 +106,16 @@ impl ChatView {
         if matches!(self.panel, Panel::None) {
             self.input.update(cx, |s, cx| s.focus(window, cx));
         }
+    }
+
+    /// Runs the batch waiting in the confirm panel. Enter in an empty composer does this too.
+    pub(crate) fn confirm_batch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Panel::Confirm { batch, .. } = std::mem::take(&mut self.panel) else {
+            return;
+        };
+        let submitted = self.session.run_batch(batch, now_ms());
+        self.handle_submitted(submitted, window, cx);
+        self.input.update(cx, |s, cx| s.focus(window, cx));
     }
 
     fn submit_poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -182,6 +198,42 @@ impl ChatView {
             }
             Panel::Poll(form) => self.render_poll(form, cx),
             Panel::Accounts => self.render_accounts(cx),
+            Panel::Confirm { prompt, .. } => div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(prompt.clone())
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Button::new("confirm-batch")
+                                .small()
+                                .danger()
+                                .label("Confirm")
+                                .on_click(cx.listener(|view, _, window, cx| {
+                                    view.confirm_batch(window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("cancel-batch")
+                                .small()
+                                .outline()
+                                .label("Cancel")
+                                .on_click(
+                                    cx.listener(|view, _, window, cx| view.close_panel(window, cx)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(style::FAINT))
+                                .child("Enter confirms · Esc cancels"),
+                        ),
+                )
+                .into_any_element(),
         };
         div()
             .mx_3()

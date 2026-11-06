@@ -11,6 +11,7 @@ Rill's first release, in progress.
 - The composer's outline shows where a message goes: a rainbow for every platform, or the platform's own color, with a text label. Tab and Shift+Tab switch the destination without losing what's typed. Enter sends; Shift+Enter starts a new line.
 - Sending to all platforms shows a ✓ or ✗ for each one, with the reason when a platform refuses.
 - Slash commands with autocomplete: `/ban`, `/timeout`, `/unban`, `/poll`, `/clear` and `/help`. Platform commands with "All platforms" selected ask which platform to use. `//` sends a literal slash.
+- `/nuke`, `/meganuke` and `/unnuke`: time out or ban everyone who recently said a phrase, on every platform or one, after a confirmation that shows the count per platform; undo the last one. Moderators, VIPs, the broadcaster and you are left out, and Twitch rate limits are waited out instead of failing.
 - Clicking a message opens a user card with the moderation actions that platform allows: delete, timeouts, ban and unban.
 - A poll form (question, 2 to 5 choices, length) for Twitch.
 - Accounts: connect Twitch with a device code, YouTube through the browser, and pick a Kick channel to read. Tokens are kept in the system's credential store.

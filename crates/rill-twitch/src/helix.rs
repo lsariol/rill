@@ -120,7 +120,9 @@ impl Helix {
         query: &[(&str, &str)],
         body: Option<Value>,
     ) -> Result<Value, HelixError> {
-        for attempt in 0..2 {
+        let mut refreshed = false;
+        let mut limited = 0;
+        loop {
             let access = self.access().await;
             let mut req = self
                 .http
@@ -138,7 +140,8 @@ impl Helix {
             })?;
             let status = res.status().as_u16();
             match status {
-                401 if attempt == 0 => {
+                401 if !refreshed => {
+                    refreshed = true;
                     self.refresh(&access).await?;
                     continue;
                 }
@@ -151,6 +154,13 @@ impl Helix {
                         .and_then(|v| v.parse::<i64>().ok())
                         .unwrap_or(0);
                     let wait_secs = reset - chrono::Utc::now().timestamp();
+                    // Big batches (a nuke) wait out short limits instead of failing.
+                    if limited < 3 && wait_secs <= 60 {
+                        limited += 1;
+                        let wait = u64::try_from(wait_secs.max(1)).unwrap_or(1);
+                        tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+                        continue;
+                    }
                     return Err(HelixError::RateLimited { wait_secs });
                 }
                 204 => return Ok(Value::Null),
@@ -170,7 +180,6 @@ impl Helix {
                 }
             }
         }
-        Err(HelixError::Unauthorized)
     }
 
     /// Looks up users by login.

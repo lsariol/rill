@@ -1,71 +1,52 @@
 //! Slash commands: parsing, autocomplete and the command table.
+//!
+//! Each command is one [`CommandSpec`] in [`COMMANDS`](crate::commands::COMMANDS): its name, help
+//! text, the platform permission it needs, and the function that runs it.
 
 use crate::Action;
+use crate::destination::Destination;
+use crate::session::{Session, Submitted};
 
-/// Whether a command runs in Rill or on a platform.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CommandKind {
-    /// Handled by Rill itself; nothing is sent.
-    Local,
-    /// Sent to a platform's API; needs this capability there.
-    Platform(Action),
+pub use crate::commands::COMMANDS;
+
+/// What a command's run function gets.
+#[derive(Debug, Clone, Copy)]
+pub struct Invocation<'a> {
+    pub spec: &'static CommandSpec,
+    /// Everything after the command name, trimmed.
+    pub args: &'a str,
+    /// Where the composer sends right now.
+    pub destination: Destination,
+    pub now_ms: i64,
 }
 
+/// Runs a command.
+pub type Run = fn(&mut Session, &Invocation) -> Submitted;
+
 /// One slash command.
-#[derive(Debug, PartialEq, Eq)]
 pub struct CommandSpec {
     pub name: &'static str,
     pub aliases: &'static [&'static str],
     pub usage: &'static str,
     pub summary: &'static str,
-    pub kind: CommandKind,
+    /// The platform permission it needs; `None` runs inside Rill.
+    pub needs: Option<Action>,
+    pub run: Run,
 }
 
-/// Every slash command, in the order autocomplete lists them.
-pub const COMMANDS: &[CommandSpec] = &[
-    CommandSpec {
-        name: "ban",
-        aliases: &[],
-        usage: "/ban <user> [reason]",
-        summary: "Ban a user",
-        kind: CommandKind::Platform(Action::Ban),
-    },
-    CommandSpec {
-        name: "timeout",
-        aliases: &["to"],
-        usage: "/timeout <user> [duration] [reason]",
-        summary: "Time out a user (default 10m)",
-        kind: CommandKind::Platform(Action::Timeout),
-    },
-    CommandSpec {
-        name: "unban",
-        aliases: &["untimeout"],
-        usage: "/unban <user>",
-        summary: "Lift a ban or timeout",
-        kind: CommandKind::Platform(Action::Unban),
-    },
-    CommandSpec {
-        name: "poll",
-        aliases: &[],
-        usage: "/poll",
-        summary: "Start a poll",
-        kind: CommandKind::Platform(Action::Poll),
-    },
-    CommandSpec {
-        name: "clear",
-        aliases: &[],
-        usage: "/clear",
-        summary: "Clear Rill's view of the chat (local only)",
-        kind: CommandKind::Local,
-    },
-    CommandSpec {
-        name: "help",
-        aliases: &["commands"],
-        usage: "/help",
-        summary: "List the commands",
-        kind: CommandKind::Local,
-    },
-];
+impl std::fmt::Debug for CommandSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "/{}", self.name)
+    }
+}
+
+impl PartialEq for CommandSpec {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for CommandSpec {}
 
 impl CommandSpec {
     /// Finds a command by name or alias, ignoring case.
@@ -74,6 +55,11 @@ impl CommandSpec {
         COMMANDS
             .iter()
             .find(|c| c.name == name || c.aliases.contains(&name.as_str()))
+    }
+
+    /// Whether it runs on a platform rather than inside Rill.
+    pub fn is_platform(&self) -> bool {
+        self.needs.is_some()
     }
 }
 
@@ -184,7 +170,7 @@ mod tests {
         assert!(completions("hi").is_empty());
         assert!(completions("//").is_empty());
         let names: Vec<_> = completions("/un").iter().map(|c| c.name).collect();
-        assert_eq!(names, ["unban"]);
+        assert_eq!(names, ["unban", "unnuke"]);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
-use crate::command::{self, CommandKind, Parsed};
+use crate::command::{self, Invocation, Parsed};
 use crate::event::SignInPrompt;
 use crate::feed::{Delivery, DeliveryState, Feed, Item, Notice, SentMessage};
 use crate::{
@@ -56,12 +56,33 @@ pub enum Submitted {
     PollDialog(Platform),
     /// Not done; the message says why and how to fix it. Keep the composer text.
     Rejected(String),
+    /// Ask before running a batch (such as a nuke).
+    Confirm { prompt: String, batch: Batch },
+}
+
+/// Many requests that run after one confirmation and report back as one notice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Batch {
+    /// What was done, such as `Timed out 23 users for 48h`.
+    pub label: String,
+    pub items: Vec<(Platform, Command)>,
+    /// Remember the users, so `/unnuke` can lift these bans and timeouts.
+    pub undoable: bool,
+}
+
+#[derive(Debug, Clone)]
+struct BatchState {
+    label: String,
+    remaining: usize,
+    failed: usize,
+    first_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 enum Pending {
     Send { seq: u64 },
     Action { label: String },
+    Batch { id: u64 },
 }
 
 /// The chat core's state.
@@ -73,6 +94,10 @@ pub struct Session {
     pending: HashMap<(Platform, RequestId), Pending>,
     suppress: HashSet<(Platform, String)>,
     suppress_order: VecDeque<(Platform, String)>,
+    batches: HashMap<u64, BatchState>,
+    next_batch: u64,
+    /// The users the last nuke hit, for `/unnuke`.
+    pub(crate) last_nuke: Vec<(Platform, UserRef)>,
 }
 
 impl Session {
@@ -236,6 +261,7 @@ impl Session {
                     now_ms,
                 ),
             },
+            Some(Pending::Batch { id }) => self.batch_done(id, result.map(|_| ()), now_ms),
             None => {}
         }
     }
@@ -301,19 +327,15 @@ impl Session {
             Parsed::Unknown(name) => Submitted::Rejected(format!(
                 "Unknown command \"/{name}\". Type /help for the list, or start with // to send a slash."
             )),
-            Parsed::Command { spec, args } => match spec.kind {
-                CommandKind::Local => {
-                    match spec.name {
-                        "clear" => self.feed.clear(),
-                        _ => self.notice(None, Level::Info, &help_text(), now_ms),
-                    }
-                    Submitted::Local
-                }
-                CommandKind::Platform(action) => match plan_command(spec.name, args) {
-                    Ok(plan) => self.target(plan, action, destination),
-                    Err(usage) => Submitted::Rejected(format!("Usage: {usage}")),
+            Parsed::Command { spec, args } => (spec.run)(
+                self,
+                &Invocation {
+                    spec,
+                    args,
+                    destination,
+                    now_ms,
                 },
-            },
+            ),
         }
     }
 
@@ -366,7 +388,13 @@ impl Session {
         Submitted::Send(out)
     }
 
-    fn target(&mut self, plan: Plan, action: Action, destination: Destination) -> Submitted {
+    /// Runs a plan on the destination platform, or asks which platform when sending to all.
+    pub(crate) fn target(
+        &mut self,
+        plan: Plan,
+        action: Action,
+        destination: Destination,
+    ) -> Submitted {
         match destination {
             Destination::One(p) => self.execute(p, plan),
             Destination::All => {
@@ -421,87 +449,80 @@ impl Session {
         }
     }
 
+    /// Starts a confirmed batch.
+    pub fn run_batch(&mut self, batch: Batch, now_ms: i64) -> Submitted {
+        if batch.items.is_empty() {
+            return Submitted::Nothing;
+        }
+        self.next_batch += 1;
+        let id = self.next_batch;
+        self.batches.insert(
+            id,
+            BatchState {
+                label: batch.label.clone(),
+                remaining: batch.items.len(),
+                failed: 0,
+                first_error: None,
+            },
+        );
+        if batch.undoable {
+            self.last_nuke = batch
+                .items
+                .iter()
+                .filter_map(|(p, c)| match c {
+                    Command::Timeout { user, .. } | Command::Ban { user, .. } => {
+                        Some((*p, user.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+        self.notice(None, Level::Info, &format!("{}…", batch.label), now_ms);
+        let out = batch
+            .items
+            .into_iter()
+            .map(|(platform, command)| {
+                let rid = self.request_id();
+                self.pending.insert((platform, rid), Pending::Batch { id });
+                Outgoing {
+                    platform,
+                    request: Request { id: rid, command },
+                }
+            })
+            .collect();
+        Submitted::Send(out)
+    }
+
+    fn batch_done(&mut self, id: u64, result: Result<(), String>, now_ms: i64) {
+        let Some(b) = self.batches.get_mut(&id) else {
+            return;
+        };
+        b.remaining -= 1;
+        if let Err(e) = result {
+            b.failed += 1;
+            b.first_error.get_or_insert(e);
+        }
+        if b.remaining > 0 {
+            return;
+        }
+        let Some(b) = self.batches.remove(&id) else {
+            return;
+        };
+        match b.first_error {
+            None => self.notice(None, Level::Info, &format!("✓ {}", b.label), now_ms),
+            Some(e) => self.notice(
+                None,
+                Level::Warn,
+                &format!("! {}: {} failed. First error: {e}", b.label, b.failed),
+                now_ms,
+            ),
+        }
+    }
+
     fn request_id(&mut self) -> RequestId {
         self.next_request += 1;
         RequestId(self.next_request)
     }
-}
-
-/// Turns a platform command's arguments into a plan, or returns its usage.
-fn plan_command(name: &str, args: &str) -> Result<Plan, &'static str> {
-    let usage = command::CommandSpec::find(name).map_or("", |c| c.usage);
-    let mut words = args.split_whitespace();
-    let user = || -> Result<UserRef, &'static str> {
-        let login = args
-            .split_whitespace()
-            .next()
-            .map(|w| w.trim_start_matches('@'))
-            .filter(|w| !w.is_empty())
-            .ok_or(usage)?;
-        Ok(UserRef {
-            id: None,
-            login: login.to_string(),
-        })
-    };
-    let reason = |skip: usize| {
-        let r = args
-            .split_whitespace()
-            .skip(skip)
-            .collect::<Vec<_>>()
-            .join(" ");
-        (!r.is_empty()).then_some(r)
-    };
-    match name {
-        "poll" => Ok(Plan::PollDialog),
-        "ban" => {
-            let user = user()?;
-            Ok(Plan::Run {
-                label: format!("Ban {}", user.login),
-                command: Command::Ban {
-                    user,
-                    reason: reason(1),
-                },
-            })
-        }
-        "unban" => {
-            let user = user()?;
-            Ok(Plan::Run {
-                label: format!("Unban {}", user.login),
-                command: Command::Unban { user },
-            })
-        }
-        "timeout" => {
-            let user = user()?;
-            words.next();
-            let (seconds, skip) = match words.next().map(command::parse_duration) {
-                Some(Some(s)) => (s, 2),
-                Some(None) if args.split_whitespace().count() == 2 => return Err(usage),
-                _ => (600, 1),
-            };
-            Ok(Plan::Run {
-                label: format!(
-                    "Time out {} for {}",
-                    user.login,
-                    command::format_duration(seconds)
-                ),
-                command: Command::Timeout {
-                    user,
-                    seconds,
-                    reason: reason(skip),
-                },
-            })
-        }
-        _ => Err(usage),
-    }
-}
-
-fn help_text() -> String {
-    let mut out = String::from("Commands:");
-    for c in command::COMMANDS {
-        out.push_str(&format!("\n{}  {}", c.usage, c.summary));
-    }
-    out.push_str("\nStart a message with // to send a literal slash.");
-    out
 }
 
 #[cfg(test)]
@@ -547,6 +568,139 @@ mod tests {
             sent_at_ms: 0,
             reply_to: None,
         })
+    }
+
+    fn done(s: &mut Session, out: &[Outgoing], fail: usize, now: i64) {
+        for (i, o) in out.iter().enumerate() {
+            let result = if i < fail {
+                Err("rate limited".into())
+            } else {
+                Ok(None)
+            };
+            s.apply(
+                Event::Done {
+                    platform: o.platform,
+                    request: o.request.id,
+                    result,
+                },
+                now,
+            );
+        }
+    }
+
+    fn last_notice(s: &Session) -> (Level, String) {
+        s.feed
+            .entries()
+            .rev()
+            .find_map(|e| match &e.item {
+                Item::Notice(n) => Some((n.level, n.text.clone())),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn nuke_confirms_runs_reports_and_undoes() {
+        let mut s = Session::new(100);
+        connect(&mut s, Platform::Twitch, ALL_CAPS);
+        connect(&mut s, Platform::YouTube, ALL_CAPS);
+        connect(&mut s, Platform::Kick, Capabilities::NONE);
+        let minute = 60_000;
+        s.apply(msg(Platform::Twitch, "1", "old", "HAHA"), 0);
+        s.apply(msg(Platform::Twitch, "2", "a", "haha lol"), 10 * minute);
+        s.apply(msg(Platform::Twitch, "3", "a", "HaHa again"), 10 * minute);
+        s.apply(msg(Platform::YouTube, "4", "b", "so haha"), 10 * minute);
+        s.apply(msg(Platform::Kick, "5", "c", "haha"), 10 * minute);
+        s.apply(msg(Platform::Twitch, "6", "me-Twitch", "haha"), 10 * minute);
+        s.apply(msg(Platform::Twitch, "7", "d", "nothing here"), 10 * minute);
+        let mut m = msg(Platform::Twitch, "8", "mod", "haha");
+        if let Event::Message(m) = &mut m {
+            m.author.roles.moderator = true;
+        }
+        s.apply(m, 10 * minute);
+
+        let now = 12 * minute;
+        let Submitted::Confirm { prompt, batch } =
+            s.submit("/nuke haha 48h", Destination::All, now)
+        else {
+            panic!("expected a confirmation");
+        };
+        assert_eq!(
+            prompt,
+            "Time out 2 users for 2d who said \"haha\" in the last 5m? Twitch 1, YouTube 1. Skipped Kick: no permission."
+        );
+        assert!(batch.items.iter().all(|(_, c)| matches!(
+            c,
+            Command::Timeout { seconds: 172_800, user, .. } if user.id.is_some()
+        )));
+        let Submitted::Send(out) = s.run_batch(batch, now) else {
+            panic!("expected requests");
+        };
+        assert_eq!(out.len(), 2);
+        done(&mut s, &out, 1, now);
+        let (level, text) = last_notice(&s);
+        assert_eq!(level, Level::Warn);
+        assert!(
+            text.contains("1 failed") && text.contains("rate limited"),
+            "{text}"
+        );
+
+        // Only Twitch, and further back.
+        let Submitted::Confirm { batch, .. } =
+            s.submit("/meganuke twitch haha 15m", Destination::All, now)
+        else {
+            panic!("expected a confirmation");
+        };
+        let logins: Vec<_> = batch
+            .items
+            .iter()
+            .map(|(p, c)| match c {
+                Command::Ban { user, .. } => (*p, user.id.clone().unwrap()),
+                c => panic!("not a ban: {c:?}"),
+            })
+            .collect();
+        assert_eq!(
+            logins,
+            [
+                (Platform::Twitch, "old".to_string()),
+                (Platform::Twitch, "a".to_string())
+            ]
+        );
+        let Submitted::Send(out) = s.run_batch(batch, now) else {
+            panic!("expected requests");
+        };
+        done(&mut s, &out, 0, now);
+        assert_eq!(
+            last_notice(&s),
+            (
+                Level::Info,
+                "✓ Banned 2 users who said \"haha\"".to_string()
+            )
+        );
+
+        let Submitted::Confirm { batch, .. } = s.submit("/unnuke", Destination::All, now) else {
+            panic!("expected a confirmation");
+        };
+        assert_eq!(batch.items.len(), 2, "the last nuke, not the one before");
+        assert!(
+            batch
+                .items
+                .iter()
+                .all(|(_, c)| matches!(c, Command::Unban { .. }))
+        );
+
+        assert!(matches!(
+            s.submit("/nuke nobody said this", Destination::All, now),
+            Submitted::Rejected(why) if why.starts_with("No one said")
+        ));
+        assert!(matches!(
+            s.submit("/nuke kick haha", Destination::All, now),
+            Submitted::Rejected(why) if why.contains("can't")
+        ));
+        assert!(matches!(
+            s.submit("/nuke", Destination::All, now),
+            Submitted::Rejected(why) if why.starts_with("Usage")
+        ));
     }
 
     fn deliveries(s: &Session) -> Vec<(Platform, DeliveryState)> {
