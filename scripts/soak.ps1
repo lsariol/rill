@@ -1,7 +1,8 @@
 # Long-stream test: runs the release build under heavy simulated chat and records memory each minute.
-# Run on Windows: powershell -File scripts/soak.ps1 [-Minutes 480] [-Rate 170]
+# Run on Windows: powershell -File scripts/soak.ps1 [-Minutes 480] [-Rate 170] [-Firehose <url>]
+# With -Firehose it reads real chat from a public firehose instead of simulated chat.
 # Writes .dev/bench/soak.csv; memory should level off and stay flat.
-param([int]$Minutes = 30, [double]$Rate = 170)
+param([int]$Minutes = 30, [double]$Rate = 170, [string]$Firehose = "")
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot)
 $out = Join-Path (Resolve-Path ".").Path ".dev\bench"
@@ -14,7 +15,8 @@ $env:RILL_DATA_DIR = Join-Path $out "data"
 $csv = Join-Path $out "soak.csv"
 "minute,working_set_mb,private_mb,cpu_pct" | Set-Content -Encoding utf8 $csv
 
-$p = Start-Process -FilePath $exe -ArgumentList "--rate $Rate --bursts --flaky" -PassThru
+$appArgs = if ($Firehose) { "--firehose $Firehose" } else { "--rate $Rate --bursts --flaky" }
+$p = Start-Process -FilePath $exe -ArgumentList $appArgs -PassThru
 Start-Sleep -Seconds 5
 foreach ($m in 1..$Minutes) {
     $p.Refresh(); $t0 = $p.TotalProcessorTime

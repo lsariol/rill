@@ -1,4 +1,9 @@
 //! Simulated chat traffic: an adapter that behaves like a busy platform, for prototyping and benchmarks.
+//! [`FirehoseAdapter`] replays real chat from a public firehose instead, for load tests.
+
+mod firehose;
+
+pub use firehose::FirehoseAdapter;
 
 use std::collections::VecDeque;
 use std::time::Duration;

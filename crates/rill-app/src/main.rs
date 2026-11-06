@@ -35,6 +35,8 @@ Options:
   --fail <0-1>        Share of sends and actions that fail (default 0.05)
   --exit-after <s>    Quit after this many seconds (for benchmarks)
   --stats <file>      Write counters to this file on quit (with --exit-after)
+  --firehose <url>    Load test: real chat from a public firehose (catquery's jsonBasic
+                      format), spread across the four platforms; read-only
   -h, --help          Show this help
 
 --rate, --bursts, --emotes, --flaky and --fail apply to simulated chat and turn on --sim.";
@@ -43,6 +45,8 @@ Options:
 #[derive(Debug, Default)]
 struct Options {
     sim: bool,
+    /// Real chat from a firehose instead of simulated chat.
+    firehose: Option<String>,
     profile: Profile,
     exit_after: Option<Duration>,
     stats: Option<std::path::PathBuf>,
@@ -59,6 +63,10 @@ fn parse_args() -> Result<Options, String> {
         match arg.as_str() {
             "-h" | "--help" => return Err(USAGE.to_string()),
             "--sim" => o.sim = true,
+            "--firehose" => {
+                o.firehose = Some(value("--firehose")?);
+                o.sim = true;
+            }
             "--rate" => {
                 o.sim = true;
                 o.profile.rate = number(&value("--rate")?, "--rate")?;
@@ -169,7 +177,20 @@ fn main() -> ExitCode {
     {
         tracing::warn!("TLS provider was already installed");
     }
-    let (adapters, startup_errors) = if options.sim {
+    let (adapters, startup_errors) = if let Some(url) = &options.firehose {
+        // The firehose takes Twitch's slot; the others connect quietly so every icon is live.
+        let quiet = rill_sim::Profile {
+            rate: 0.,
+            ..options.profile.clone()
+        };
+        let mut all: Vec<Box<dyn Adapter>> = vec![Box::new(rill_sim::FirehoseAdapter::new(url))];
+        all.extend(
+            [Platform::YouTube, Platform::Kick, Platform::Rumble]
+                .into_iter()
+                .map(|p| Box::new(SimAdapter::new(p, quiet.clone())) as Box<dyn Adapter>),
+        );
+        (all, Vec::new())
+    } else if options.sim {
         let sims = Platform::ALL
             .into_iter()
             .map(|p| Box::new(SimAdapter::new(p, options.profile.clone())) as Box<dyn Adapter>)

@@ -110,12 +110,17 @@ powershell -File scripts/bench.ps1   # startup, CPU, memory and GPU under simula
 powershell -File scripts/soak.ps1 -Minutes 480   # long-stream memory check
 ```
 
+For a load test with real chat, `--firehose <url>` reads a public Twitch chat firehose (in
+catquery's `jsonBasic` format, about 1,400 messages a second) and spreads it across the four
+platforms; `scripts/soak.ps1 -Firehose <url>` does the same for a long run. It's read-only, and
+nothing it receives is saved.
+
 ## Layout
 
 | Crate | What it does |
 |---|---|
 | `rill-core` | Messages, the feed, slash commands, the session and the adapter hub. No UI or OS code. |
-| `rill-sim` | Simulated chat traffic, for prototyping and benchmarks |
+| `rill-sim` | Simulated chat traffic, and a firehose of real chat, for prototyping and load tests |
 | `rill-twitch` | Twitch: device-code sign-in, EventSub chat, Helix actions |
 | `rill-youtube` | YouTube: desktop sign-in with PKCE, live chat over the gRPC stream (or polling), moderation |
 | `rill-kick` | Kick: reads chat from Kick's chat socket (Centrifugo or Pusher); signs in, sends and moderates through the official API |

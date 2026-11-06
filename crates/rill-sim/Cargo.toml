@@ -9,6 +9,10 @@ publish.workspace = true
 [dependencies]
 rill-core.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "macros", "sync"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde_json.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "time", "macros", "sync", "test-util"] }

@@ -5624,8 +5624,12 @@ dependencies = [
 name = "rill-sim"
 version = "0.0.0"
 dependencies = [
+ "futures-util",
  "rill-core",
+ "serde_json",
  "tokio",
+ "tokio-tungstenite",
+ "tracing",
 ]
 
 [[package]]
