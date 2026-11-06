@@ -1,4 +1,4 @@
-//! The composer: destination outline and label, Tab cycling, `/` and `:` autocomplete and
+//! The composer: destination outline and label, Tab cycling, `/`, `:` and `@` autocomplete and
 //! submitting.
 
 use std::ops::Range;
@@ -41,8 +41,8 @@ actions!(
 
 const CONTEXT: &str = "Composer";
 const MAX_COMPLETIONS: usize = 6;
-/// Emote rows shown at once; the rest scroll.
-const VISIBLE_EMOTES: usize = 8;
+/// Emote or name rows shown at once; the rest scroll.
+const VISIBLE_ROWS: usize = 8;
 
 /// A row in the popup above the composer.
 #[derive(Clone)]
@@ -50,11 +50,23 @@ pub(crate) enum Suggestion {
     Command(&'static CommandSpec),
     /// With the platforms it works on.
     Emote(Vec<Platform>, EmoteOption),
+    /// Someone seen in chat, with the platforms they were seen on.
+    User(Vec<Platform>, String),
 }
 
 /// The `:name` being typed just before the cursor: its byte range and the name so far, which is
 /// empty for a `:` alone.
 pub(crate) fn emote_token(text: &str, cursor: usize) -> Option<(Range<usize>, &str)> {
+    token(text, cursor, ':')
+}
+
+/// The `@name` being typed just before the cursor, like [`emote_token`].
+pub(crate) fn mention_token(text: &str, cursor: usize) -> Option<(Range<usize>, &str)> {
+    token(text, cursor, '@')
+}
+
+/// The word before the cursor when it starts with `sigil`: its byte range and the rest.
+fn token(text: &str, cursor: usize, sigil: char) -> Option<(Range<usize>, &str)> {
     let cursor = (0..=cursor.min(text.len()))
         .rev()
         .find(|&i| text.is_char_boundary(i))?;
@@ -64,8 +76,8 @@ pub(crate) fn emote_token(text: &str, cursor: usize) -> Option<(Range<usize>, &s
         .rev()
         .find(|(_, c)| c.is_whitespace())
         .map_or(0, |(i, c)| i + c.len_utf8());
-    let name = before[start..].strip_prefix(':')?;
-    (!name.contains(':')).then_some((start..cursor, name))
+    let name = before[start..].strip_prefix(sigil)?;
+    (!name.contains(sigil)).then_some((start..cursor, name))
 }
 
 /// The text with `range` replaced by the emote and a space, and the cursor's new line and column.
@@ -83,12 +95,12 @@ pub(crate) fn insert_emote(text: &str, range: Range<usize>, name: &str) -> (Stri
 fn in_view(top: usize, selected: usize, total: usize) -> usize {
     let top = if selected < top {
         selected
-    } else if selected >= top + VISIBLE_EMOTES {
-        selected + 1 - VISIBLE_EMOTES
+    } else if selected >= top + VISIBLE_ROWS {
+        selected + 1 - VISIBLE_ROWS
     } else {
         top
     };
-    top.min(total.saturating_sub(VISIBLE_EMOTES))
+    top.min(total.saturating_sub(VISIBLE_ROWS))
 }
 
 /// The line and column (in characters) at the end of `head`.
@@ -123,18 +135,19 @@ pub(crate) fn tab_word(text: &str, cursor: usize) -> Option<(usize, &str)> {
     plain.then_some((start, word))
 }
 
-/// Emote names in Tab order: alphabetical, ignoring case.
+/// Emote and user names in Tab order: alphabetical, ignoring case, each once.
 pub(crate) fn tab_order(mut names: Vec<String>) -> Vec<String> {
     names.sort_by(|a, b| {
         a.to_lowercase()
             .cmp(&b.to_lowercase())
             .then_with(|| a.cmp(b))
     });
+    names.dedup();
     names
 }
 
-/// Tab stepping through the emotes that start with a typed word.
-pub(crate) struct EmoteCycle {
+/// Tab stepping through the emotes and names that start with a typed word.
+pub(crate) struct TabCycle {
     names: Vec<String>,
     ix: usize,
     /// Where the word starts, in bytes.
@@ -159,8 +172,8 @@ pub fn init(cx: &mut App) {
 }
 
 impl ChatView {
-    /// Commands matching the composer text, or emotes for a `:name` before the cursor, unless
-    /// dismissed with Esc.
+    /// Commands matching the composer text, emotes for a `:name` or people for an `@name` before
+    /// the cursor, unless dismissed with Esc.
     fn completions(&self, cx: &App) -> Vec<Suggestion> {
         let state = self.input.read(cx);
         let text = state.value();
@@ -172,15 +185,24 @@ impl ChatView {
             commands.truncate(MAX_COMPLETIONS);
             return commands.into_iter().map(Suggestion::Command).collect();
         }
-        match emote_token(&text, state.cursor()) {
-            Some((_, name)) => self
+        let cursor = state.cursor();
+        if let Some((_, name)) = emote_token(&text, cursor) {
+            return self
                 .session
                 .emote_choices(self.destination, name, usize::MAX)
                 .into_iter()
                 .map(|(p, e)| Suggestion::Emote(p, e))
-                .collect(),
-            None => Vec::new(),
+                .collect();
         }
+        if let Some((_, name)) = mention_token(&text, cursor) {
+            return self
+                .session
+                .user_choices(self.destination, name, usize::MAX)
+                .into_iter()
+                .map(|(p, n)| Suggestion::User(p, n))
+                .collect();
+        }
+        Vec::new()
     }
 
     fn selected_completion(&self, cx: &App) -> Option<Suggestion> {
@@ -209,6 +231,14 @@ impl ChatView {
                 };
                 insert_emote(&text, range, &emote.name)
             }
+            Suggestion::User(_, name) => {
+                let state = self.input.read(cx);
+                let text = state.value();
+                let Some((range, _)) = mention_token(&text, state.cursor()) else {
+                    return;
+                };
+                insert_emote(&text, range, &format!("@{name}"))
+            }
         };
         self.input.update(cx, |state, cx| {
             state.set_value(text, window, cx);
@@ -233,7 +263,7 @@ impl ChatView {
             self.accept_completion(&suggestion, window, cx);
             return;
         }
-        if self.cycle_emote(1, window, cx) {
+        if self.cycle_word(1, window, cx) {
             return;
         }
         self.destination = self.destination.next(&self.session.sendable());
@@ -254,42 +284,47 @@ impl ChatView {
             self.move_completion(-1, cx);
             return;
         }
-        if self.cycle_emote(-1, window, cx) {
+        if self.cycle_word(-1, window, cx) {
             return;
         }
         self.destination = self.destination.prev(&self.session.sendable());
         cx.notify();
     }
 
-    /// Tab on a word: puts in the next (or previous) emote starting with it, alphabetically.
-    /// Returns false when there's no word or no emote to put in.
-    fn cycle_emote(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    /// Tab on a word: puts in the next (or previous) emote or name starting with it,
+    /// alphabetically. Returns false when there's no word or nothing to put in.
+    fn cycle_word(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let (text, cursor) = {
             let state = self.input.read(cx);
             (state.value().to_string(), state.cursor())
         };
         let going = self
-            .emote_cycle
+            .tab_cycle
             .as_ref()
             .is_some_and(|c| c.text == text && c.cursor == cursor);
         if !going {
-            self.emote_cycle = None;
+            self.tab_cycle = None;
             let Some((start, word)) = tab_word(&text, cursor) else {
                 return false;
             };
-            let names = self
+            let emotes = self
                 .session
                 .emote_choices(self.destination, word, usize::MAX)
                 .into_iter()
-                .map(|(_, e)| e.name)
-                .collect::<Vec<_>>();
+                .map(|(_, e)| e.name);
+            let users = self
+                .session
+                .user_choices(self.destination, word, usize::MAX)
+                .into_iter()
+                .map(|(_, n)| n);
+            let names = emotes.chain(users).collect::<Vec<_>>();
             if names.is_empty() {
                 return false;
             }
             let names = tab_order(names);
             // The first step lands on the first name (or the last, going back).
             let ix = if by < 0 { 0 } else { names.len() - 1 };
-            self.emote_cycle = Some(EmoteCycle {
+            self.tab_cycle = Some(TabCycle {
                 names,
                 ix,
                 start,
@@ -297,7 +332,7 @@ impl ChatView {
                 cursor,
             });
         }
-        let Some(c) = self.emote_cycle.as_mut() else {
+        let Some(c) = self.tab_cycle.as_mut() else {
             return false;
         };
         c.ix = (c.ix as isize + by).rem_euclid(c.names.len() as isize) as usize;
@@ -343,7 +378,7 @@ impl ChatView {
     /// Scrolls the list without moving the selection.
     fn scroll_completions(&mut self, by: isize, cx: &mut Context<Self>) {
         let n = self.completions(cx).len();
-        let max = n.saturating_sub(VISIBLE_EMOTES) as isize;
+        let max = n.saturating_sub(VISIBLE_ROWS) as isize;
         self.completion_top = (self.completion_top as isize + by).clamp(0, max) as usize;
         cx.notify();
     }
@@ -368,7 +403,7 @@ impl ChatView {
     }
 
     fn page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
-        if self.completions(cx).len() > VISIBLE_EMOTES {
+        if self.completions(cx).len() > VISIBLE_ROWS {
             self.page_completions(-1, cx);
         } else {
             self.scroll_feed_pages(-1.0, cx);
@@ -376,7 +411,7 @@ impl ChatView {
     }
 
     fn page_down(&mut self, _: &PageDown, _: &mut Window, cx: &mut Context<Self>) {
-        if self.completions(cx).len() > VISIBLE_EMOTES {
+        if self.completions(cx).len() > VISIBLE_ROWS {
             self.page_completions(1, cx);
         } else {
             self.scroll_feed_pages(1.0, cx);
@@ -386,7 +421,7 @@ impl ChatView {
     /// PgUp and PgDn in a long list: a page at a time, stopping at the ends.
     fn page_completions(&mut self, by: isize, cx: &mut Context<Self>) {
         let n = self.completions(cx).len();
-        let page = VISIBLE_EMOTES as isize - 1;
+        let page = VISIBLE_ROWS as isize - 1;
         self.completion_ix =
             (self.completion_ix as isize + by * page).clamp(0, n as isize - 1) as usize;
         self.completion_top = in_view(self.completion_top, self.completion_ix, n);
@@ -401,9 +436,15 @@ impl ChatView {
             return;
         }
         if let Some(suggestion) = self.selected_completion(cx) {
+            // A name typed out in full sends, rather than being filled in again.
+            let cursor = self.input.read(cx).cursor();
             let finished = match &suggestion {
                 Suggestion::Command(spec) => text.trim() == format!("/{}", spec.name),
-                Suggestion::Emote(..) => false,
+                Suggestion::Emote(_, e) => {
+                    emote_token(&text, cursor).is_some_and(|(_, typed)| typed == e.name)
+                }
+                Suggestion::User(_, n) => mention_token(&text, cursor)
+                    .is_some_and(|(_, typed)| typed.eq_ignore_ascii_case(n)),
             };
             if !finished {
                 self.accept_completion(&suggestion, window, cx);
@@ -531,10 +572,8 @@ impl ChatView {
         let completions = self.completions(cx);
         let total = completions.len();
         let selected = self.completion_ix.min(total.saturating_sub(1));
-        let top = self
-            .completion_top
-            .min(total.saturating_sub(VISIBLE_EMOTES));
-        let more = (total > VISIBLE_EMOTES).then(|| {
+        let top = self.completion_top.min(total.saturating_sub(VISIBLE_ROWS));
+        let more = (total > VISIBLE_ROWS).then(|| {
             div()
                 .px_2()
                 .text_xs()
@@ -542,7 +581,7 @@ impl ChatView {
                 .child(format!(
                     "{}–{} of {total} · PgUp and PgDn page",
                     top + 1,
-                    (top + VISIBLE_EMOTES).min(total)
+                    (top + VISIBLE_ROWS).min(total)
                 ))
         });
         let popup = (!completions.is_empty()).then(|| {
@@ -571,7 +610,7 @@ impl ChatView {
                         .into_iter()
                         .enumerate()
                         .skip(top)
-                        .take(VISIBLE_EMOTES)
+                        .take(VISIBLE_ROWS)
                         .map(|(i, suggestion)| {
                             let row = div()
                                 .id(("suggestion", i))
@@ -627,6 +666,20 @@ impl ChatView {
                                     .children(
                                         platforms.iter().map(|p| style::platform_icon(*p, 12.)),
                                     ),
+                                Suggestion::User(platforms, name) => row
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .w(px(36.))
+                                            .flex()
+                                            .justify_center()
+                                            .text_color(rgb(style::FAINT))
+                                            .child("@"),
+                                    )
+                                    .child(div().flex_1().min_w_0().truncate().child(name.clone()))
+                                    .children(
+                                        platforms.iter().map(|p| style::platform_icon(*p, 12.)),
+                                    ),
                             };
                             row.on_click(cx.listener(move |view, _, window, cx| {
                                 view.accept_completion(&suggestion, window, cx);
@@ -678,7 +731,7 @@ impl ChatView {
                                     .child(if self.tab_leaves {
                                         "Tab leaves the composer · Esc stays"
                                     } else {
-                                        "Tab switches · / commands · : emotes · PgUp scrolls"
+                                        "Tab switches · / commands · : emotes · @ names · PgUp scrolls"
                                     }),
                             )
                             .children(count),
@@ -778,6 +831,22 @@ mod tests {
     }
 
     #[test]
+    fn finds_the_mention_before_the_cursor() {
+        assert_eq!(mention_token("hi @mo", 6), Some((3..6, "mo")));
+        assert_eq!(
+            mention_token("@", 1),
+            Some((0..1, "")),
+            "an @ alone lists everyone"
+        );
+        assert_eq!(
+            mention_token("a@b.com", 7),
+            None,
+            "not at the start of a word"
+        );
+        assert_eq!(mention_token("hi :mo", 6), None);
+    }
+
+    #[test]
     fn inserting_an_emote_replaces_the_name_and_adds_a_space() {
         let (text, at) = insert_emote("hi :smi", 3..7, "Smile");
         assert_eq!(text, "hi Smile ");
@@ -823,5 +892,11 @@ mod tests {
             .map(String::from)
             .to_vec();
         assert_eq!(tab_order(names), ["SADGE", "sadge", "Smash", "smile"]);
+        let names = ["mobasity", "Moe", "mobasity"].map(String::from).to_vec();
+        assert_eq!(
+            tab_order(names),
+            ["mobasity", "Moe"],
+            "an emote and a name alike, once"
+        );
     }
 }

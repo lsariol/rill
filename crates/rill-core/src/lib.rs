@@ -2,6 +2,7 @@
 
 pub mod adapter;
 pub mod backoff;
+pub mod chatters;
 pub mod command;
 mod commands;
 pub mod destination;

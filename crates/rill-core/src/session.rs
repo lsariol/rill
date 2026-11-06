@@ -104,6 +104,8 @@ pub struct Session {
     pub(crate) last_nuke: Vec<(Platform, UserRef)>,
     /// Emotes the user can use, by platform and source.
     emotes: BTreeMap<(Platform, EmoteSource), Vec<EmoteOption>>,
+    /// Everyone seen in chat, for `@` mentions and Tab.
+    chatters: crate::chatters::Chatters,
 }
 
 impl Session {
@@ -124,6 +126,7 @@ impl Session {
     pub fn forget(&mut self, platform: Platform) {
         self.links.remove(&platform);
         self.emotes.retain(|(p, _), _| *p != platform);
+        self.chatters.forget(platform);
     }
 
     /// Connected platforms that can send messages: the composer's destinations.
@@ -170,6 +173,9 @@ impl Session {
                     .is_some_and(|a| a.id == m.author.id);
                 if mine && self.is_own_echo(&m) {
                     return;
+                }
+                if !mine {
+                    self.chatters.seen(m.platform, &m.author);
                 }
                 self.feed.push(Item::Chat(m), now_ms);
             }
@@ -584,6 +590,18 @@ impl Session {
         }
     }
 
+    /// Names seen in chat on the destination's platforms that start with `prefix`, ignoring
+    /// case, alphabetically, each with the platforms it was seen on.
+    pub fn user_choices(
+        &self,
+        destination: Destination,
+        prefix: &str,
+        limit: usize,
+    ) -> Vec<(Vec<Platform>, String)> {
+        let platforms = destination.targets(&self.sendable());
+        self.chatters.starting_with(&platforms, prefix, limit)
+    }
+
     /// Emotes whose names start with `prefix` (any case) on the destination's platforms: every
     /// platform you can send to for All. A platform's own emotes come before 7TV's and the like,
     /// then shorter names; each name once, with every platform it works on.
@@ -750,6 +768,35 @@ mod tests {
             sent_at_ms: 0,
             reply_to: None,
         })
+    }
+
+    #[test]
+    fn people_in_chat_can_be_mentioned_but_not_you() {
+        let mut s = Session::new(100);
+        connect(&mut s, Platform::Twitch, ALL_CAPS);
+        connect(&mut s, Platform::Kick, ALL_CAPS);
+        for (p, id, name) in [
+            (Platform::Twitch, "u1", "Mobasity"),
+            (Platform::Kick, "u2", "moe"),
+            (Platform::Twitch, "me-Twitch", "Rill_Dev"),
+        ] {
+            let Event::Message(mut m) = msg(p, id, id, "hello") else {
+                unreachable!()
+            };
+            m.author.login = name.to_lowercase();
+            m.author.display_name = name.into();
+            s.apply(Event::Message(m), 0);
+        }
+        fn names(s: &Session, d: Destination) -> Vec<String> {
+            s.user_choices(d, "", 10)
+                .into_iter()
+                .map(|(_, n)| n)
+                .collect()
+        }
+        assert_eq!(names(&s, Destination::All), ["Mobasity", "moe"]);
+        assert_eq!(names(&s, Destination::One(Platform::Kick)), ["moe"]);
+        s.forget(Platform::Kick);
+        assert_eq!(names(&s, Destination::All), ["Mobasity"]);
     }
 
     fn done(s: &mut Session, out: &[Outgoing], fail: usize, now: i64) {
