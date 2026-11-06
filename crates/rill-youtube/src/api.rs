@@ -26,6 +26,8 @@ pub enum ApiError {
     Quota,
     /// The chat ended or no longer exists.
     ChatEnded,
+    /// The signed-in channel hasn't turned on live streaming.
+    NotEnabled,
     Api {
         status: u16,
         reason: String,
@@ -40,9 +42,8 @@ impl ApiError {
             ApiError::Unauthorized => AuthError::Invalid.message(),
             ApiError::Quota => "YouTube: today's API quota is used up. Chat resumes after the quota resets (midnight Pacific time).".into(),
             ApiError::ChatEnded => "YouTube: the live chat has ended.".into(),
-            ApiError::Api { status: 403, message, .. } => format!(
-                "YouTube: not allowed ({message}). Moderator actions need the channel owner or a moderator."
-            ),
+            ApiError::NotEnabled => "YouTube: this channel can't live stream yet. Turn on live streaming at youtube.com/features (it can take up to 24 hours), or sign in with the channel you stream from.".into(),
+            ApiError::Api { status: 403, message, .. } => format!("YouTube: not allowed ({message})."),
             ApiError::Api { status, message, .. } => format!("YouTube: {message} ({status})."),
             ApiError::Network(m) => m.clone(),
         }
@@ -286,6 +287,7 @@ pub fn classify(status: u16, body: &Value) -> ApiError {
     match reason.as_str() {
         "quotaExceeded" | "dailyLimitExceeded" => ApiError::Quota,
         "liveChatEnded" | "liveChatNotFound" | "liveChatDisabled" => ApiError::ChatEnded,
+        "liveStreamingNotEnabled" => ApiError::NotEnabled,
         _ if status == 401 => ApiError::Unauthorized,
         _ => ApiError::Api {
             status,
@@ -307,5 +309,7 @@ mod tests {
         assert_eq!(classify(403, &ended), ApiError::ChatEnded);
         let other = json!({"error": {"code": 400, "message": "Bad text", "errors": [{"reason": "invalidValue"}]}});
         assert!(classify(400, &other).message().contains("Bad text"));
+        let off = json!({"error": {"code": 403, "message": "The user is not enabled for live streaming.", "errors": [{"reason": "liveStreamingNotEnabled"}]}});
+        assert_eq!(classify(403, &off), ApiError::NotEnabled);
     }
 }

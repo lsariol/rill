@@ -302,6 +302,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
     };
     tracing::info!("YouTube signed in");
     let mut told_not_live = false;
+    let mut told_not_enabled = false;
     let mut warned_quota = false;
     loop {
         let chat = match api.active_chat().await {
@@ -329,6 +330,27 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
                 continue;
             }
             Err(ApiError::Unauthorized) => return expired(),
+            Err(ApiError::NotEnabled) => {
+                // Signed in fine; YouTube just won't list broadcasts until streaming is turned on.
+                ctx.events
+                    .status(
+                        ConnectionStatus::Connected,
+                        Some(account.clone()),
+                        Capabilities::NONE,
+                    )
+                    .await;
+                if !told_not_enabled {
+                    told_not_enabled = true;
+                    tracing::warn!("YouTube live streaming is off for this channel");
+                    ctx.events
+                        .notice(Level::Warn, ApiError::NotEnabled.message())
+                        .await;
+                }
+                if let Some(end) = pause(ctx, &api, &live, Instant::now() + FIND_EVERY).await {
+                    return end;
+                }
+                continue;
+            }
             Err(ApiError::Quota) => {
                 if let Some(end) = quota_pause(ctx, &api, &live, &account).await {
                     return end;
@@ -346,6 +368,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
             }
         };
         told_not_live = false;
+        told_not_enabled = false;
         *live.chat.lock().await = Some(chat.clone());
         ctx.events
             .status(ConnectionStatus::Connected, Some(account.clone()), OWNER)
@@ -518,7 +541,13 @@ async fn run_request(api: &Api, live: &Live, command: Command) -> Result<Option<
         }
         Command::SignIn | Command::SignOut | Command::Join { .. } => Ok(None),
     };
-    result.map_err(|e| e.message())
+    result.map_err(|e| match e {
+        ApiError::Api { status: 403, .. } => format!(
+            "{} Moderator actions need the channel owner or a moderator.",
+            e.message()
+        ),
+        e => e.message(),
+    })
 }
 
 /// A user's channel ID: given, or looked up among recent chatters by name.
@@ -903,6 +932,50 @@ mod sessions {
         assert!(
             matches!(seen.last(), Some(Event::Done { result: Err(why), .. }) if why.contains("Studio"))
         );
+        drop(tx);
+        assert!(task.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn explains_when_live_streaming_is_off() {
+        fn route(r: &Seen) -> (u16, Value) {
+            match r.path.as_str() {
+                "/liveBroadcasts" => api_error(403, "liveStreamingNotEnabled"),
+                _ => route_with(r, || (200, json!({"items": []}))),
+            }
+        }
+        let (base, log) = api_server(route).await;
+        let (mut rx, tx, task) = start(&base);
+        let seen = until(&mut rx, |e| {
+            matches!(
+                e,
+                Event::Notice {
+                    level: Level::Warn,
+                    ..
+                }
+            )
+        })
+        .await;
+        let Some(Event::Notice { text, .. }) = seen.last() else {
+            unreachable!()
+        };
+        assert!(text.contains("youtube.com/features"), "{text}");
+        assert!(seen.iter().any(|e| matches!(
+            e,
+            Event::Status {
+                status: ConnectionStatus::Connected,
+                ..
+            }
+        )));
+        // It waits a minute before asking again, rather than hammering the API.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let lookups = log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.path == "/liveBroadcasts")
+            .count();
+        assert_eq!(lookups, 1);
         drop(tx);
         assert!(task.await.unwrap());
     }
