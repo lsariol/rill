@@ -670,6 +670,7 @@ async fn connection(
             }
         }
     }
+    tracing::info!(channel = %id.channel.login, resumed = !fresh, "Twitch EventSub connected");
     ctx.events
         .status(ConnectionStatus::Connected, Some(account.clone()), id.caps)
         .await;
