@@ -141,7 +141,7 @@ impl ChatView {
                 div()
                     .text_xs()
                     .text_color(rgb(style::FAINT))
-                    .child("Loading previewâ€¦"),
+                    .child("Loading preview…"),
             ),
             Some(State::Failed) | None => div().child(address),
         };
@@ -206,7 +206,7 @@ impl ChatView {
                 Button::new("close-card")
                     .xsmall()
                     .ghost()
-                    .label("âœ•")
+                    .label("✕")
                     .tooltip("Close (Esc)")
                     .on_click(cx.listener(|view, _, window, cx| view.close_panel(window, cx))),
             );
@@ -402,7 +402,7 @@ impl ChatView {
                         div()
                             .text_xs()
                             .text_color(rgb(style::FAINT))
-                            .child("Tab or arrows pick Â· Enter runs Â· Esc cancels"),
+                            .child("Tab or arrows pick · Enter runs · Esc cancels"),
                     )
                     .into_any_element()
             }
@@ -441,7 +441,7 @@ impl ChatView {
                             div()
                                 .text_xs()
                                 .text_color(rgb(style::FAINT))
-                                .child("Enter confirms Â· Esc cancels"),
+                                .child("Enter confirms · Esc cancels"),
                         ),
                 )
                 .into_any_element(),
@@ -461,7 +461,7 @@ impl ChatView {
                 Button::new("close-panel")
                     .xsmall()
                     .ghost()
-                    .label("âœ•")
+                    .label("✕")
                     .tooltip("Close (Esc)")
                     .on_click(cx.listener(|view, _, window, cx| view.close_panel(window, cx))),
             )
@@ -500,7 +500,7 @@ impl ChatView {
                 _ if !set_up => "Coming soon".into(),
                 (ConnectionStatus::Connected, Some(a)) => format!("Connected as {a}").into(),
                 (ConnectionStatus::Reconnecting { .. }, _) => status.label().into(),
-                (ConnectionStatus::Connecting, _) if prompt.is_none() => "Connectingâ€¦".into(),
+                (ConnectionStatus::Connecting, _) if prompt.is_none() => "Connecting…".into(),
                 (ConnectionStatus::Connecting, _) => "Waiting for you to approve".into(),
                 _ => "Not connected".into(),
             };
@@ -1032,7 +1032,7 @@ impl ChatView {
                             div()
                                 .text_xs()
                                 .text_color(rgb(style::MUTED))
-                                .child(roles.join(" Â· ")),
+                                .child(roles.join(" · ")),
                         )
                     }),
             )
