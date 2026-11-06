@@ -48,6 +48,10 @@ pub struct ChatView {
     pub(crate) input: Entity<TextareaState>,
     pub(crate) destination: Destination,
     pub(crate) completion_ix: usize,
+    /// Deleted messages keep their text, faded, instead of "message deleted".
+    pub(crate) show_deleted: bool,
+    /// The first row shown in a long suggestion list.
+    pub(crate) completion_top: usize,
     /// Composer text for which the user dismissed autocomplete.
     pub(crate) completions_dismissed: Option<SharedString>,
     /// Tab stepping through emotes for the word before the cursor.
@@ -56,6 +60,10 @@ pub struct ChatView {
     /// Set by Esc in the composer: the next Tab leaves it instead of switching the destination.
     pub(crate) tab_leaves: bool,
     pub(crate) panel: Panel,
+    /// The "which platform?" prompt, which takes focus so the keyboard can answer it.
+    pub(crate) target_focus: FocusHandle,
+    /// The platform picked in that prompt with the keyboard.
+    pub(crate) target_ix: usize,
     /// The Ctrl+F bar, while open.
     pub(crate) search: Option<crate::search::Search>,
     /// The feed, as a focus stop for keyboard access to messages.
@@ -99,6 +107,8 @@ impl ChatView {
                 .placeholder("Send a message")
         });
         let subscription = cx.subscribe_in(&input, window, Self::on_input);
+        let show_deleted =
+            platforms.saves() && rill_os::settings::load().is_ok_and(|s| s.show_deleted_messages);
         input.update(cx, |state, cx| state.focus(window, cx));
 
         let list = ListState::new(0, ListAlignment::Bottom, px(400.));
@@ -132,11 +142,15 @@ impl ChatView {
             input,
             destination: Destination::All,
             completion_ix: 0,
+            show_deleted,
+            completion_top: 0,
             completions_dismissed: None,
             emote_cycle: None,
             composer_error: None,
             tab_leaves: false,
             panel: Panel::None,
+            target_focus: cx.focus_handle(),
+            target_ix: 0,
             search: None,
             feed_focus: cx.focus_handle().tab_stop(true),
             selected: None,
@@ -291,6 +305,21 @@ impl ChatView {
         self.set_filter(filter, cx);
     }
 
+    /// Shows deleted messages' text (faded) or "message deleted", and saves the choice.
+    pub(crate) fn set_show_deleted(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.show_deleted = on;
+        if self.platforms.saves()
+            && let Err(e) = rill_os::settings::update(|s| s.show_deleted_messages = on)
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+        }
+        // Rows are cached by the list, so redraw them all.
+        self.list.remeasure();
+        cx.notify();
+    }
+
     /// Turns a platform on (connecting it) or off (disconnecting it and hiding it everywhere). Sign-ins
     /// are kept either way. The last platform that's on stays on.
     pub(crate) fn set_platform_on(&mut self, p: Platform, on: bool, cx: &mut Context<Self>) {
@@ -343,6 +372,7 @@ impl ChatView {
         match event {
             InputEvent::Change => {
                 self.completion_ix = 0;
+                self.completion_top = 0;
                 self.composer_error = None;
                 self.tab_leaves = false;
                 cx.notify();

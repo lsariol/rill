@@ -35,7 +35,8 @@ folder; the benchmark scripts use `.dev\bench\data`.
   match; both go to every platform that can, or only the destination when one is selected.
   `/ad [length]` starts an ad break the same way (60 s by default; Twitch takes 30 s to 3 min,
   Kick 7 to 90 s, and YouTube only on monetized channels). With
-  "All platforms" selected, Rill asks which platform when more than one can do it.
+  "All platforms" selected, Rill asks which platform when more than one can do it: click one, or
+  pick it with Tab or the arrow keys and press Enter (Esc cancels).
   `/search <text>`, `/clear` and `/help` are Rill's own. Start a message with `//` to send a
   literal slash.
 - **Nukes:** for bot raids and spam waves. `/nuke <phrase>` times out everyone who said the phrase
@@ -59,7 +60,8 @@ folder; the benchmark scripts use `.dev\bench\data`.
   Twitch and Kick (changes show up without a restart), its BetterTTV and FrankerFaceZ sets on
   Twitch, and the three services' global emotes everywhere. In the composer, type `:` and the
   start of a name (`:sm`) for a list of the emotes you can use where the message is going, with
-  the platforms each works on; Tab or Enter picks one, Up and Down move, Esc closes the list. On
+  the platforms each works on; Tab or Enter picks one, Up and Down move, Esc closes the list. A
+  `:` alone lists them all, the channel's own first; scroll with the mouse wheel, PgUp and PgDn. On
   Twitch this includes your subscription emotes from other channels. Without the `:`, Tab after
   the start of a word puts in the emotes that start with it one at a time, alphabetically (`s`,
   then `sadge`, `smash`, `smile`), and Shift+Tab goes back; with no match, Tab switches the
@@ -70,7 +72,9 @@ folder; the benchmark scripts use `.dev\bench\data`.
   default browser; Copy link is there for signing in with another browser.
 - **Settings:** turn off the platforms you don't use. A platform that's off isn't connected and
   doesn't appear in the chat, the header or Accounts; its sign-in is kept for when you turn it
-  back on. The choice is saved in `settings.json` as `disabled_platforms`.
+  back on. The choice is saved in `settings.json` as `disabled_platforms`. **Show deleted
+  messages** keeps the text of deleted messages, faded and struck through, instead of "message
+  deleted" (`show_deleted_messages`).
 - **Search:** Ctrl+F (Cmd+F on macOS) shows only the messages whose text or author name contains
   what you type, with a count of matches. Esc closes it.
 - **Scrolling:** scroll up (or press PgUp) to pause the feed; a scrollbar appears for dragging

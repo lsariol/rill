@@ -602,15 +602,26 @@ impl Session {
             .flat_map(|((p, source), list)| list.iter().map(move |e| (*source, *p, e)))
             .filter(|(_, _, e)| e.name.to_lowercase().starts_with(&prefix))
             .collect();
-        found.sort_by(|a, b| {
-            (a.0, a.2.name.len(), &a.2.name).cmp(&(b.0, b.2.name.len(), &b.2.name))
-        });
+        if prefix.is_empty() {
+            // The whole list reads best alphabetically, the channel's own emotes first.
+            found.sort_by_cached_key(|(source, _, e)| {
+                (*source, e.name.to_lowercase(), e.name.clone())
+            });
+        } else {
+            found.sort_by(|a, b| {
+                (a.0, a.2.name.len(), &a.2.name).cmp(&(b.0, b.2.name.len(), &b.2.name))
+            });
+        }
         let mut out: Vec<(Vec<Platform>, EmoteOption)> = Vec::new();
+        let mut seen: HashMap<&str, usize> = HashMap::new();
         for (_, p, e) in found {
-            match out.iter().position(|(_, o)| o.name == e.name) {
-                Some(i) if !out[i].0.contains(&p) => out[i].0.push(p),
+            match seen.get(e.name.as_str()) {
+                Some(&i) if !out[i].0.contains(&p) => out[i].0.push(p),
                 Some(_) => {}
-                None if out.len() < limit => out.push((vec![p], e.clone())),
+                None if out.len() < limit => {
+                    seen.insert(&e.name, out.len());
+                    out.push((vec![p], e.clone()));
+                }
                 None => {}
             }
         }
@@ -1118,6 +1129,11 @@ mod tests {
             ["Smile", "SmileKick"]
         );
         assert!(names(&s, Destination::All, "zzz").is_empty());
+        assert_eq!(
+            names(&s, Destination::All, ""),
+            ["Smile", "SmileKick", "KEKW", "Smadge", "Smoked"],
+            "a `:` alone: own emotes first, then alphabetical"
+        );
         let smile = s.emote_choices(Destination::All, "smile", 10);
         assert_eq!(
             smile[0].0,
