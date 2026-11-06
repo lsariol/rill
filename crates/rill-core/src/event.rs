@@ -290,6 +290,23 @@ pub enum Event {
     },
 }
 
+impl Event {
+    /// The platform the event came from.
+    pub fn platform(&self) -> Platform {
+        match self {
+            Event::Message(m) => m.platform,
+            Event::Status { platform, .. }
+            | Event::SignIn { platform, .. }
+            | Event::Deleted { platform, .. }
+            | Event::UserCleared { platform, .. }
+            | Event::Cleared { platform, .. }
+            | Event::Notice { platform, .. }
+            | Event::Done { platform, .. }
+            | Event::Emotes { platform, .. } => *platform,
+        }
+    }
+}
+
 /// Where a platform's usable emotes come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum EmoteSource {

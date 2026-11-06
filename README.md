@@ -65,6 +65,9 @@ folder; the benchmark scripts use `.dev\bench\data`.
   mentions only, `≡` for compact mode. Narrow windows go compact by themselves.
 - **Accounts:** connect and disconnect platforms. Connect opens the platform's sign-in page in the
   default browser; Copy link is there for signing in with another browser.
+- **Settings:** turn off the platforms you don't use. A platform that's off isn't connected and
+  doesn't appear in the chat, the header or Accounts; its sign-in is kept for when you turn it
+  back on. The choice is saved in `settings.json` as `disabled_platforms`.
 - **Search:** Ctrl+F (Cmd+F on macOS) shows only the messages whose text or author name contains
   what you type, with a count of matches. Esc closes it.
 - **Scrolling:** scroll up (or press PgUp) to pause the feed; a scrollbar appears for dragging

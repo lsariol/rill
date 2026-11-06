@@ -20,6 +20,13 @@ impl Platform {
         Platform::Rumble,
     ];
 
+    /// The platform with this name, in any case.
+    pub fn from_name(name: &str) -> Option<Platform> {
+        Platform::ALL
+            .into_iter()
+            .find(|p| p.name().eq_ignore_ascii_case(name.trim()))
+    }
+
     /// The platform's display name.
     pub fn name(self) -> &'static str {
         match self {

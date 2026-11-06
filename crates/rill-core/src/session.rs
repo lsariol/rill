@@ -118,6 +118,12 @@ impl Session {
         self.links.get(&platform)
     }
 
+    /// Forgets a platform that was turned off: its connection, account and emotes.
+    pub fn forget(&mut self, platform: Platform) {
+        self.links.remove(&platform);
+        self.emotes.retain(|(p, _), _| *p != platform);
+    }
+
     /// Connected platforms that can send messages: the composer's destinations.
     pub fn sendable(&self) -> Vec<Platform> {
         self.connected()
@@ -888,6 +894,29 @@ mod tests {
         // Someone else saying the same thing is shown.
         s.apply(msg(Platform::Twitch, "t10", "other", "hi there"), 0);
         assert_eq!(s.feed.len(), 2);
+    }
+
+    #[test]
+    fn a_forgotten_platform_is_no_longer_a_destination() {
+        let mut s = Session::new(10);
+        connect(&mut s, Platform::Twitch, ALL_CAPS);
+        connect(&mut s, Platform::Kick, ALL_CAPS);
+        s.apply(
+            Event::Emotes {
+                platform: Platform::Kick,
+                source: EmoteSource::Platform,
+                emotes: vec![EmoteOption {
+                    name: "KEKW".into(),
+                    url: None,
+                    size: None,
+                }],
+            },
+            0,
+        );
+        s.forget(Platform::Kick);
+        assert_eq!(s.sendable(), [Platform::Twitch]);
+        assert!(s.link(Platform::Kick).is_none());
+        assert!(s.emote_choices(Destination::All, "k", 5).is_empty());
     }
 
     #[test]
