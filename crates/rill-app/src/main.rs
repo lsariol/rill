@@ -16,7 +16,9 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use gpui::{
+    App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, px, size,
+};
 use gpui_component::{Root, Theme, ThemeMode};
 use rill_core::{Adapter, Hub, Platform};
 use rill_sim::{Profile, SimAdapter};
@@ -206,9 +208,23 @@ fn main() -> ExitCode {
         search::init(cx);
         navigate::init(cx);
 
-        let bounds = Bounds::centered(None, size(px(440.), px(720.)), cx);
+        // Reopen where the window was left, if that's still on a screen; simulated runs (and
+        // benchmarks) always start the same way.
+        let saved = (!options.sim)
+            .then(rill_os::window::load)
+            .flatten()
+            .map(|p| {
+                let b = Bounds::new(point(px(p.x), px(p.y)), size(px(p.width), px(p.height)));
+                (b, p.maximized)
+            })
+            .filter(|(b, _)| cx.displays().iter().any(|d| d.bounds().intersects(b)));
+        let window_bounds = match saved {
+            Some((b, true)) => WindowBounds::Maximized(b),
+            Some((b, false)) => WindowBounds::Windowed(b),
+            None => WindowBounds::Windowed(Bounds::centered(None, size(px(440.), px(720.)), cx)),
+        };
         let window_options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_bounds: Some(window_bounds),
             titlebar: Some(TitlebarOptions {
                 title: Some("Rill".into()),
                 ..Default::default()
@@ -222,11 +238,35 @@ fn main() -> ExitCode {
             view_handle = Some(view.clone());
             cx.new(|cx| Root::new(view, window, cx))
         });
-        if let Err(e) = opened {
-            tracing::error!(err = %e, "window failed to open");
-            eprintln!("✗ GPUI: could not open the window: {e}. Update the graphics driver and try again.");
-            cx.quit();
-            return;
+        let window = match opened {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::error!(err = %e, "window failed to open");
+                eprintln!("✗ GPUI: could not open the window: {e}. Update the graphics driver and try again.");
+                cx.quit();
+                return;
+            }
+        };
+        if !options.sim {
+            let _ = window.update(cx, |_, window, cx| {
+                window.on_window_should_close(cx, |window, _| {
+                    let (b, maximized) = match window.window_bounds() {
+                        WindowBounds::Windowed(b) => (b, false),
+                        WindowBounds::Maximized(b) | WindowBounds::Fullscreen(b) => (b, true),
+                    };
+                    let placement = rill_os::window::Placement {
+                        x: f32::from(b.origin.x),
+                        y: f32::from(b.origin.y),
+                        width: f32::from(b.size.width),
+                        height: f32::from(b.size.height),
+                        maximized,
+                    };
+                    if let Err(e) = rill_os::window::save(&placement) {
+                        tracing::warn!(err = %e, "window placement not saved");
+                    }
+                    true
+                });
+            });
         }
         cx.activate(true);
 

@@ -25,4 +25,5 @@ Rill's first release, in progress.
 - 7TV emotes: the channel's set on Twitch and Kick and 7TV's global set everywhere, animated, at their own sizes, with zero-width emotes drawn over the emote before them. Emotes the streamer adds, removes or renames update live. BetterTTV and FrankerFaceZ emotes too: the channel's sets on Twitch and their global sets everywhere.
 - Ctrl+F (Cmd+F on macOS) searches the feed: only messages whose text or author matches stay visible, with a count. Esc closes the search.
 - Keyboard use: F6 moves between the composer and the messages; arrow keys pick a message and Enter opens its user card; Tab and Shift+Tab move between buttons; Esc closes a card and returns to the composer, and Esc then Tab leaves the composer.
+- Rill reopens at the size and place it was closed (kept in `window.json` beside `settings.json`), unless that spot is no longer on a screen.
 - `--sim` shows simulated chat, with options for rate, bursts, emotes, failures and dropped connections.

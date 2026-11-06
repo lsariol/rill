@@ -2,6 +2,7 @@
 
 pub mod credentials;
 pub mod settings;
+pub mod window;
 
 use std::path::PathBuf;
 

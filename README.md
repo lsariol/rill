@@ -15,7 +15,8 @@ cargo run -p rill-app -- --sim   # simulated chat, no accounts needed
 cargo run -p rill-app -- --help  # all options
 ```
 
-A debug run keeps everything it writes (settings, logs) in the repository's `.dev/` folder. Tokens
+A debug run keeps everything it writes (settings, window placement, logs) in the repository's
+`.dev/` folder. Tokens
 go to Windows Credential Manager under `rill-dev`. Release builds use `%LOCALAPPDATA%\Rill` and
 `rill`. Set `RILL_DATA_DIR` to keep settings and logs in another folder; the benchmark scripts use
 `.dev\bench\data`.
