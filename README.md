@@ -91,7 +91,8 @@ in `settings.json` (in `.dev/` for debug runs):
 - **Rumble:** read-only. In Accounts, paste the private link from rumble.com/account/livestream-api
   (it starts `https://rumble.com/-livestream-api/get-data?key=`); Rill keeps it in the system's
   credential store, not in `settings.json`. Rumble's Live Stream API is polled every 10 seconds,
-  so its chat arrives up to 10 seconds late, and Rants show as events with their amount.
+  so its chat arrives up to 10 seconds late. Rants, new followers and new subscribers show as
+  event lines.
 
 Release builds can carry the IDs instead: set `RILL_TWITCH_CLIENT_ID`, `RILL_YOUTUBE_CLIENT_ID` and
 `RILL_YOUTUBE_CLIENT_SECRET` when building.

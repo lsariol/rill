@@ -282,6 +282,9 @@ async fn session(ctx: &mut Ctx, link: &str) -> Option<End> {
     let mut account: Option<Account> = None;
     let mut stream: Option<String> = None;
     let mut seen = Seen::default();
+    // Follows and subscriptions already listed when Rill connects aren't news.
+    let mut people = Seen::default();
+    let mut people_primed = false;
     let mut told_offline = false;
     loop {
         let delay = match fetch(&ctx.http, link).await {
@@ -298,6 +301,15 @@ async fn session(ctx: &mut Ctx, link: &str) -> Option<End> {
                         Capabilities::NONE,
                     )
                     .await;
+                for s in &snap.supporters {
+                    if people.insert(s.key())
+                        && people_primed
+                        && !ctx.events.message(s.to_message()).await
+                    {
+                        return Some(End::Stop);
+                    }
+                }
+                people_primed = true;
                 match snap.live {
                     None => {
                         stream = None;
@@ -413,6 +425,12 @@ mod tests {
                     chat["recent_rants"].as_array_mut().unwrap().push(serde_json::json!(
                         {"username": "rich", "badges": [], "text": "hi", "created_on": "2026-11-06T06:01:01+00:00", "amount_cents": 2000}
                     ));
+                    v["followers"]["recent_followers"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(serde_json::json!(
+                            {"username": "fan2", "followed_on": "2026-11-06T06:01:02+00:00"}
+                        ));
                 }
                 let body = v.to_string();
                 let res = format!(
@@ -480,8 +498,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // What was in chat at connect isn't replayed; the new message and Rant appear once.
-        assert_eq!(texts, ["just got here", "sent a $20.00 Rant: hi"]);
+        // What was in chat at connect isn't replayed; the new follow, message and Rant appear once.
+        assert_eq!(
+            texts,
+            ["followed", "just got here", "sent a $20.00 Rant: hi"]
+        );
         assert!(seen.iter().any(|e| matches!(
             e,
             Event::Status { status: ConnectionStatus::Connected, account: Some(a), .. } if a.display_name == "Some Streamer"

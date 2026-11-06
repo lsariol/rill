@@ -12,6 +12,70 @@ pub struct Snapshot {
     pub account: Account,
     /// The stream that's live now, if any.
     pub live: Option<Live>,
+    /// Recent follows and subscriptions, oldest first.
+    pub supporters: Vec<Supporter>,
+}
+
+/// Someone who followed or subscribed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Supporter {
+    pub username: String,
+    /// "followed" or "subscribed".
+    pub action: &'static str,
+    pub at: String,
+}
+
+impl Supporter {
+    pub fn key(&self) -> String {
+        format!("{}\u{1f}{}\u{1f}{}", self.action, self.username, self.at)
+    }
+
+    /// An event line: "newfan followed".
+    pub fn to_message(&self) -> ChatMessage {
+        ChatMessage {
+            platform: Platform::Rumble,
+            id: format!("rumble-{:016x}", fnv(&self.key())),
+            author: Author {
+                id: self.username.to_lowercase(),
+                login: self.username.clone(),
+                display_name: self.username.clone(),
+                ..Author::default()
+            },
+            fragments: vec![Fragment::Text(self.action.to_string())],
+            kind: MessageKind::Event,
+            sent_at_ms: chrono::DateTime::parse_from_rfc3339(&self.at)
+                .map(|t| t.timestamp_millis())
+                .unwrap_or_else(|_| rill_core::now_ms()),
+            reply_to: None,
+        }
+    }
+}
+
+fn supporters(v: &Value) -> Vec<Supporter> {
+    let list = |group: &str, items: &str, at: &str, action: &'static str| {
+        v[group][items]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(move |s| {
+                let username = text(&s["username"]);
+                (!username.is_empty()).then(|| Supporter {
+                    username,
+                    action,
+                    at: text(&s[at]),
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut out = list("followers", "recent_followers", "followed_on", "followed");
+    out.extend(list(
+        "subscribers",
+        "recent_subscribers",
+        "subscribed_on",
+        "subscribed",
+    ));
+    out.sort_by(|a, b| a.at.cmp(&b.at));
+    out
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -178,7 +242,11 @@ pub fn parse(v: &Value) -> Option<Snapshot> {
                 messages,
             }
         });
-    Some(Snapshot { account, live })
+    Some(Snapshot {
+        account,
+        live,
+        supporters: supporters(v),
+    })
 }
 
 #[cfg(test)]
@@ -210,6 +278,19 @@ mod tests {
         let rant = live.messages[2].to_message();
         assert_eq!(rant.kind, MessageKind::Event);
         assert_eq!(rant.plain_text(), "sent a $5.00 Rant: great stream");
+    }
+
+    #[test]
+    fn reads_follows_and_subscriptions() {
+        let v: Value = serde_json::from_str(DATA).unwrap();
+        let s = parse(&v).unwrap();
+        assert_eq!(s.supporters.len(), 1);
+        let m = s.supporters[0].to_message();
+        assert_eq!(
+            (m.author.display_name.as_str(), m.plain_text().as_str()),
+            ("newfan", "followed")
+        );
+        assert_eq!(m.kind, MessageKind::Event);
     }
 
     #[test]
