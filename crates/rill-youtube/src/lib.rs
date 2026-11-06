@@ -34,6 +34,7 @@ const QUOTA_WARN: u64 = 8_000;
 const AUTHOR_LIMIT: usize = 5_000;
 
 const OWNER: Capabilities = Capabilities::of(&[
+    Action::Title,
     Action::Send,
     Action::Delete,
     Action::Timeout,
@@ -704,6 +705,13 @@ async fn run_request(api: &Api, live: &Live, command: Command) -> Result<Option<
                     .into(),
             );
         }
+        Command::SetTitle { title } => api.set_title(&title).await.map(|_| None),
+        Command::SetCategory { .. } => {
+            return Err(
+                "YouTube: streams have no category to set here. Change it in YouTube Studio."
+                    .into(),
+            );
+        }
         Command::SetMode { .. } | Command::Announce { .. } | Command::Shoutout { .. } => {
             return Err("YouTube: chat modes, announcements and shoutouts aren't in YouTube's API. Use YouTube Studio.".into());
         }
@@ -870,6 +878,7 @@ mod sessions {
             ("POST", "/liveChat/messages") => (200, json!({"id": "sent-1"})),
             ("POST", "/liveChat/bans") => (200, json!({"id": "ban-1"})),
             ("DELETE", "/liveChat/bans") => (204, Value::Null),
+            ("PUT", "/liveBroadcasts") => (200, json!({"id": "b1"})),
             _ => (404, json!({"error": {"message": "no route"}})),
         }
     }
@@ -1238,6 +1247,58 @@ mod sessions {
         until(&mut rx, |e| matches!(e, Event::Message(_))).await;
         drop(tx);
         assert!(task.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn renames_the_live_broadcast_keeping_its_snippet() {
+        fn route(r: &Seen) -> (u16, Value) {
+            match (r.method.as_str(), r.path.as_str()) {
+                ("GET", "/liveBroadcasts") => (
+                    200,
+                    json!({"items": [{"id": "b1", "snippet": {
+                        "liveChatId": "chat1", "title": "Old",
+                        "scheduledStartTime": "2026-11-06T12:00:00Z", "description": "desc"}}]}),
+                ),
+                _ => route_with(r, || (200, json!({"items": []}))),
+            }
+        }
+        let (base, log) = api_server(route).await;
+        let (mut rx, tx, task) = start(&base);
+        until(&mut rx, |e| matches!(e, Event::Message(_))).await;
+        request(
+            &tx,
+            1,
+            Command::SetTitle {
+                title: "New title".into(),
+            },
+        )
+        .await;
+        let seen = until(&mut rx, |e| done(e, 1)).await;
+        assert!(
+            matches!(
+                seen.last(),
+                Some(Event::Done {
+                    result: Ok(None),
+                    ..
+                })
+            ),
+            "{seen:#?}"
+        );
+        request(&tx, 2, Command::SetCategory { name: "x".into() }).await;
+        let seen = until(&mut rx, |e| done(e, 2)).await;
+        assert!(
+            matches!(seen.last(), Some(Event::Done { result: Err(why), .. }) if why.contains("Studio"))
+        );
+        drop(tx);
+        assert!(task.await.unwrap());
+        let log = log.lock().unwrap().clone();
+        let put = log.iter().find(|r| r.method == "PUT").unwrap();
+        assert_eq!(put.query, "part=snippet");
+        assert_eq!(
+            put.body,
+            json!({"id": "b1", "snippet": {"title": "New title",
+                "scheduledStartTime": "2026-11-06T12:00:00Z", "description": "desc"}})
+        );
     }
 
     #[tokio::test]

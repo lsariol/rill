@@ -193,6 +193,48 @@ impl Api {
             .find_map(|b| b["snippet"]["liveChatId"].as_str().map(str::to_string)))
     }
 
+    /// Renames the live broadcast. YouTube replaces the whole snippet, so the rest is sent back.
+    pub async fn set_title(&self, title: &str) -> Result<(), ApiError> {
+        let v = self
+            .call(
+                Method::GET,
+                "/liveBroadcasts",
+                &[
+                    ("part", "snippet"),
+                    ("broadcastStatus", "active"),
+                    ("broadcastType", "all"),
+                ],
+                None,
+                cost::LIST_BROADCASTS,
+            )
+            .await?;
+        let Some(b) = v["items"].as_array().and_then(|i| i.first()) else {
+            return Err(ApiError::Api {
+                status: 404,
+                reason: "notLive".into(),
+                message: "you're not live, so there's no broadcast to rename".into(),
+            });
+        };
+        let s = &b["snippet"];
+        let mut snippet = json!({
+            "title": title,
+            "scheduledStartTime": s["scheduledStartTime"],
+        });
+        if let Some(d) = s["description"].as_str() {
+            snippet["description"] = json!(d);
+        }
+        let body = json!({"id": b["id"], "snippet": snippet});
+        self.call(
+            Method::PUT,
+            "/liveBroadcasts",
+            &[("part", "snippet")],
+            Some(body),
+            cost::WRITE,
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// One page of chat messages after `page_token`.
     pub async fn messages(&self, chat: &str, page_token: Option<&str>) -> Result<Value, ApiError> {
         let mut q = vec![

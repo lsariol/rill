@@ -29,7 +29,10 @@ folder; the benchmark scripts use `.dev\bench\data`.
 - **Commands:** type `/` for the list, or `/help`. Moderation: `/ban`, `/timeout`, `/unban`, and
   `/purge <user>` to clear someone's messages with a one-second timeout. Twitch chat modes:
   `/slow [3s-2m|off]`, `/followers [10m|off]`, `/subscribers`, `/emoteonly` and `/uniquechat`
-  (`on` or `off`). Twitch also has `/announce <message>`, `/shoutout <user>` and `/poll`. With
+  (`on` or `off`). Twitch also has `/announce <message>`, `/shoutout <user>` and `/poll`.
+  `/set title <text>` (or `/title`) changes the stream title on Twitch, Kick and YouTube, and
+  `/set category <name>` (or `/category`) the category on Twitch and Kick, picking the closest
+  match; both go to every platform that can, or only the destination when one is selected. With
   "All platforms" selected, Rill asks which platform when more than one can do it.
   `/search <text>`, `/clear` and `/help` are Rill's own. Start a message with `//` to send a
   literal slash.

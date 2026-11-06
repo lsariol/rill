@@ -163,8 +163,8 @@ mod tests {
 
     #[test]
     fn completes_only_the_name() {
-        let names: Vec<_> = completions("/t").iter().map(|c| c.name).collect();
-        assert_eq!(names, ["timeout"]);
+        let names: Vec<_> = completions("/ti").iter().map(|c| c.name).collect();
+        assert_eq!(names, ["timeout", "title"]);
         assert_eq!(completions("/").len(), COMMANDS.len());
         assert!(completions("/ban bob").is_empty());
         assert!(completions("hi").is_empty());

@@ -1,5 +1,6 @@
 //! The slash command table. Each command's run function lives in the file for its group.
 
+mod channel;
 mod chat;
 mod local;
 mod moderation;
@@ -122,6 +123,30 @@ pub const COMMANDS: &[CommandSpec] = &[
         summary: "Give another streamer a shoutout",
         needs: Some(Action::Shoutout),
         run: chat::shoutout,
+    },
+    CommandSpec {
+        name: "set",
+        aliases: &[],
+        usage: "/set title <text> | /set category <name>",
+        summary: "Change the stream's title or category everywhere you can",
+        needs: Some(Action::Title),
+        run: channel::set,
+    },
+    CommandSpec {
+        name: "title",
+        aliases: &[],
+        usage: "/title <text>",
+        summary: "Change the stream title",
+        needs: Some(Action::Title),
+        run: channel::title,
+    },
+    CommandSpec {
+        name: "category",
+        aliases: &["game"],
+        usage: "/category <name>",
+        summary: "Change the stream category (Twitch and Kick)",
+        needs: Some(Action::Category),
+        run: channel::category,
     },
     CommandSpec {
         name: "poll",

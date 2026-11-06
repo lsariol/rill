@@ -16,7 +16,7 @@ pub const REDIRECT_PORT: u16 = 47831;
 pub const REDIRECT_URI: &str = "http://localhost:47831/callback";
 /// Send chat, read the signed-in user, delete messages, ban and time out.
 pub const SCOPES: &str =
-    "user:read channel:read chat:write moderation:ban moderation:chat_message:manage";
+    "user:read channel:read channel:write chat:write moderation:ban moderation:chat_message:manage";
 /// The credential store key for Kick tokens.
 pub const CREDENTIAL_KEY: &str = "kick";
 

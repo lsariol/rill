@@ -60,9 +60,11 @@ impl SimAdapter {
         match platform {
             Platform::Twitch => Capabilities::of(&[
                 Send, Reply, Delete, Timeout, Ban, Unban, Poll, ChatMode, Announce, Shoutout,
+                Title, Category,
             ]),
-            Platform::YouTube | Platform::Kick => {
-                Capabilities::of(&[Send, Delete, Timeout, Ban, Unban])
+            Platform::YouTube => Capabilities::of(&[Send, Delete, Timeout, Ban, Unban, Title]),
+            Platform::Kick => {
+                Capabilities::of(&[Send, Reply, Delete, Timeout, Ban, Unban, Title, Category])
             }
             // Rumble's Live Stream API only reads.
             Platform::Rumble => Capabilities::NONE,
@@ -441,7 +443,9 @@ fn handle(sim: &mut Sim, events: &EventSink, req: Request) {
             | Command::SignOut
             | Command::Join { .. }
             | Command::SetMode { .. }
-            | Command::Shoutout { .. } => Ok(None),
+            | Command::Shoutout { .. }
+            | Command::SetTitle { .. }
+            | Command::SetCategory { .. } => Ok(None),
             Command::Announce { text } => {
                 follow_up.push(Event::Notice {
                     platform,

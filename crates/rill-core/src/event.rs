@@ -18,6 +18,10 @@ pub enum Action {
     ChatMode,
     Announce,
     Shoutout,
+    /// The stream's title.
+    Title,
+    /// The stream's category (the game).
+    Category,
 }
 
 impl Action {
@@ -38,6 +42,8 @@ impl Action {
             Action::ChatMode => "change chat modes",
             Action::Announce => "post announcements",
             Action::Shoutout => "give shoutouts",
+            Action::Title => "change the stream title",
+            Action::Category => "change the stream category",
         }
     }
 }
@@ -162,6 +168,13 @@ pub enum Command {
     Shoutout {
         user: UserRef,
     },
+    SetTitle {
+        title: String,
+    },
+    /// The category by name; the adapter finds the platform's match.
+    SetCategory {
+        name: String,
+    },
     /// Start signing in (shows a code or opens the browser).
     SignIn,
     /// Forget the stored account and disconnect.
@@ -188,6 +201,8 @@ impl Command {
             Command::SetMode { .. } => Action::ChatMode,
             Command::Announce { .. } => Action::Announce,
             Command::Shoutout { .. } => Action::Shoutout,
+            Command::SetTitle { .. } => Action::Title,
+            Command::SetCategory { .. } => Action::Category,
             Command::SignIn | Command::SignOut | Command::Join { .. } => return None,
         })
     }

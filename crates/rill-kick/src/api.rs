@@ -230,6 +230,46 @@ impl Api {
             .map(|_| ())
     }
 
+    /// Changes the signed-in user's stream title or category.
+    pub async fn set_channel(&self, body: Value) -> Result<(), ApiError> {
+        self.call(Method::PATCH, "/channels", Some(body))
+            .await
+            .map(|_| ())
+    }
+
+    /// A category's ID and name: an exact name match, else the first search result.
+    pub async fn find_category(&self, name: &str) -> Result<(u64, String), ApiError> {
+        let q: String = reqwest::Url::parse_with_params("http://x/", &[("name", name)])
+            .map(|u| u.query().unwrap_or_default().to_string())
+            .unwrap_or_default();
+        let v = self
+            .call(Method::GET, &format!("/../v2/categories?{q}"), None)
+            .await?;
+        let pick = |v: &Value| {
+            v["data"].as_array().and_then(|d| {
+                d.iter()
+                    .find(|c| {
+                        c["name"]
+                            .as_str()
+                            .is_some_and(|n| n.eq_ignore_ascii_case(name))
+                    })
+                    .or_else(|| d.first())
+                    .and_then(|c| Some((c["id"].as_u64()?, c["name"].as_str()?.to_string())))
+            })
+        };
+        if let Some(found) = pick(&v) {
+            return Ok(found);
+        }
+        let q = q.replacen("name=", "q=", 1);
+        let v = self
+            .call(Method::GET, &format!("/categories?{q}"), None)
+            .await?;
+        pick(&v).ok_or_else(|| ApiError::Api {
+            status: 404,
+            message: format!("there's no category called \"{name}\""),
+        })
+    }
+
     pub async fn unban(&self, broadcaster: u64, user: u64) -> Result<(), ApiError> {
         let body = json!({"broadcaster_user_id": broadcaster, "user_id": user});
         self.call(Method::DELETE, "/moderation/bans", Some(body))

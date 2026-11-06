@@ -26,6 +26,8 @@ const VALIDATE_EVERY: Duration = Duration::from_secs(3600);
 const NOT_CONNECTED: &str = "Twitch isn't connected. Click the Twitch icon to sign in.";
 
 const BROADCASTER: Capabilities = Capabilities::of(&[
+    Action::Title,
+    Action::Category,
     Action::Send,
     Action::Reply,
     Action::Delete,
@@ -590,6 +592,20 @@ async fn run_request(
                 helix.shoutout(channel, &id, me).await?;
                 None
             }
+            Command::SetTitle { title } => {
+                helix
+                    .set_channel(channel, serde_json::json!({ "title": title }))
+                    .await?;
+                None
+            }
+            Command::SetCategory { name } => {
+                let (id, found) = helix.find_category(&name).await?;
+                helix
+                    .set_channel(channel, serde_json::json!({ "game_id": id }))
+                    .await?;
+                // Say which category it picked when it wasn't an exact match.
+                (!found.eq_ignore_ascii_case(&name)).then(|| format!("matched \"{found}\""))
+            }
             Command::SignIn | Command::SignOut | Command::Join { .. } => None,
         })
     };
@@ -824,6 +840,10 @@ mod sessions {
                         "/chat/messages" => {
                             json!({"data": [{"message_id": "sent-1", "is_sent": true}]})
                         }
+                        p if p.starts_with("/search/categories") => json!({"data": [
+                            {"id": "9", "name": "Elden Ring Nightreign"},
+                            {"id": "1", "name": "ELDEN RING"}
+                        ]}),
                         _ => json!({"data": []}),
                     };
                     log.lock().unwrap().push((method, path, body));
@@ -1092,6 +1112,27 @@ mod sessions {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn finds_a_category_by_name_and_changes_the_channel() {
+        let (helix_url, seen) = helix_server().await;
+        let (_ctx, helix, _rx, _tx) = setup(&helix_url);
+        // No exact /games match, so the search's case-insensitive match wins over its first result.
+        let (id, name) = helix.find_category("elden ring").await.unwrap();
+        assert_eq!((id.as_str(), name.as_str()), ("1", "ELDEN RING"));
+        helix
+            .set_channel("200", json!({"title": "Ranked"}))
+            .await
+            .unwrap();
+        let seen = seen.lock().unwrap().clone();
+        assert!(
+            seen.iter()
+                .any(|(m, p, _)| m == "GET" && p == "/games?name=elden+ring")
+        );
+        assert!(seen.iter().any(|(m, p, b)| m == "PATCH"
+            && p == "/channels?broadcaster_id=200"
+            && *b == json!({"title": "Ranked"})));
     }
 
     #[tokio::test]

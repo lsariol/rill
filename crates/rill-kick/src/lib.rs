@@ -41,6 +41,8 @@ const BUILTIN_AUTH_HELPER: Option<&str> = option_env!("RILL_KICK_AUTH_HELPER");
 /// What a signed-in account can do on Kick. Moderation is offered on any channel; Kick refuses it
 /// (with a clear message) where the account isn't a moderator.
 const SIGNED_IN: Capabilities = Capabilities::of(&[
+    Action::Title,
+    Action::Category,
     Action::Send,
     Action::Reply,
     Action::Delete,
@@ -444,6 +446,18 @@ async fn perform(
         Command::Unban { user } => {
             let id = user_id(&user)?;
             api.unban(broadcaster, id).await.map(|_| None)
+        }
+        Command::SetTitle { title } => api
+            .set_channel(serde_json::json!({ "stream_title": title }))
+            .await
+            .map(|_| None),
+        Command::SetCategory { name } => {
+            let (id, found) = api.find_category(&name).await.map_err(|e| e.message())?;
+            api.set_channel(serde_json::json!({ "category_id": id }))
+                .await
+                .map(|_| {
+                    (!found.eq_ignore_ascii_case(&name)).then(|| format!("matched \"{found}\""))
+                })
         }
         _ => Ok(None),
     };
@@ -1424,6 +1438,11 @@ mod official_api {
                             (429, json!({"message": "slow down"}))
                         }
                         ("POST" | "DELETE", "/moderation/bans") => (200, json!({"data": {}})),
+                        ("PATCH", "/channels") => (204, Value::Null),
+                        ("GET", p) if p.starts_with("/v2/categories") => (200, json!({"data": []})),
+                        ("GET", p) if p.starts_with("/categories") => {
+                            (200, json!({"data": [{"id": 15, "name": "Just Chatting"}]}))
+                        }
                         _ => (404, json!({"message": "no route"})),
                     };
                     seen.lock().unwrap().push(Seen {
@@ -1575,6 +1594,40 @@ mod official_api {
         )
         .unwrap();
         assert_eq!(unban, json!({"broadcaster_user_id": 7, "user_id": 123}));
+    }
+
+    #[tokio::test]
+    async fn changes_the_title_and_finds_categories_by_search() {
+        let (base, log) = kick_server().await;
+        let shared = signed(&base);
+        let (events, _rx) = EventSink::channel(Platform::Kick, 100);
+        let title = Command::SetTitle {
+            title: "Ranked".into(),
+        };
+        assert_eq!(perform(&shared, &events, title).await, Ok(None));
+        // No exact name match, so the search finds it, and the result says what it matched.
+        let category = Command::SetCategory {
+            name: "chatting".into(),
+        };
+        assert_eq!(
+            perform(&shared, &events, category).await,
+            Ok(Some("matched \"Just Chatting\"".into()))
+        );
+        let log = log.lock().unwrap().clone();
+        let patches: Vec<Value> = log
+            .iter()
+            .filter(|r| r.method == "PATCH" && r.path == "/channels")
+            .map(|r| serde_json::from_str(&r.body).unwrap())
+            .collect();
+        assert_eq!(
+            patches,
+            [
+                json!({"stream_title": "Ranked"}),
+                json!({"category_id": 15})
+            ]
+        );
+        assert!(log.iter().any(|r| r.path == "/v2/categories?name=chatting"));
+        assert!(log.iter().any(|r| r.path == "/categories?q=chatting"));
     }
 
     #[tokio::test]

@@ -352,6 +352,50 @@ impl Helix {
         .map(|_| ())
     }
 
+    /// Changes the channel's title or category (`game_id`).
+    pub async fn set_channel(&self, broadcaster: &str, body: Value) -> Result<(), HelixError> {
+        self.call(
+            Method::PATCH,
+            "/channels",
+            &[("broadcaster_id", broadcaster)],
+            Some(body),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// The category for a name: an exact match if there is one, else the best search result.
+    pub async fn find_category(&self, name: &str) -> Result<(String, String), HelixError> {
+        let v = self
+            .call(Method::GET, "/games", &[("name", name)], None)
+            .await?;
+        if let Some(g) = v["data"].as_array().and_then(|d| d.first()) {
+            return Ok((s(&g["id"]), s(&g["name"])));
+        }
+        let v = self
+            .call(
+                Method::GET,
+                "/search/categories",
+                &[("query", name), ("first", "10")],
+                None,
+            )
+            .await?;
+        let found = v["data"].as_array().into_iter().flatten();
+        let mut best = None;
+        for g in found {
+            if s(&g["name"]).eq_ignore_ascii_case(name) {
+                best = Some(g);
+                break;
+            }
+            best = best.or(Some(g));
+        }
+        best.map(|g| (s(&g["id"]), s(&g["name"])))
+            .ok_or_else(|| HelixError::Api {
+                status: 404,
+                message: format!("there's no category called \"{name}\""),
+            })
+    }
+
     pub async fn announce(
         &self,
         broadcaster: &str,
@@ -464,6 +508,11 @@ pub fn add_badges(out: &mut Badges, v: &Value) {
             }
         }
     }
+}
+
+/// A JSON string field, or empty.
+fn s(v: &Value) -> String {
+    v.as_str().unwrap_or_default().to_string()
 }
 
 #[cfg(test)]
