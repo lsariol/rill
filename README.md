@@ -17,7 +17,8 @@ cargo run -p rill-app -- --help  # all options
 
 A debug run keeps everything it writes (settings, logs) in the repository's `.dev/` folder. Tokens
 go to Windows Credential Manager under `rill-dev`. Release builds use `%LOCALAPPDATA%\Rill` and
-`rill`.
+`rill`. Set `RILL_DATA_DIR` to keep settings and logs in another folder; the benchmark scripts use
+`.dev\bench\data`.
 
 ## Using it
 

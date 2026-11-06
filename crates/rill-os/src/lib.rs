@@ -7,8 +7,12 @@ use std::path::PathBuf;
 
 /// Where Rill keeps settings, logs and caches.
 ///
-/// Debug builds use the repository's `.dev/` folder, so a local run touches nothing outside it.
+/// `RILL_DATA_DIR` overrides it (test scripts point it into `.dev/`). Otherwise debug builds use
+/// the repository's `.dev/` folder, so a local run touches nothing outside it.
 pub fn data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("RILL_DATA_DIR").filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir);
+    }
     if cfg!(debug_assertions) {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let repo = manifest.ancestors().nth(2).unwrap_or(manifest);

@@ -14,6 +14,8 @@ if (-not $NoBuild) {
 $exe = (Resolve-Path "target\release\rill.exe").Path
 $out = Join-Path (Resolve-Path ".").Path ".dev\bench"
 New-Item -ItemType Directory -Force $out | Out-Null
+# The release build's settings and logs stay in .dev too.
+$env:RILL_DATA_DIR = Join-Path $out "data"
 
 function Cpu-Percent($proc, $seconds) {
     $proc.Refresh(); $t0 = $proc.TotalProcessorTime; $w = [Diagnostics.Stopwatch]::StartNew()
