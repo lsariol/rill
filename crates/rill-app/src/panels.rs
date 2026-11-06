@@ -1,6 +1,7 @@
 //! Panels above the composer: the user card, the "which platform?" prompt and the poll form.
 
 use chrono::TimeZone;
+use gpui::StyledImage as _;
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, KeyBinding,
     ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, actions, div,
@@ -104,10 +105,106 @@ impl ChatView {
         cx.notify();
     }
 
+    /// The card for what the pointer is over: a link's preview, an emote shown bigger with its
+    /// name and source, or what a badge means.
+    pub(crate) fn render_hover(&self) -> Option<AnyElement> {
+        use crate::chat_text::Hover;
+        let (_, hover) = self.hover.clone()?;
+        match hover {
+            Hover::Link { url, at } => self.render_link_preview(url, at),
+            Hover::Emote {
+                names,
+                url,
+                size,
+                at,
+            } => {
+                // About three times the size in chat, at most 112 px tall.
+                let s = crate::row::emote_size(size);
+                let scale = (112. / f32::from(s.height)).min(3.);
+                let (w, h) = (s.width * scale, s.height * scale);
+                let small = url.clone();
+                let image = gpui::img(crate::row::bigger_image(&url))
+                    .w(w)
+                    .h(h)
+                    .with_fallback(move || gpui::img(small.clone()).w(w).h(h).into_any_element());
+                let (first, rest) = names.split_first()?;
+                let body = div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_1()
+                    .child(image)
+                    .child(div().font_bold().child(first.clone()))
+                    .children((!rest.is_empty()).then(|| {
+                        div()
+                            .text_xs()
+                            .text_color(rgb(style::MUTED))
+                            .child(format!("with {}", rest.join(", ")))
+                    }))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(style::FAINT))
+                            .child(crate::row::emote_source(&url)),
+                    );
+                Some(self.hover_frame(at, f32::from(w).max(120.) + 24., 24., body))
+            }
+            Hover::Badge { title, url, at } => {
+                let body = div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .children(url.map(|u| {
+                        let small = u.clone();
+                        gpui::img(crate::row::bigger_image(&u))
+                            .size(px(36.))
+                            .with_fallback(move || {
+                                gpui::img(small.clone()).size(px(36.)).into_any_element()
+                            })
+                    }))
+                    .child(div().font_bold().child(title));
+                Some(self.hover_frame(at, 240., 18., body))
+            }
+        }
+    }
+
+    /// A card floating by `at` (window coordinates): below it in the top half of the chat,
+    /// above it in the bottom half. `below` is how far down to start when it goes below.
+    fn hover_frame(
+        &self,
+        at: gpui::Point<gpui::Pixels>,
+        width: f32,
+        below: f32,
+        body: gpui::Div,
+    ) -> AnyElement {
+        let feed = self.feed_bounds.get();
+        let (w, h) = (f32::from(feed.size.width), f32::from(feed.size.height));
+        let x = f32::from(at.x - feed.origin.x).clamp(8., (w - width - 8.).max(8.));
+        let y = f32::from(at.y - feed.origin.y);
+        let frame = div()
+            .absolute()
+            .left(px(x))
+            .p_2()
+            .rounded_md()
+            .bg(rgb(style::RAISED))
+            .border_1()
+            .border_color(rgb(style::BORDER))
+            .shadow_lg()
+            .child(body);
+        if y < h / 2. {
+            frame.top(px(y + below)).into_any_element()
+        } else {
+            frame.bottom(px(h - y + 6.)).into_any_element()
+        }
+    }
+
     /// The hovered link's preview (or just its address), floating by the link.
-    pub(crate) fn render_link_preview(&self) -> Option<AnyElement> {
+    fn render_link_preview(
+        &self,
+        url: String,
+        at: gpui::Point<gpui::Pixels>,
+    ) -> Option<AnyElement> {
         use crate::preview::State;
-        let (url, at) = self.link_hover.clone()?;
         let feed = self.feed_bounds.get();
         let (w, h) = (f32::from(feed.size.width), f32::from(feed.size.height));
         let width = 340f32.min(w - 16.);

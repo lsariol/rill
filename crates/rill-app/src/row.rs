@@ -11,22 +11,21 @@ use gpui::{
 use rill_core::feed::{DeliveryState, Notice, SentMessage};
 use rill_core::{Badge, ChatMessage, Entry, Fragment, Item, MessageKind, Platform};
 
-use crate::chat_text::{self, ChatText, ClickFn, HoverFn, Parts, Target};
+use crate::chat_text::{self, ChatText, ClickFn, Hover, HoverFn, Parts, Target};
 use crate::chat_view::ChatView;
 use crate::panels::{Panel, UserCard};
 use crate::style;
 use gpui::SharedString;
-use gpui_component::tooltip::Tooltip;
 
 pub(crate) const EMOTE: f32 = 22.;
 const ICON: f32 = 14.;
 
 impl ChatView {
-    /// Tells the view when the pointer moves onto or off a link, for its preview.
+    /// Tells the view when the pointer moves onto or off a link, emote or badge, for its card.
     pub(crate) fn link_hover_fn(&self, cx: &mut Context<Self>) -> HoverFn {
         let view = cx.entity().downgrade();
-        Rc::new(move |hover, _, cx| {
-            let _ = view.update(cx, |view, cx| view.hover_link(hover, cx));
+        Rc::new(move |source, hover, _, cx| {
+            let _ = view.update(cx, |view, cx| view.set_hover(source, hover, cx));
         })
     }
 
@@ -52,6 +51,7 @@ impl ChatView {
                     let _ = view.update(cx, |view, cx| view.open_user_card(card, at, window, cx));
                 }
                 Target::Link(url) => cx.open_url(url),
+                Target::Emote(_) => {}
             }));
         if !soft {
             return text.into_any_element();
@@ -154,7 +154,7 @@ impl ChatView {
                     .when(!compact, |d| d.child(time(entry.seq, entry.received_ms)))
                     .child(gutter(Some(m.platform)))
                     .when(!compact && !m.author.badges.is_empty(), |d| {
-                        d.child(badges(entry.seq, &m.author.badges))
+                        d.child(badges(entry.seq, &m.author.badges, self.link_hover_fn(cx)))
                     })
                     .child(
                         div()
@@ -236,8 +236,8 @@ fn time(seq: u64, ms: i64) -> impl IntoElement {
         .child(ChatText::new(("time", seq), order(seq, 0), parts).silent())
 }
 
-/// Badges, each saying what it is on hover ("Subscriber · 1 year, 4 months").
-fn badges(seq: u64, badges: &[Badge]) -> impl IntoElement {
+/// Badges, each saying what it is on hover ("Subscriber · 1 year, 4 months"), straight away.
+fn badges(seq: u64, badges: &[Badge], hover: HoverFn) -> impl IntoElement {
     div()
         .flex()
         .flex_none()
@@ -257,11 +257,20 @@ fn badges(seq: u64, badges: &[Badge]) -> impl IntoElement {
                 Some(url) => img(url.clone()).size(px(ICON)).into_any_element(),
                 None => badge_chip(b).into_any_element(),
             };
-            let title = SharedString::from(b.title.clone());
+            let (title, url) = (b.title.clone(), b.image_url.clone());
+            let key = SharedString::from(format!("badge-{seq}-{i}"));
+            let hover = hover.clone();
             div()
                 .id(ElementId::NamedInteger(format!("badge-{i}").into(), seq))
                 .child(image)
-                .tooltip(move |window, cx| Tooltip::new(title.clone()).build(window, cx))
+                .on_hover(move |on, window, cx| {
+                    let card = on.then(|| Hover::Badge {
+                        title: title.clone(),
+                        url: url.clone(),
+                        at: window.mouse_position(),
+                    });
+                    hover(key.clone(), card, window, cx);
+                })
         }))
 }
 
@@ -375,6 +384,47 @@ pub(crate) fn emote_size(size: Option<(u16, u16)>) -> gpui::Size<gpui::Pixels> {
         Some((w, h)) => gpui::size(px(f32::from(w) * scale), px(f32::from(h.min(32)) * scale)),
         None => gpui::size(px(EMOTE), px(EMOTE)),
     }
+}
+
+/// Where an emote comes from, by its image's address.
+pub(crate) fn emote_source(url: &str) -> &'static str {
+    let host = url.split("://").nth(1).unwrap_or(url);
+    if host.starts_with("static-cdn.jtvnw.net") {
+        "Twitch emote"
+    } else if host.contains("7tv.app") {
+        "7TV emote"
+    } else if host.contains("betterttv.net") {
+        "BetterTTV emote"
+    } else if host.contains("frankerfacez.com") {
+        "FrankerFaceZ emote"
+    } else if host.contains("kick.com") {
+        "Kick emote"
+    } else if host.contains("ggpht.com") || host.contains("youtube.com") {
+        "YouTube emote"
+    } else if host.contains("rumble.com") {
+        "Rumble emote"
+    } else {
+        "Emote"
+    }
+}
+
+/// The address of a bigger copy of an emote or badge image, where the service has one.
+pub(crate) fn bigger_image(url: &str) -> String {
+    let swap = |from: &str, to: &str| url.strip_suffix(from).map(|base| format!("{base}{to}"));
+    if url.contains("static-cdn.jtvnw.net/emoticons/") {
+        swap("/1.0", "/3.0")
+    } else if url.contains("static-cdn.jtvnw.net/badges/") {
+        swap("/2", "/3").or_else(|| swap("/1", "/3"))
+    } else if url.contains("7tv.app") {
+        swap("/1x.webp", "/3x.webp").or_else(|| swap("/1x.avif", "/3x.avif"))
+    } else if url.contains("betterttv.net") {
+        swap("/1x.webp", "/3x.webp").or_else(|| swap("/1x", "/3x"))
+    } else if url.contains("frankerfacez.com/emote/") {
+        swap("/1", "/4")
+    } else {
+        None
+    }
+    .unwrap_or_else(|| url.to_string())
 }
 
 /// An emote image at its own proportions (third-party emotes vary), or its name without one.
@@ -514,4 +564,53 @@ fn notice_row(
                     line.on_click(open_links()).on_hover(hover.clone())
                 })),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bigger_images_where_the_service_has_them() {
+        let twitch = "https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/1.0";
+        assert_eq!(
+            bigger_image(twitch),
+            "https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/3.0"
+        );
+        assert_eq!(
+            bigger_image("https://cdn.7tv.app/emote/abc/1x.webp"),
+            "https://cdn.7tv.app/emote/abc/3x.webp"
+        );
+        assert_eq!(
+            bigger_image("https://cdn.betterttv.net/emote/b1/1x.webp"),
+            "https://cdn.betterttv.net/emote/b1/3x.webp"
+        );
+        assert_eq!(
+            bigger_image("https://cdn.frankerfacez.com/emote/9/1"),
+            "https://cdn.frankerfacez.com/emote/9/4"
+        );
+        assert_eq!(
+            bigger_image("https://static-cdn.jtvnw.net/badges/v1/abc/2"),
+            "https://static-cdn.jtvnw.net/badges/v1/abc/3"
+        );
+        let kick = "https://files.kick.com/emotes/1/fullsize";
+        assert_eq!(bigger_image(kick), kick, "already full size");
+    }
+
+    #[test]
+    fn says_where_an_emote_comes_from() {
+        assert_eq!(
+            emote_source("https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/1.0"),
+            "Twitch emote"
+        );
+        assert_eq!(
+            emote_source("https://cdn.7tv.app/emote/a/1x.webp"),
+            "7TV emote"
+        );
+        assert_eq!(
+            emote_source("https://files.kick.com/emotes/1/fullsize"),
+            "Kick emote"
+        );
+        assert_eq!(emote_source("https://example.com/x.png"), "Emote");
+    }
 }

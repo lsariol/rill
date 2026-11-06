@@ -67,7 +67,8 @@ folder; the benchmark scripts use `.dev\bench\data`.
   and picture; **Link previews** in Settings turns that off (`link_previews`), and hovering then
   shows only the address. Rill fetches a preview only for the link you're hovering, and never for
   addresses on your computer or local network.
-- **Emotes:** platform emotes, plus 7TV, BetterTTV and FrankerFaceZ. The channel's 7TV set loads on
+- **Emotes:** hovering an emote in chat shows it bigger, with its name and where it comes from.
+  Platform emotes, plus 7TV, BetterTTV and FrankerFaceZ. The channel's 7TV set loads on
   Twitch and Kick (changes show up without a restart), its BetterTTV and FrankerFaceZ sets on
   Twitch, and the three services' global emotes everywhere. In the composer, type `:` and the
   start of a name (`:sm`) for a list of the emotes you can use where the message is going, with
@@ -114,8 +115,9 @@ folder; the benchmark scripts use `.dev\bench\data`.
 - **Scrolling:** scroll up (or press PgUp) to pause the feed; a scrollbar appears for dragging
   back through older messages, and a button jumps back to live chat.
 - **Highlights:** messages that mention you get a red bar and tint, and events (subscriptions,
-  gifted subs, raids, Rants, redemptions and ad breaks) a purple one. Marks along the right edge
-  show where they are in the history; drag the scrollbar to them, or click one to go there.
+  gifted subs, raids, Rants, redemptions and ad breaks) a purple one. Thin marks along the right
+  edge show where they are in the history, so a sub that scrolled away while you were gone is
+  easy to find with the scrollbar.
   Settings → Highlights turns each on or off, picks their colors, and hides the marks
   (`highlights` in `settings.json`).
 - **Keyboard:** F6 moves between the composer and the messages. In the messages, Up and Down (or
