@@ -107,8 +107,9 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
         }
     };
     let (writer, guard) = tracing_appender::non_blocking(appender);
+    // Debug builds log Rill's own debug lines, not every HTTP/2 frame the libraries see.
     let level = if cfg!(debug_assertions) {
-        "debug"
+        "info,rill=debug,rill_core=debug,rill_twitch=debug,rill_youtube=debug,rill_kick=debug,rill_rumble=debug,rill_emotes=debug"
     } else {
         "info"
     };
