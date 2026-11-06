@@ -66,8 +66,8 @@ pub struct ChatView {
     /// Which lines stand out, and in what colors.
     pub(crate) highlights: rill_os::settings::Highlights,
     pub(crate) previews: crate::preview::Previews,
-    /// The link under the pointer and where it starts (window coordinates).
-    pub(crate) link_hover: Option<(String, gpui::Point<Pixels>)>,
+    /// What the pointer is over (a link, emote or badge), and which line or badge reported it.
+    pub(crate) hover: Option<(SharedString, crate::chat_text::Hover)>,
     preview_task: Option<Task<()>>,
     /// The first row shown in a long suggestion list.
     pub(crate) completion_top: usize,
@@ -183,7 +183,7 @@ impl ChatView {
                 .map(|s| s.highlights.clone())
                 .unwrap_or_default(),
             previews: Default::default(),
-            link_hover: None,
+            hover: None,
             preview_task: None,
             completion_top: 0,
             completions_dismissed: None,
@@ -413,8 +413,9 @@ impl ChatView {
         }
     }
 
-    /// Marks beside the scroll bar where highlighted lines are; clicking one scrolls to it.
-    fn render_marks(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// Marks along the scroll bar where highlighted lines are, so a sub or mention that scrolled
+    /// off while you were away is easy to find.
+    fn render_marks(&self) -> Option<AnyElement> {
         let h = &self.highlights;
         if !h.scrollbar_marks || !(h.mentions || h.events) {
             return None;
@@ -438,49 +439,30 @@ impl ChatView {
         }
         let mention = style::parse_hex(&h.mention_color).unwrap_or(style::MENTION_BAR);
         let event = style::parse_hex(&h.event_color).unwrap_or(0xa970ff);
+        // A line's share of the track, between 1 and 3 px: thin with a long history.
+        let track = f32::from(self.feed_bounds.get().size.height);
+        let tall = (track / total as f32).clamp(1., 3.);
         let marks = slots.into_iter().flatten().map(|(ix, is_mention)| {
-            let top = ix as f32 / total as f32;
-            // A 3 px mark with a taller target around it.
             div()
-                .id(("mark", ix))
                 .absolute()
-                .top(gpui::relative(top))
-                .mt(px(-2.))
+                .top(gpui::relative(ix as f32 / total as f32))
                 .left_0()
                 .w_full()
-                .h(px(7.))
-                .py(px(2.))
-                .cursor_pointer()
-                // The scroll bar underneath mustn't also take the press.
-                .occlude()
-                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |view, _, _, cx| view.scroll_to_line(ix, cx)))
-                .child(div().size_full().rounded_sm().bg(rgb(if is_mention {
-                    mention
-                } else {
-                    event
-                })))
+                .h(px(tall))
+                .rounded_sm()
+                .bg(rgb(if is_mention { mention } else { event }))
         });
+        // Only a picture: the scroll bar underneath still takes every click and drag.
         Some(
             div()
                 .absolute()
                 .top_0()
                 .bottom_0()
-                .right(px(2.))
-                .w(px(6.))
+                .right(px(3.))
+                .w(px(4.))
                 .children(marks)
                 .into_any_element(),
         )
-    }
-
-    /// Scrolls so a line is in view, a little below the top, and stops following.
-    fn scroll_to_line(&mut self, ix: usize, cx: &mut Context<Self>) {
-        self.list.scroll_to(gpui::ListOffset {
-            item_ix: ix.saturating_sub(2),
-            offset_in_item: px(0.),
-        });
-        self.following = self.list.is_following_tail();
-        cx.notify();
     }
 
     /// Turns link previews on or off, and saves the choice.
@@ -496,18 +478,28 @@ impl ChatView {
         cx.notify();
     }
 
-    /// The pointer moved onto a link or off one. A preview is fetched after a short pause on it.
-    pub(crate) fn hover_link(
+    /// The pointer moved onto a link, emote or badge, or off one (`None`, which only clears
+    /// a card the same `source` showed). A link's preview is fetched after a short pause on it.
+    pub(crate) fn set_hover(
         &mut self,
-        hover: Option<(String, gpui::Point<Pixels>)>,
+        source: SharedString,
+        hover: Option<crate::chat_text::Hover>,
         cx: &mut Context<Self>,
     ) {
-        if self.link_hover == hover {
+        let Some(hover) = hover else {
+            if self.hover.as_ref().is_some_and(|(s, _)| *s == source) {
+                self.hover = None;
+                self.preview_task = None;
+                cx.notify();
+            }
+            return;
+        };
+        if self.hover.as_ref() == Some(&(source.clone(), hover.clone())) {
             return;
         }
-        self.link_hover = hover.clone();
+        self.hover = Some((source, hover.clone()));
         cx.notify();
-        let Some((url, _)) = hover else {
+        let crate::chat_text::Hover::Link { url, .. } = hover else {
             self.preview_task = None;
             return;
         };
@@ -523,7 +515,10 @@ impl ChatView {
                 .timer(Duration::from_millis(350))
                 .await;
             let client = view.update(cx, |view, cx| {
-                let still = view.link_hover.as_ref().is_some_and(|(u, _)| *u == url);
+                let still = matches!(
+                    &view.hover,
+                    Some((_, crate::chat_text::Hover::Link { url: u, .. })) if *u == url
+                );
                 still.then(|| {
                     view.previews
                         .set(url.clone(), crate::preview::State::Loading);
@@ -811,8 +806,8 @@ impl ChatView {
             .when(!self.following, |d| {
                 d.child(Scrollbar::vertical(&self.list).mode(ScrollbarMode::Always))
             })
-            // Over the scroll bar, so a click on a mark goes to its line.
-            .children(self.render_marks(cx))
+            // Drawn over the scroll bar, which still takes the mouse.
+            .children(self.render_marks())
             .children(jump)
             .child({
                 let bounds = self.feed_bounds.clone();
@@ -824,7 +819,7 @@ impl ChatView {
                     .size_full()
             })
             .children(self.render_card(cx))
-            .children(self.render_link_preview())
+            .children(self.render_hover())
     }
 }
 

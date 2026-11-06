@@ -24,12 +24,37 @@ pub(crate) enum Target {
     Name,
     /// Opens the address in the browser.
     Link(String),
+    /// An emote image, by its index among the line's images: hovering shows it bigger.
+    Emote(usize),
+}
+
+/// What the pointer is over, for the card that floats beside it. `at` is where the thing
+/// starts, in window coordinates.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Hover {
+    Link {
+        url: String,
+        at: Point<Pixels>,
+    },
+    /// An emote, with any zero-width emotes drawn over it.
+    Emote {
+        names: Vec<String>,
+        url: String,
+        size: Option<(u16, u16)>,
+        at: Point<Pixels>,
+    },
+    Badge {
+        title: String,
+        url: Option<String>,
+        at: Point<Pixels>,
+    },
 }
 
 /// Called with what was clicked and where, in window coordinates.
 pub(crate) type ClickFn = Rc<dyn Fn(&Target, Point<Pixels>, &mut Window, &mut App)>;
-/// Called when the pointer moves onto a link (with its address and where it starts) or off it.
-pub(crate) type HoverFn = Rc<dyn Fn(Option<(String, Point<Pixels>)>, &mut Window, &mut App)>;
+/// Called when the pointer moves onto something with a hover card, or off it (`None`). The
+/// first argument names where it came from, so leaving one thing can't hide the next one's card.
+pub(crate) type HoverFn = Rc<dyn Fn(SharedString, Option<Hover>, &mut Window, &mut App)>;
 
 /// A piece of the line.
 pub(crate) enum Part {
@@ -224,6 +249,7 @@ fn build(parts: &[Part], digit: Pixels) -> Built {
                 b.highlights.push((at.clone(), hidden));
                 b.copies.push((at.clone(), name.clone()));
                 let slot = digit * n as f32;
+                b.targets.push((at.clone(), Target::Emote(b.images.len())));
                 b.images.push(Image {
                     at: at.clone(),
                     slot,
@@ -257,6 +283,9 @@ fn copy_text(text: &str, copies: &[(Range<usize>, String)], range: Range<usize>)
     }
     out
 }
+
+/// An emote's hover card: its name and any zero-width emotes on it, its image and size.
+type EmoteCard = (Vec<String>, String, Option<(u16, u16)>);
 
 /// Placeholder ranges and the emote name each copies as.
 type Copies = Vec<(Range<usize>, String)>;
@@ -297,13 +326,17 @@ pub(crate) struct ChatText {
     styled: StyledText,
     prefix: Option<String>,
     silent: bool,
+    /// Names this line to the hover callback.
+    key: SharedString,
 }
 
 impl ChatText {
     /// A line; `order` is its place among the lines, for copying several in order.
     pub fn new(id: impl Into<ElementId>, order: u64, parts: Parts) -> Self {
+        let id = id.into();
         ChatText {
-            id: id.into(),
+            key: format!("{id:?}").into(),
+            id,
             order,
             parts,
             on_click: None,
@@ -564,7 +597,8 @@ impl Element for ChatText {
         let hovered = hitbox
             .is_hovered(window)
             .then(|| self.target_at(&layout, window.mouse_position()))
-            .flatten();
+            .flatten()
+            .filter(|&i| !matches!(self.built.targets[i].1, Target::Emote(_)));
         let cursor = if hovered.is_some() {
             CursorStyle::PointingHand
         } else {
@@ -573,10 +607,28 @@ impl Element for ChatText {
         window.set_cursor_style(cursor, hitbox);
 
         let targets: Rc<Vec<(Range<usize>, Target)>> = Rc::new(self.built.targets.clone());
+        // Each emote with the names of any zero-width emotes on it, for its hover card.
+        let emotes: Rc<Vec<EmoteCard>> = Rc::new(
+            self.built
+                .images
+                .iter()
+                .map(|i| {
+                    let names = self
+                        .built
+                        .images
+                        .iter()
+                        .filter(|o| o.at == i.at)
+                        .map(|o| o.name.clone())
+                        .collect();
+                    (names, i.url.clone(), i.size)
+                })
+                .collect(),
+        );
         window.on_mouse_event({
             let (hitbox, layout, targets) = (hitbox.clone(), layout.clone(), targets.clone());
             let kept = state.hovered.clone();
             let on_hover = self.on_hover.clone();
+            let key = self.key.clone();
             move |e: &MouseMoveEvent, phase, window, cx| {
                 if !phase.bubble() {
                     return;
@@ -589,16 +641,27 @@ impl Element for ChatText {
                     kept.set(now);
                     window.refresh();
                     if let Some(f) = &on_hover {
-                        let link = now.and_then(|i| match &targets[i].1 {
-                            Target::Link(url) => {
-                                let at = layout
-                                    .position_for_index(targets[i].0.start)
-                                    .unwrap_or(e.position);
-                                Some((url.clone(), at))
+                        let hover = now.and_then(|i| {
+                            let (range, target) = &targets[i];
+                            let at = layout.position_for_index(range.start).unwrap_or(e.position);
+                            match target {
+                                Target::Link(url) => Some(Hover::Link {
+                                    url: url.clone(),
+                                    at,
+                                }),
+                                Target::Emote(ix) => {
+                                    let (names, url, size) = emotes.get(*ix)?.clone();
+                                    Some(Hover::Emote {
+                                        names,
+                                        url,
+                                        size,
+                                        at,
+                                    })
+                                }
+                                Target::Name => None,
                             }
-                            Target::Name => None,
                         });
-                        f(link, window, cx);
+                        f(key.clone(), hover, window, cx);
                     }
                 }
             }
