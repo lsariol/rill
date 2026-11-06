@@ -320,14 +320,13 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
         display_name: id.me.display_name.clone(),
     };
     tracing::info!(channel = %id.channel.login, "Twitch signed in");
-    if !id.missing.is_empty() {
+    if id.missing.is_empty() {
+        ctx.events.attention(None).await;
+    } else {
         tracing::info!(missing = %id.missing.join(" "), "Twitch sign-in lacks newer scopes");
-        ctx.events
-            .notice(
-                Level::Warn,
-                "Twitch: this sign-in is from an older Rill. To use /slow, /announce, /shoutout and the other new commands, open Accounts, disconnect Twitch and connect it again.",
-            )
-            .await;
+        const OLDER: &str = "Twitch: this sign-in is from an older Rill. To use /slow, /announce, /shoutout and the other new commands, open Accounts, disconnect Twitch and connect it again.";
+        ctx.events.notice(Level::Warn, OLDER).await;
+        ctx.events.attention(Some(OLDER.into())).await;
     }
     // The channel's 7TV emotes, kept current for as long as this session runs.
     let emotes = rill_emotes::follow(

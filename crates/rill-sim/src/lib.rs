@@ -385,6 +385,17 @@ async fn run(adapter: SimAdapter, io: AdapterIo) {
         .status(ConnectionStatus::Connecting, None, caps)
         .await;
     sleep(Duration::from_millis(300)).await;
+    // Like the real YouTube, wait a moment for the stream to go live.
+    if adapter.platform == Platform::YouTube && sim.profile.rate > 0.0 {
+        events
+            .status(
+                ConnectionStatus::Waiting("Signed in. Chat appears here once you go live.".into()),
+                account.clone(),
+                Capabilities::NONE,
+            )
+            .await;
+        sleep(Duration::from_secs(4)).await;
+    }
     events
         .status(ConnectionStatus::Connected, account.clone(), caps)
         .await;

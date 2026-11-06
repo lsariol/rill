@@ -499,6 +499,9 @@ impl ChatView {
             let line: SharedString = match (&status, &account) {
                 _ if !set_up => "Coming soon".into(),
                 (ConnectionStatus::Connected, Some(a)) => format!("Connected as {a}").into(),
+                (ConnectionStatus::Waiting(why), Some(a)) => {
+                    format!("Signed in as {a}. {why}").into()
+                }
                 (ConnectionStatus::Reconnecting { .. }, _) => status.label().into(),
                 (ConnectionStatus::Connecting, _) if prompt.is_none() => "Connecting…".into(),
                 (ConnectionStatus::Connecting, _) => "Waiting for you to approve".into(),
@@ -630,7 +633,9 @@ impl ChatView {
                 None
             } else {
                 match status {
-                    ConnectionStatus::Connected | ConnectionStatus::Reconnecting { .. } => Some(
+                    ConnectionStatus::Connected
+                    | ConnectionStatus::Reconnecting { .. }
+                    | ConnectionStatus::Waiting(_) => Some(
                         Button::new(SharedString::from(format!("signout-{p}")))
                             .xsmall()
                             .outline()

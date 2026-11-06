@@ -22,6 +22,25 @@ pub struct Link {
     pub capabilities: Capabilities,
     /// Shown while the user still has to finish signing in.
     pub sign_in: Option<SignInPrompt>,
+    /// What the user should fix, though the connection works.
+    pub attention: Option<String>,
+}
+
+/// How a platform's connection is doing, for its dot in the header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Health {
+    /// Connected and nothing to fix: green.
+    Good,
+    /// Signed in, waiting for something to read (a stream to start): a green ring.
+    Waiting,
+    /// Connecting or reconnecting: pulsing yellow.
+    Busy,
+    /// Working, but something needs the user: yellow.
+    Attention,
+    /// Not working; the reason says how to fix it: red.
+    Broken,
+    /// Not signed in: grey.
+    SignedOut,
 }
 
 /// A request to hand to one platform's adapter.
@@ -146,6 +165,36 @@ impl Session {
             .collect()
     }
 
+    /// How a platform's connection is doing, and why, for its dot and tooltip.
+    pub fn health(&self, platform: Platform) -> (Health, Vec<String>) {
+        let Some(link) = self.links.get(&platform) else {
+            return (Health::SignedOut, Vec::new());
+        };
+        let mut why: Vec<String> = link.attention.iter().cloned().collect();
+        let health = match &link.status {
+            ConnectionStatus::Disconnected => return (Health::SignedOut, Vec::new()),
+            ConnectionStatus::Connecting | ConnectionStatus::Reconnecting { .. } => Health::Busy,
+            ConnectionStatus::Failed(reason) => return (Health::Broken, vec![reason.clone()]),
+            ConnectionStatus::Waiting(reason) => {
+                why.insert(0, reason.clone());
+                Health::Waiting
+            }
+            ConnectionStatus::Connected => {
+                if !platform.is_read_only() && !link.capabilities.has(Action::Send) {
+                    why.push(format!(
+                        "Reading only: sign in to {platform} in Accounts to send and moderate."
+                    ));
+                }
+                if why.is_empty() {
+                    Health::Good
+                } else {
+                    Health::Attention
+                }
+            }
+        };
+        (health, why)
+    }
+
     /// Whether a connected platform supports an action.
     pub fn can(&self, platform: Platform, action: Action) -> bool {
         self.links
@@ -164,6 +213,9 @@ impl Session {
             } => self.apply_status(platform, status, account, capabilities, now_ms),
             Event::SignIn { platform, prompt } => {
                 self.links.entry(platform).or_default().sign_in = Some(prompt);
+            }
+            Event::Attention { platform, text } => {
+                self.links.entry(platform).or_default().attention = text;
             }
             Event::Message(m) => {
                 let mine = self
@@ -231,6 +283,9 @@ impl Session {
             link.sign_in = None;
         }
         link.capabilities = capabilities;
+        if status == ConnectionStatus::Disconnected {
+            link.attention = None;
+        }
         if let Some(a) = account {
             self.feed.set_own_name(platform, &a.login);
             link.account = Some(a);
@@ -768,6 +823,62 @@ mod tests {
             sent_at_ms: 0,
             reply_to: None,
         })
+    }
+
+    #[test]
+    fn health_says_what_needs_doing() {
+        let mut s = Session::new(10);
+        assert_eq!(s.health(Platform::Twitch).0, Health::SignedOut);
+        connect(&mut s, Platform::Twitch, ALL_CAPS);
+        assert_eq!(s.health(Platform::Twitch), (Health::Good, vec![]));
+        s.apply(
+            Event::Attention {
+                platform: Platform::Twitch,
+                text: Some("Sign in again for /slow.".into()),
+            },
+            0,
+        );
+        assert_eq!(
+            s.health(Platform::Twitch),
+            (Health::Attention, vec!["Sign in again for /slow.".into()])
+        );
+        // Kick reading without an account works, but can't send.
+        connect(&mut s, Platform::Kick, Capabilities::NONE);
+        let (health, why) = s.health(Platform::Kick);
+        assert_eq!(health, Health::Attention);
+        assert!(why[0].starts_with("Reading only"), "{why:?}");
+        // Rumble is read-only by design.
+        connect(&mut s, Platform::Rumble, Capabilities::NONE);
+        assert_eq!(s.health(Platform::Rumble).0, Health::Good);
+        let status = |status| Event::Status {
+            platform: Platform::YouTube,
+            status,
+            account: None,
+            capabilities: Capabilities::NONE,
+        };
+        s.apply(status(ConnectionStatus::Waiting("Go live.".into())), 0);
+        assert_eq!(
+            s.health(Platform::YouTube),
+            (Health::Waiting, vec!["Go live.".into()])
+        );
+        s.apply(status(ConnectionStatus::Reconnecting { attempt: 1 }), 0);
+        assert_eq!(s.health(Platform::YouTube).0, Health::Busy);
+        s.apply(status(ConnectionStatus::Failed("Expired.".into())), 0);
+        assert_eq!(
+            s.health(Platform::YouTube),
+            (Health::Broken, vec!["Expired.".into()])
+        );
+        // Signing out clears what needed fixing.
+        s.apply(
+            Event::Status {
+                platform: Platform::Twitch,
+                status: ConnectionStatus::Disconnected,
+                account: None,
+                capabilities: Capabilities::NONE,
+            },
+            0,
+        );
+        assert_eq!(s.health(Platform::Twitch), (Health::SignedOut, vec![]));
     }
 
     #[test]

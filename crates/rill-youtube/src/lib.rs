@@ -325,7 +325,9 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
             Ok(None) => {
                 ctx.events
                     .status(
-                        ConnectionStatus::Connected,
+                        ConnectionStatus::Waiting(
+                            "Signed in. Chat appears here once you go live.".into(),
+                        ),
                         Some(account.clone()),
                         Capabilities::NONE,
                     )
@@ -349,7 +351,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
                 // Signed in fine; YouTube just won't list broadcasts until streaming is turned on.
                 ctx.events
                     .status(
-                        ConnectionStatus::Connected,
+                        ConnectionStatus::Waiting(ApiError::NotEnabled.message()),
                         Some(account.clone()),
                         Capabilities::NONE,
                     )
@@ -1419,12 +1421,13 @@ mod sessions {
             unreachable!()
         };
         assert!(text.contains("youtube.com/features"), "{text}");
+        // Signed in and waiting, with the reason for the header's tooltip.
         assert!(seen.iter().any(|e| matches!(
             e,
             Event::Status {
-                status: ConnectionStatus::Connected,
+                status: ConnectionStatus::Waiting(why),
                 ..
-            }
+            } if why.contains("youtube.com/features")
         )));
         // It waits a minute before asking again, rather than hammering the API.
         tokio::time::sleep(Duration::from_millis(500)).await;

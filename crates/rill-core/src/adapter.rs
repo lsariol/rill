@@ -97,6 +97,15 @@ impl EventSink {
         .await
     }
 
+    /// Says the connection needs the user's attention (`None` once it doesn't).
+    pub async fn attention(&self, text: Option<String>) -> bool {
+        self.send(Event::Attention {
+            platform: self.platform,
+            text,
+        })
+        .await
+    }
+
     pub async fn message(&self, message: ChatMessage) -> bool {
         self.send(Event::Message(message)).await
     }

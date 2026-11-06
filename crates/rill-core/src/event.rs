@@ -88,6 +88,9 @@ pub enum ConnectionStatus {
     },
     /// Stopped trying; the reason says how to fix it.
     Failed(String),
+    /// Signed in, but there's nothing to read yet (YouTube before you go live); the reason says
+    /// what it's waiting for.
+    Waiting(String),
 }
 
 impl ConnectionStatus {
@@ -99,6 +102,7 @@ impl ConnectionStatus {
             ConnectionStatus::Connected => "Connected".into(),
             ConnectionStatus::Reconnecting { attempt } => format!("Reconnecting (try {attempt})"),
             ConnectionStatus::Failed(why) => format!("Failed: {why}"),
+            ConnectionStatus::Waiting(why) => why.clone(),
         }
     }
 }
@@ -281,6 +285,12 @@ pub enum Event {
         request: RequestId,
         result: Result<Option<String>, String>,
     },
+    /// The connection works but something needs the user: an older sign-in without newer
+    /// permissions, for example. `None` clears it.
+    Attention {
+        platform: Platform,
+        text: Option<String>,
+    },
     /// Emotes the signed-in user can use on a platform, from one source; replaces that source's
     /// last list.
     Emotes {
@@ -302,6 +312,7 @@ impl Event {
             | Event::Cleared { platform, .. }
             | Event::Notice { platform, .. }
             | Event::Done { platform, .. }
+            | Event::Attention { platform, .. }
             | Event::Emotes { platform, .. } => *platform,
         }
     }

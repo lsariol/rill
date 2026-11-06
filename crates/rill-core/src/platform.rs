@@ -39,6 +39,11 @@ impl Platform {
 }
 
 impl Platform {
+    /// Platforms Rill can only read: nothing to sign in for beyond reading.
+    pub fn is_read_only(self) -> bool {
+        self == Platform::Rumble
+    }
+
     /// The longest chat message the platform takes, in characters.
     pub fn max_message_chars(self) -> Option<usize> {
         match self {
