@@ -1,24 +1,95 @@
 //! Feed rows: chat messages, the user's own sent messages, and notices.
 
-use std::ops::Range;
+use std::rc::Rc;
 
 use chrono::TimeZone;
 use gpui::{
     AnyElement, Context, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, ParentElement, StatefulInteractiveElement, Styled, StyledImage, StyledText,
-    UnderlineStyle, Window, div, img, prelude::FluentBuilder, px, rgb,
+    IntoElement, ParentElement, Styled, StyledImage, Window, div, img, prelude::FluentBuilder, px,
+    rgb,
 };
 use rill_core::feed::{DeliveryState, Notice, SentMessage};
 use rill_core::{Badge, ChatMessage, Entry, Fragment, Item, MessageKind, Platform};
 
+use crate::chat_text::{self, ChatText, ClickFn, HoverFn, Parts, Target};
 use crate::chat_view::ChatView;
 use crate::panels::{Panel, UserCard};
 use crate::style;
 
-const EMOTE: f32 = 22.;
+pub(crate) const EMOTE: f32 = 22.;
 const ICON: f32 = 14.;
 
 impl ChatView {
+    /// Tells the view when the pointer moves onto or off a link, for its preview.
+    pub(crate) fn link_hover_fn(&self, cx: &mut Context<Self>) -> HoverFn {
+        let view = cx.entity().downgrade();
+        Rc::new(move |hover, _, cx| {
+            let _ = view.update(cx, |view, cx| view.hover_link(hover, cx));
+        })
+    }
+
+    /// A chat message's selectable text; clicking the name opens the user card.
+    fn chat_text(
+        &self,
+        seq: u64,
+        m: &ChatMessage,
+        deleted: bool,
+        card: UserCard,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let soft = deleted && self.show_deleted;
+        let parts = chat_parts(m, deleted && !soft);
+        let view = cx.entity().downgrade();
+        let hover = self.link_hover_fn(cx);
+        let text = ChatText::new(("chat-text", seq), order(seq, 0), parts)
+            .on_hover(hover)
+            .on_click(Rc::new(move |target, at, window, cx| match target {
+                Target::Name => {
+                    let card = card.clone();
+                    let _ = view.update(cx, |view, cx| view.open_user_card(card, at, window, cx));
+                }
+                Target::Link(url) => cx.open_url(url),
+            }));
+        if !soft {
+            return text.into_any_element();
+        }
+        // The text stays readable for moderators, but clearly gone from the platform.
+        div()
+            .flex()
+            .items_start()
+            .gap_1p5()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .opacity(0.45)
+                    .italic()
+                    .line_through()
+                    .child(text),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .pt(px(2.))
+                    .text_xs()
+                    .text_color(rgb(style::FAINT))
+                    .child("deleted"),
+            )
+            .into_any_element()
+    }
+
+    /// Opens the user card for a name clicked at `at` (window coordinates), floating beside it.
+    pub(crate) fn open_user_card(
+        &mut self,
+        card: UserCard,
+        at: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_panel(Panel::User(card), window, cx);
+        self.card_at = Some(at.y);
+    }
+
     /// Renders the visible entry at `ix`, outlined when it's picked with the keyboard.
     pub(crate) fn render_row(
         &mut self,
@@ -72,21 +143,23 @@ impl ChatView {
                         .truncate()
                         .child(format!("↩ @{}: {text}", r.author))
                 });
+                // The message the open card is about stays marked while chat moves on.
+                let carded = matches!(&self.panel, Panel::User(c)
+                    if c.platform == m.platform && c.message_id.as_deref() == Some(m.id.as_str()));
                 row_frame(entry.seq, entry.highlighted, compact)
+                    .when(carded, |d| d.bg(rgb(style::RAISED)))
                     .child(gutter(Some(m.platform)))
                     .when(!compact, |d| d.child(time(entry.received_ms)))
                     .when(!compact && !m.author.badges.is_empty(), |d| {
                         d.child(badges(&m.author.badges))
                     })
-                    .child(div().flex_1().min_w_0().children(quote).child(chat_body(
-                        m,
-                        entry.deleted,
-                        self.show_deleted,
-                    )))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |view, _, window, cx| {
-                        view.open_panel(Panel::User(card.clone()), window, cx);
-                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .children(quote)
+                            .child(self.chat_text(entry.seq, m, entry.deleted, card, cx)),
+                    )
                     .into_any_element()
             }
             Item::Sent(s) => {
@@ -95,9 +168,11 @@ impl ChatView {
                     .iter()
                     .find_map(|d| me(d.platform))
                     .unwrap_or_else(|| "You".into());
-                sent_row(entry, s, &name, compact).into_any_element()
+                sent_row(entry, s, &name, compact, self.link_hover_fn(cx)).into_any_element()
             }
-            Item::Notice(n) => notice_row(entry, n, compact).into_any_element(),
+            Item::Notice(n) => {
+                notice_row(entry, n, compact, self.link_hover_fn(cx)).into_any_element()
+            }
         }
     }
 }
@@ -179,155 +254,93 @@ fn badge_chip(b: &Badge) -> impl IntoElement {
         .child(letter)
 }
 
-/// The name and message text; images flow word by word, plain text wraps as one run.
-fn chat_body(m: &ChatMessage, deleted: bool, show_deleted: bool) -> AnyElement {
-    if deleted && show_deleted {
-        // The text stays readable for moderators, but clearly gone from the platform.
-        return div()
-            .flex()
-            .items_start()
-            .gap_1p5()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .opacity(0.45)
-                    .italic()
-                    .line_through()
-                    .child(chat_body(m, false, false)),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .pt(px(2.))
-                    .text_xs()
-                    .text_color(rgb(style::FAINT))
-                    .child("deleted"),
-            )
-            .into_any_element();
-    }
+/// The name and message text as one selectable line. The name opens the user card.
+fn chat_parts(m: &ChatMessage, deleted: bool) -> Parts {
     let name_color = style::readable_name(m.author.color);
-    let action = m.kind == MessageKind::Action;
+    let mut parts = Parts::default();
+    parts.target(
+        m.author.display_name.clone(),
+        bold(name_color),
+        Target::Name,
+    );
     if deleted {
-        let name = m.author.display_name.clone();
-        let text = format!("{name}  message deleted");
-        let highlights = vec![
-            (0..name.len(), bold(name_color)),
-            (
-                name.len()..text.len(),
-                HighlightStyle {
-                    color: Some(style::hsla(style::FAINT)),
-                    font_style: Some(FontStyle::Italic),
-                    ..HighlightStyle::default()
-                },
-            ),
-        ];
-        return StyledText::new(text)
-            .with_highlights(highlights)
-            .into_any_element();
+        parts.text(
+            "  message deleted",
+            Some(HighlightStyle {
+                color: Some(style::hsla(style::FAINT)),
+                font_style: Some(FontStyle::Italic),
+                ..HighlightStyle::default()
+            }),
+        );
+        return parts;
     }
-    if !m.has_images() {
-        let (text, highlights) = styled_message(m, name_color, action);
-        return StyledText::new(text)
-            .with_highlights(highlights)
-            .into_any_element();
-    }
+    let action = m.kind == MessageKind::Action;
     // Actions and platform events read as one sentence: "Bob subscribed", not "Bob: subscribed".
     let sentence = action || m.kind == MessageKind::Event;
-    let sep = if sentence { "" } else { ":" };
-    let words: Vec<AnyElement> = vec![
-        div()
-            .font_weight(FontWeight::BOLD)
-            .text_color(name_color)
-            .child(format!("{}{sep}", m.author.display_name))
-            .into_any_element(),
-    ];
-    flow(words, &m.fragments, action, name_color)
+    parts.text(if sentence { " " } else { ": " }, None);
+    let plain = action.then_some(HighlightStyle {
+        color: Some(name_color),
+        font_style: Some(FontStyle::Italic),
+        ..HighlightStyle::default()
+    });
+    fragment_parts(&mut parts, &m.fragments, plain);
+    parts
 }
 
-/// Lays out fragments after `words` (the name) one word or image at a time, so emotes wrap with
-/// the text.
-fn flow(
-    mut words: Vec<AnyElement>,
-    fragments: &[Fragment],
-    action: bool,
-    name_color: gpui::Hsla,
-) -> AnyElement {
-    // The last emote drawn, which a zero-width emote after it sits on.
-    let mut base: Option<usize> = None;
+/// Message fragments as parts: emote images, mentions, and links (found in plain text too).
+fn fragment_parts(parts: &mut Parts, fragments: &[Fragment], plain: Option<HighlightStyle>) {
     for f in fragments {
         match f {
-            Fragment::Text(t) => {
-                if !t.trim().is_empty() {
-                    base = None;
-                }
-                words.extend(t.split_whitespace().map(|w| {
-                    div()
-                        .when(action, |d| d.italic().text_color(name_color))
-                        .child(w.to_string())
-                        .into_any_element()
-                }));
-            }
+            Fragment::Text(t) => parts.linked(t, plain),
             Fragment::Emote {
                 name,
-                url,
+                url: Some(url),
                 size,
                 overlay,
-            } => {
-                let image = emote_image(name, url.as_deref(), *size);
-                match base {
-                    Some(i) if *overlay => {
-                        let under = std::mem::replace(&mut words[i], div().into_any_element());
-                        words[i] = div()
-                            .relative()
-                            .flex_none()
-                            .child(under)
-                            .child(
-                                div()
-                                    .absolute()
-                                    .inset_0()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(image),
-                            )
-                            .into_any_element();
-                    }
-                    _ => {
-                        words.push(image);
-                        base = Some(words.len() - 1);
-                    }
-                }
+            } => parts.emote(name, url, *size, *overlay),
+            Fragment::Emote { name, .. } => {
+                parts.text(name.clone(), Some(bold(style::hsla(style::MUTED))))
             }
-            Fragment::Mention(n) => {
-                base = None;
-                words.push(
-                    div()
-                        .font_weight(FontWeight::BOLD)
-                        .child(format!("@{n}"))
-                        .into_any_element(),
-                );
-            }
-            Fragment::Link(l) => {
-                base = None;
-                words.push(
-                    div()
-                        .text_color(rgb(style::LINK))
-                        .underline()
-                        .child(l.clone())
-                        .into_any_element(),
-                );
-            }
+            Fragment::Mention(n) => parts.text(format!("@{n}"), Some(bold(style::hsla(0xffffff)))),
+            Fragment::Link(l) => match chat_text::link_in(l) {
+                Some((url, _)) => parts.link(l, url),
+                None => parts.text(l.clone(), plain),
+            },
         }
     }
-    div()
-        .w_full()
-        .flex()
-        .flex_wrap()
-        .items_center()
-        .gap_x(px(4.))
-        .children(words)
-        .into_any_element()
+}
+
+/// Opens links from any line; names only do something on chat lines.
+fn open_links() -> ClickFn {
+    Rc::new(|target, _, _, cx| {
+        if let Target::Link(url) = target {
+            cx.open_url(url);
+        }
+    })
+}
+
+/// A message's text without its author, for the user card's history.
+pub(crate) fn history_text(seq: u64, m: &ChatMessage, hover: HoverFn) -> ChatText {
+    let mut parts = Parts::default();
+    fragment_parts(&mut parts, &m.fragments, None);
+    ChatText::new(("history-text", seq), order(seq, 1), parts)
+        .on_click(open_links())
+        .on_hover(hover)
+}
+
+/// A line's place among the others, for copying several in order.
+fn order(seq: u64, line: usize) -> u64 {
+    seq * 64 + line.min(63) as u64
+}
+
+/// The size an emote is drawn at: its own proportions (third-party emotes vary), or square.
+pub(crate) fn emote_size(size: Option<(u16, u16)>) -> gpui::Size<gpui::Pixels> {
+    // 7TV's 1x images are 32 px tall where Twitch's are 28: keep the same ratio to EMOTE.
+    let scale = EMOTE / 28.;
+    match size {
+        Some((w, h)) => gpui::size(px(f32::from(w) * scale), px(f32::from(h.min(32)) * scale)),
+        None => gpui::size(px(EMOTE), px(EMOTE)),
+    }
 }
 
 /// An emote image at its own proportions (third-party emotes vary), or its name without one.
@@ -347,73 +360,12 @@ pub(crate) fn emote_image(name: &str, url: Option<&str>, size: Option<(u16, u16)
         .flex_none()
         .with_fallback(move || label(fallback.clone()));
     match size {
-        // 7TV's 1x images are 32 px tall where Twitch's are 28: keep the same ratio to EMOTE.
-        Some((w, h)) => {
-            let scale = EMOTE / 28.;
-            image
-                .w(px(f32::from(w) * scale))
-                .h(px(f32::from(h.min(32)) * scale))
-                .into_any_element()
+        Some(_) => {
+            let s = emote_size(size);
+            image.w(s.width).h(s.height).into_any_element()
         }
         None => image.h(px(EMOTE)).into_any_element(),
     }
-}
-
-/// The whole message as one string with styled ranges.
-fn styled_message(
-    m: &ChatMessage,
-    name_color: gpui::Hsla,
-    action: bool,
-) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
-    let mut text = m.author.display_name.clone();
-    let mut highlights = vec![(0..text.len(), bold(name_color))];
-    let sentence = action || m.kind == MessageKind::Event;
-    text.push_str(if sentence { " " } else { ": " });
-    let body_start = text.len();
-    for f in &m.fragments {
-        let start = text.len();
-        let style = match f {
-            Fragment::Text(t) => {
-                text.push_str(t);
-                None
-            }
-            Fragment::Emote { name, .. } => {
-                text.push_str(name);
-                Some(bold(style::hsla(style::MUTED)))
-            }
-            Fragment::Mention(n) => {
-                text.push('@');
-                text.push_str(n);
-                Some(bold(style::hsla(0xffffff)))
-            }
-            Fragment::Link(l) => {
-                text.push_str(l);
-                Some(HighlightStyle {
-                    color: Some(style::hsla(style::LINK)),
-                    underline: Some(UnderlineStyle {
-                        thickness: px(1.),
-                        ..UnderlineStyle::default()
-                    }),
-                    ..HighlightStyle::default()
-                })
-            }
-        };
-        if let Some(style) = style {
-            highlights.push((start..text.len(), style));
-        }
-    }
-    if action {
-        highlights.truncate(1);
-        highlights.push((
-            body_start..text.len(),
-            HighlightStyle {
-                color: Some(name_color),
-                font_style: Some(FontStyle::Italic),
-                ..HighlightStyle::default()
-            },
-        ));
-    }
-    (text, highlights)
 }
 
 fn bold(color: gpui::Hsla) -> HighlightStyle {
@@ -424,7 +376,13 @@ fn bold(color: gpui::Hsla) -> HighlightStyle {
     }
 }
 
-fn sent_row(entry: &Entry, s: &SentMessage, name: &str, compact: bool) -> impl IntoElement {
+fn sent_row(
+    entry: &Entry,
+    s: &SentMessage,
+    name: &str,
+    compact: bool,
+    hover: HoverFn,
+) -> impl IntoElement {
     let marks = s.deliveries.iter().map(|d| {
         let (mark, color) = match d.state {
             DeliveryState::Pending => ("…", style::FAINT),
@@ -450,25 +408,16 @@ fn sent_row(entry: &Entry, s: &SentMessage, name: &str, compact: bool) -> impl I
         }
         _ => None,
     });
-    let name_color = style::hsla(0x53fc18);
-    let images = s
-        .fragments
-        .iter()
-        .any(|f| matches!(f, Fragment::Emote { url: Some(_), .. }));
-    let body = if images {
-        let name = div()
-            .font_weight(FontWeight::BOLD)
-            .text_color(name_color)
-            .child(format!("{name}:"))
-            .into_any_element();
-        flow(vec![name], &s.fragments, false, name_color)
+    let mut parts = Parts::default();
+    parts.text(format!("{name}: "), Some(bold(style::hsla(0x53fc18))));
+    if s.fragments.is_empty() {
+        parts.linked(&s.text, None);
     } else {
-        let text = format!("{name}: {}", s.text);
-        let highlights = vec![(0..name.len(), bold(name_color))];
-        StyledText::new(text)
-            .with_highlights(highlights)
-            .into_any_element()
-    };
+        fragment_parts(&mut parts, &s.fragments, None);
+    }
+    let body = ChatText::new(("sent-text", entry.seq), order(entry.seq, 0), parts)
+        .on_click(open_links())
+        .on_hover(hover);
     // One mark in the icon column, like received messages, so the text lines up with them.
     let mark = match s.deliveries.as_slice() {
         [one] => style::platform_icon(one.platform, ICON).into_any_element(),
@@ -495,7 +444,7 @@ fn all_mark() -> impl IntoElement {
         )
 }
 
-fn notice_row(entry: &Entry, n: &Notice, compact: bool) -> impl IntoElement {
+fn notice_row(entry: &Entry, n: &Notice, compact: bool, hover: HoverFn) -> impl IntoElement {
     row_frame(entry.seq, false, compact)
         .child(gutter(n.platform))
         .when(!compact, |d| d.child(time(entry.received_ms)))
@@ -505,6 +454,16 @@ fn notice_row(entry: &Entry, n: &Notice, compact: bool) -> impl IntoElement {
                 .min_w_0()
                 .text_color(style::level_color(n.level))
                 .when(n.level == rill_core::Level::Info, |d| d.italic())
-                .children(n.text.lines().map(|l| div().child(l.to_string()))),
+                .children(n.text.lines().enumerate().map(|(i, l)| {
+                    let mut parts = Parts::default();
+                    parts.linked(l, None);
+                    ChatText::new(
+                        ElementId::NamedInteger(format!("notice-{i}").into(), entry.seq),
+                        order(entry.seq, i),
+                        parts,
+                    )
+                    .on_click(open_links())
+                    .on_hover(hover.clone())
+                })),
         )
 }

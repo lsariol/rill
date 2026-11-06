@@ -1,11 +1,14 @@
 //! The chat window: header with filters, the unified feed, panels and the composer.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ListAlignment, ListState, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Subscription, Task, Window, div, list, prelude::FluentBuilder, px, rgb,
+    App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, ListAlignment, ListState, ParentElement, Pixels, Render, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, Task, Window, canvas, div, list,
+    prelude::FluentBuilder, px, rgb,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{InputEvent, TextareaState};
@@ -50,6 +53,12 @@ pub struct ChatView {
     pub(crate) completion_ix: usize,
     /// Deleted messages keep their text, faded, instead of "message deleted".
     pub(crate) show_deleted: bool,
+    /// Hovering a link fetches and shows its preview.
+    pub(crate) link_previews: bool,
+    pub(crate) previews: crate::preview::Previews,
+    /// The link under the pointer and where it starts (window coordinates).
+    pub(crate) link_hover: Option<(String, gpui::Point<Pixels>)>,
+    preview_task: Option<Task<()>>,
     /// The first row shown in a long suggestion list.
     pub(crate) completion_top: usize,
     /// Composer text for which the user dismissed autocomplete.
@@ -60,6 +69,10 @@ pub struct ChatView {
     /// Set by Esc in the composer: the next Tab leaves it instead of switching the destination.
     pub(crate) tab_leaves: bool,
     pub(crate) panel: Panel,
+    /// Where the open user card's name was clicked (window y), to float the card beside it.
+    pub(crate) card_at: Option<Pixels>,
+    /// The feed's bounds as last drawn, for placing the user card.
+    pub(crate) feed_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// The "which platform?" prompt, which takes focus so the keyboard can answer it.
     pub(crate) target_focus: FocusHandle,
     /// The platform picked in that prompt with the keyboard.
@@ -107,8 +120,12 @@ impl ChatView {
                 .placeholder("Send a message")
         });
         let subscription = cx.subscribe_in(&input, window, Self::on_input);
-        let show_deleted =
-            platforms.saves() && rill_os::settings::load().is_ok_and(|s| s.show_deleted_messages);
+        let saved = platforms
+            .saves()
+            .then(|| rill_os::settings::load().ok())
+            .flatten();
+        let show_deleted = saved.as_ref().is_some_and(|s| s.show_deleted_messages);
+        let link_previews = saved.as_ref().is_none_or(|s| s.link_previews);
         input.update(cx, |state, cx| state.focus(window, cx));
 
         let list = ListState::new(0, ListAlignment::Bottom, px(400.));
@@ -143,12 +160,18 @@ impl ChatView {
             destination: Destination::All,
             completion_ix: 0,
             show_deleted,
+            link_previews,
+            previews: Default::default(),
+            link_hover: None,
+            preview_task: None,
             completion_top: 0,
             completions_dismissed: None,
             tab_cycle: None,
             composer_error: None,
             tab_leaves: false,
             panel: Panel::None,
+            card_at: None,
+            feed_bounds: Rc::default(),
             target_focus: cx.focus_handle(),
             target_ix: 0,
             search: None,
@@ -303,6 +326,71 @@ impl ChatView {
             filter.hidden.insert(p);
         }
         self.set_filter(filter, cx);
+    }
+
+    /// Turns link previews on or off, and saves the choice.
+    pub(crate) fn set_link_previews(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.link_previews = on;
+        if self.platforms.saves()
+            && let Err(e) = rill_os::settings::update(|s| s.link_previews = on)
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+        }
+        cx.notify();
+    }
+
+    /// The pointer moved onto a link or off one. A preview is fetched after a short pause on it.
+    pub(crate) fn hover_link(
+        &mut self,
+        hover: Option<(String, gpui::Point<Pixels>)>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.link_hover == hover {
+            return;
+        }
+        self.link_hover = hover.clone();
+        cx.notify();
+        let Some((url, _)) = hover else {
+            self.preview_task = None;
+            return;
+        };
+        let known = matches!(
+            self.previews.get(&url),
+            Some(crate::preview::State::Ready(_) | crate::preview::State::Failed)
+        );
+        if !self.link_previews || known || !crate::preview::may_fetch(&url) {
+            return;
+        }
+        self.preview_task = Some(cx.spawn(async move |view, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(350))
+                .await;
+            let client = view.update(cx, |view, cx| {
+                let still = view.link_hover.as_ref().is_some_and(|(u, _)| *u == url);
+                still.then(|| {
+                    view.previews
+                        .set(url.clone(), crate::preview::State::Loading);
+                    cx.notify();
+                    cx.http_client()
+                })
+            });
+            let Ok(Some(client)) = client else {
+                return;
+            };
+            let fetch = crate::preview::fetch(client, url.clone());
+            let timer = cx.background_executor().timer(crate::preview::TIMEOUT);
+            futures::pin_mut!(fetch, timer);
+            let state = match futures::future::select(fetch, timer).await {
+                futures::future::Either::Left((state, _)) => state,
+                futures::future::Either::Right(_) => crate::preview::State::Failed,
+            };
+            let _ = view.update(cx, |view, cx| {
+                view.previews.set(url, state);
+                cx.notify();
+            });
+        }));
     }
 
     /// Shows deleted messages' text (faded) or "message deleted", and saves the choice.
@@ -563,6 +651,14 @@ impl ChatView {
                 d.child(Scrollbar::vertical(&self.list).mode(ScrollbarMode::Always))
             })
             .children(jump)
+            .child({
+                let bounds = self.feed_bounds.clone();
+                canvas(move |b, _, _| bounds.set(b), |_, _, _, _| {})
+                    .absolute()
+                    .size_full()
+            })
+            .children(self.render_card(cx))
+            .children(self.render_link_preview())
     }
 }
 

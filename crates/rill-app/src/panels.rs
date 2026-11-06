@@ -3,7 +3,8 @@
 use chrono::TimeZone;
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, KeyBinding,
-    ParentElement, SharedString, Styled, Window, actions, div, prelude::FluentBuilder, px, rgb,
+    ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, actions, div,
+    prelude::FluentBuilder, px, rgb,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState, Textarea, TextareaState};
@@ -86,7 +87,135 @@ pub struct PollForm {
 impl ChatView {
     pub(crate) fn open_panel(&mut self, panel: Panel, _: &mut Window, cx: &mut Context<Self>) {
         self.panel = panel;
+        self.card_at = None;
         cx.notify();
+    }
+
+    /// The hovered link's preview (or just its address), floating by the link.
+    pub(crate) fn render_link_preview(&self) -> Option<AnyElement> {
+        use crate::preview::State;
+        let (url, at) = self.link_hover.clone()?;
+        let feed = self.feed_bounds.get();
+        let (w, h) = (f32::from(feed.size.width), f32::from(feed.size.height));
+        let width = 340f32.min(w - 16.);
+        let x = f32::from(at.x - feed.origin.x).clamp(8., (w - width - 8.).max(8.));
+        let y = f32::from(at.y - feed.origin.y);
+        let address = div()
+            .text_xs()
+            .text_color(rgb(style::FAINT))
+            .truncate()
+            .child(url.clone());
+        let state = if self.link_previews && crate::preview::may_fetch(&url) {
+            self.previews.get(&url).cloned().or(Some(State::Loading))
+        } else {
+            None
+        };
+        let body = match state {
+            Some(State::Ready(p)) => div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .children(p.site.map(|s| {
+                    div()
+                        .text_xs()
+                        .text_color(rgb(style::MUTED))
+                        .truncate()
+                        .child(s)
+                }))
+                .children(p.title.map(|t| div().font_bold().line_clamp(2).child(t)))
+                .children(p.description.map(|d| {
+                    div()
+                        .text_xs()
+                        .text_color(rgb(style::MUTED))
+                        .line_clamp(3)
+                        .child(d)
+                }))
+                .children(p.image.map(|src| {
+                    gpui::StyledImage::object_fit(gpui::img(src), gpui::ObjectFit::Contain)
+                        .w_full()
+                        .max_h(px(170.))
+                        .rounded_sm()
+                }))
+                .child(address),
+            Some(State::Loading) => div().flex().flex_col().gap_1().child(address).child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(style::FAINT))
+                    .child("Loading preview…"),
+            ),
+            Some(State::Failed) | None => div().child(address),
+        };
+        let frame = div()
+            .absolute()
+            .left(px(x))
+            .w(px(width))
+            .p_2()
+            .rounded_md()
+            .bg(rgb(style::RAISED))
+            .border_1()
+            .border_color(rgb(style::BORDER))
+            .shadow_lg()
+            .child(body);
+        let frame = if y < h / 2. {
+            frame.top(px(y + 22.))
+        } else {
+            frame.bottom(px(h - y + 6.))
+        };
+        Some(frame.into_any_element())
+    }
+
+    /// The user card, floating over the chat just below (or above) the clicked name. Chat keeps
+    /// moving underneath; opened from the keyboard, it sits at the bottom.
+    pub(crate) fn render_card(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let Panel::User(card) = &self.panel else {
+            return None;
+        };
+        let feed = self.feed_bounds.get();
+        let height = f32::from(feed.size.height);
+        let y = self
+            .card_at
+            .map(|y| f32::from(y - feed.origin.y))
+            .unwrap_or(height);
+        let below = y < height / 2.;
+        let room = if below { height - y - 20. } else { y - 12. };
+        let frame = div()
+            .id("user-card")
+            .absolute()
+            .left_3()
+            .right_3()
+            .max_w(px(560.))
+            .max_h(px(room.max(120.)))
+            .overflow_y_scroll()
+            .p_3()
+            .rounded_md()
+            .bg(rgb(style::PANEL))
+            .border_1()
+            .border_color(rgb(style::BORDER))
+            .shadow_lg()
+            // It floats over the messages: clicks stop here, scrolling still passes.
+            .block_mouse_except_scroll()
+            .flex()
+            .gap_2()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(self.render_user_card(card.clone(), cx)),
+            )
+            .child(
+                Button::new("close-card")
+                    .xsmall()
+                    .ghost()
+                    .label("✕")
+                    .tooltip("Close (Esc)")
+                    .on_click(cx.listener(|view, _, window, cx| view.close_panel(window, cx))),
+            );
+        let frame = if below {
+            frame.top(px(y + 12.))
+        } else {
+            frame.bottom(px((height - y + 12.).max(8.)))
+        };
+        Some(frame.into_any_element())
     }
 
     pub(crate) fn open_poll(
@@ -227,7 +356,8 @@ impl ChatView {
     ) -> AnyElement {
         let body: AnyElement = match &self.panel {
             Panel::None => return div().into_any_element(),
-            Panel::User(card) => self.render_user_card(card.clone(), cx),
+            // Floats over the chat instead: see render_card.
+            Panel::User(_) => return div().into_any_element(),
             Panel::Target {
                 plan,
                 prompt,
@@ -711,6 +841,34 @@ impl ChatView {
                             })),
                     ),
             )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child("Link previews")
+                            .child(div().text_xs().text_color(rgb(style::FAINT)).child(
+                                "Hovering a link shows the page's title and picture. Rill visits \
+                                 the page to get them, so the site sees your IP address; with \
+                                 this off, hovering shows only the address.",
+                            )),
+                    )
+                    .child(
+                        Switch::new("link-previews")
+                            .small()
+                            .checked(self.link_previews)
+                            .accessibility_label("Link previews")
+                            .on_click(cx.listener(|view, on: &bool, _, cx| {
+                                view.set_link_previews(*on, cx);
+                            })),
+                    ),
+            )
             .into_any_element()
     }
 
@@ -733,7 +891,8 @@ impl ChatView {
                 roles.push(label);
             }
         }
-        // Their latest messages this session, newest first: context before acting.
+        let hover = self.link_hover_fn(cx);
+        // Everything they said that's still in the feed, newest first: context before acting.
         let history: Vec<_> = self
             .session
             .feed
@@ -746,13 +905,20 @@ impl ChatView {
                         .single()
                         .map(|t| t.format("%H:%M").to_string())
                         .unwrap_or_default();
-                    let text: String = m.plain_text().chars().take(120).collect();
-                    Some((at, text, e.deleted))
+                    Some((
+                        e.seq,
+                        at,
+                        crate::row::history_text(e.seq, m, hover.clone()),
+                        e.deleted,
+                    ))
                 }
                 _ => None,
             })
-            .take(5)
             .collect();
+        let said = match history.len() {
+            1 => "1 message in the feed".to_string(),
+            n => format!("{n} messages in the feed"),
+        };
         let can = |action| self.session.can(p, action);
         let mut actions: Vec<(SharedString, Plan, bool)> = Vec::new();
         if let Some(id) = card
@@ -883,22 +1049,38 @@ impl ChatView {
                     }),
             )
             .when(!history.is_empty(), |d| {
-                d.child(div().flex().flex_col().gap_0p5().text_xs().children(
-                    history.into_iter().map(|(at, text, deleted)| {
+                d.child(div().text_xs().text_color(rgb(style::FAINT)).child(said))
+                    .child(
                         div()
+                            .id("history")
+                            .max_h(px(220.))
+                            .overflow_y_scroll()
                             .flex()
-                            .gap_2()
-                            .child(div().flex_none().text_color(rgb(style::FAINT)).child(at))
-                            .child(
+                            .flex_col()
+                            .gap_0p5()
+                            .text_xs()
+                            .children(history.into_iter().map(|(_, at, text, deleted)| {
                                 div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_color(rgb(style::MUTED))
-                                    .when(deleted, |d| d.line_through())
-                                    .child(text),
-                            )
-                    }),
-                ))
+                                    .flex()
+                                    .items_start()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .pt(px(1.))
+                                            .text_color(rgb(style::FAINT))
+                                            .child(at),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .text_color(rgb(style::MUTED))
+                                            .when(deleted, |d| d.line_through().opacity(0.6))
+                                            .child(text),
+                                    )
+                            })),
+                    )
             })
             .when(no_actions, |d| {
                 d.child(div().text_xs().text_color(rgb(style::FAINT)).child(format!(

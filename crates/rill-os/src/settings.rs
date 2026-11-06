@@ -7,16 +7,31 @@ use serde::{Deserialize, Serialize};
 use crate::data_dir;
 
 /// Everything Rill reads from `settings.json`. Missing fields use defaults.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// Platforms turned off in Settings, by name ("rumble"): not connected and not shown.
     pub disabled_platforms: Vec<String>,
     /// Deleted messages keep their text, faded and struck through, instead of "message deleted".
     pub show_deleted_messages: bool,
+    /// Hovering a link shows the page's title, description and picture (fetched on hover).
+    pub link_previews: bool,
     pub twitch: TwitchSettings,
     pub youtube: YouTubeSettings,
     pub kick: KickSettings,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            disabled_platforms: Vec::new(),
+            show_deleted_messages: false,
+            link_previews: true,
+            twitch: TwitchSettings::default(),
+            youtube: YouTubeSettings::default(),
+            kick: KickSettings::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -104,5 +119,6 @@ mod tests {
         assert!(s.twitch.client_id.is_none());
         assert!(s.disabled_platforms.is_empty());
         assert!(!s.show_deleted_messages);
+        assert!(s.link_previews, "previews are on unless turned off");
     }
 }
