@@ -9,8 +9,9 @@ use std::time::Duration;
 use futures::AsyncReadExt as _;
 use gpui::http_client::{AsyncBody, HttpClient, Url};
 
-/// How much of a page is read looking for its preview.
-const MAX_BYTES: usize = 256 * 1024;
+/// How much of a page is read looking for its preview. Big sites put a lot before it (YouTube's
+/// tags are about 780 KB in).
+const MAX_BYTES: usize = 1024 * 1024;
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(5);
 /// Previews kept, newest last.
 const KEEP: usize = 200;
@@ -125,9 +126,10 @@ pub(crate) async fn fetch(client: Arc<dyn HttpClient>, url: String) -> State {
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
+        // The preview is in the head; stop once it's over (looking only at what's new).
+        let from = body.len().saturating_sub(6);
         body.extend_from_slice(&chunk[..n]);
-        // The preview is in the head; stop once it's over.
-        if find_ci(&String::from_utf8_lossy(&body), "</head").is_some() {
+        if find_bytes_ci(&body[from..], b"</head").is_some() {
             break;
         }
     }
@@ -275,7 +277,10 @@ fn absolute(base: &str, href: &str) -> Option<String> {
 
 /// Finds `needle` (ASCII) in `hay` ignoring case.
 fn find_ci(hay: &str, needle: &str) -> Option<usize> {
-    let (h, n) = (hay.as_bytes(), needle.as_bytes());
+    find_bytes_ci(hay.as_bytes(), needle.as_bytes())
+}
+
+fn find_bytes_ci(h: &[u8], n: &[u8]) -> Option<usize> {
     (0..=h.len().checked_sub(n.len())?).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
 }
 

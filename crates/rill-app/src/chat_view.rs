@@ -653,8 +653,11 @@ impl ChatView {
             .children(jump)
             .child({
                 let bounds = self.feed_bounds.clone();
+                // Pinned to the corner: an absolute child without insets sits after the list.
                 canvas(move |b, _, _| bounds.set(b), |_, _, _, _| {})
                     .absolute()
+                    .top_0()
+                    .left_0()
                     .size_full()
             })
             .children(self.render_card(cx))

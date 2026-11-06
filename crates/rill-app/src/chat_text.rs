@@ -175,8 +175,9 @@ const SLOT_CHAR: char = '0';
 fn build(parts: &[Part], digit: Pixels) -> Built {
     let mut b = Built::default();
     let mut base: Option<(Range<usize>, Pixels)> = None;
+    // Highlight colors blend over the text's, so only fading hides the placeholder.
     let hidden = HighlightStyle {
-        color: Some(transparent_black()),
+        fade_out: Some(1.),
         ..HighlightStyle::default()
     };
     for part in parts {

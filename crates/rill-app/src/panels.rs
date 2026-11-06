@@ -9,7 +9,7 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState, Textarea, TextareaState};
 use gpui_component::switch::Switch;
-use gpui_component::{Disableable, Selectable, Sizable, StyledExt as _};
+use gpui_component::{Disableable, Sizable, StyledExt as _};
 use rill_core::command::format_duration;
 use rill_core::session::Batch;
 use rill_core::{Action, Author, Command, ConnectionStatus, Plan, Platform, UserRef, now_ms};
@@ -141,7 +141,7 @@ impl ChatView {
                 div()
                     .text_xs()
                     .text_color(rgb(style::FAINT))
-                    .child("Loading preview…"),
+                    .child("Loading previewâ€¦"),
             ),
             Some(State::Failed) | None => div().child(address),
         };
@@ -206,7 +206,7 @@ impl ChatView {
                 Button::new("close-card")
                     .xsmall()
                     .ghost()
-                    .label("✕")
+                    .label("âœ•")
                     .tooltip("Close (Esc)")
                     .on_click(cx.listener(|view, _, window, cx| view.close_panel(window, cx))),
             );
@@ -367,21 +367,24 @@ impl ChatView {
                 let picked = self.target_ix;
                 let buttons = choices.iter().enumerate().map(|(i, p)| {
                     let (p, plan) = (*p, plan.clone());
-                    Button::new(SharedString::from(format!("target-{p}")))
-                        .small()
-                        .outline()
-                        .selected(focused && i == picked)
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .child(style::platform_icon(p, 14.))
-                                .child(p.name()),
-                        )
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            view.run_plan(p, plan.clone(), window, cx);
-                        }))
+                    let b = Button::new(SharedString::from(format!("target-{p}"))).small();
+                    // The keyboard's pick is filled in; the others are outlines.
+                    let b = if focused && i == picked {
+                        b.primary()
+                    } else {
+                        b.outline()
+                    };
+                    b.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(style::platform_icon(p, 14.))
+                            .child(p.name()),
+                    )
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.run_plan(p, plan.clone(), window, cx);
+                    }))
                 });
                 div()
                     .key_context(TARGET_CONTEXT)
@@ -399,7 +402,7 @@ impl ChatView {
                         div()
                             .text_xs()
                             .text_color(rgb(style::FAINT))
-                            .child("Tab or arrows pick · Enter runs · Esc cancels"),
+                            .child("Tab or arrows pick Â· Enter runs Â· Esc cancels"),
                     )
                     .into_any_element()
             }
@@ -438,7 +441,7 @@ impl ChatView {
                             div()
                                 .text_xs()
                                 .text_color(rgb(style::FAINT))
-                                .child("Enter confirms · Esc cancels"),
+                                .child("Enter confirms Â· Esc cancels"),
                         ),
                 )
                 .into_any_element(),
@@ -458,7 +461,7 @@ impl ChatView {
                 Button::new("close-panel")
                     .xsmall()
                     .ghost()
-                    .label("✕")
+                    .label("âœ•")
                     .tooltip("Close (Esc)")
                     .on_click(cx.listener(|view, _, window, cx| view.close_panel(window, cx))),
             )
@@ -497,7 +500,7 @@ impl ChatView {
                 _ if !set_up => "Coming soon".into(),
                 (ConnectionStatus::Connected, Some(a)) => format!("Connected as {a}").into(),
                 (ConnectionStatus::Reconnecting { .. }, _) => status.label().into(),
-                (ConnectionStatus::Connecting, _) if prompt.is_none() => "Connecting…".into(),
+                (ConnectionStatus::Connecting, _) if prompt.is_none() => "Connectingâ€¦".into(),
                 (ConnectionStatus::Connecting, _) => "Waiting for you to approve".into(),
                 _ => "Not connected".into(),
             };
@@ -1029,7 +1032,7 @@ impl ChatView {
                             div()
                                 .text_xs()
                                 .text_color(rgb(style::MUTED))
-                                .child(roles.join(" · ")),
+                                .child(roles.join(" Â· ")),
                         )
                     }),
             )
