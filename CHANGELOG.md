@@ -16,5 +16,6 @@ Rill's first release, in progress.
 - Accounts: connect Twitch with a device code, YouTube through the browser, and pick a Kick channel to read. Tokens are kept in the system's credential store.
 - Twitch: chat, deletions and clears over EventSub, sending and replies, moderation and polls, with automatic token refresh and reconnects.
 - YouTube: the live chat of your current stream, sending, deleting, timeouts, bans and unbans, with a warning before the daily API quota runs out.
-- Kick: read-only chat for any channel.
+- Kick: read-only chat for any channel, without an account, over whichever chat socket Kick offers.
+- Keyboard use: F6 moves between the composer and the buttons, Tab and Shift+Tab move between buttons, Esc returns to the composer, and Esc then Tab leaves it.
 - `--sim` shows simulated chat, with options for rate, bursts, emotes, failures and dropped connections.

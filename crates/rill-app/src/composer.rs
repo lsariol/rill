@@ -83,6 +83,10 @@ impl ChatView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.tab_leaves {
+            self.leave_composer(true, window, cx);
+            return;
+        }
         if let Some(spec) = self.selected_completion(cx) {
             self.accept_completion(spec, window, cx);
             return;
@@ -91,7 +95,16 @@ impl ChatView {
         cx.notify();
     }
 
-    fn prev_destination(&mut self, _: &PrevDestination, _: &mut Window, cx: &mut Context<Self>) {
+    fn prev_destination(
+        &mut self,
+        _: &PrevDestination,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.tab_leaves {
+            self.leave_composer(false, window, cx);
+            return;
+        }
         if !self.completions(cx).is_empty() {
             self.move_completion(-1, cx);
             return;
@@ -304,7 +317,11 @@ impl ChatView {
                     .child(
                         div()
                             .text_color(rgb(style::FAINT))
-                            .child("Tab switches · / commands · PgUp scrolls"),
+                            .child(if self.tab_leaves {
+                                "Tab leaves the composer · Esc stays"
+                            } else {
+                                "Tab switches · / commands · PgUp scrolls"
+                            }),
                     ),
             )
             .child(

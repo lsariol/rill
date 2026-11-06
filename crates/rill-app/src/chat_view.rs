@@ -7,13 +7,15 @@ use gpui::{
     ListAlignment, ListState, ParentElement, Render, SharedString, StatefulInteractiveElement,
     Styled, Subscription, Task, Window, div, list, prelude::FluentBuilder, px, rgb,
 };
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{InputEvent, TextareaState};
-use gpui_component::tooltip::Tooltip;
+use gpui_component::{Selectable, Sizable};
 use rill_core::{
     ConnectionStatus, Destination, Event, Filter, Hub, Outgoing, Platform, Session, now_ms,
 };
 use tokio::sync::mpsc;
 
+use crate::focus;
 use crate::image_cache::BoundedImageCache;
 use crate::panels::Panel;
 use crate::style;
@@ -45,6 +47,8 @@ pub struct ChatView {
     /// Composer text for which the user dismissed autocomplete.
     pub(crate) completions_dismissed: Option<SharedString>,
     pub(crate) composer_error: Option<SharedString>,
+    /// Set by Esc in the composer: the next Tab leaves it instead of switching the destination.
+    pub(crate) tab_leaves: bool,
     pub(crate) panel: Panel,
     /// The Kick channel name box in Accounts.
     pub(crate) kick_channel: Entity<gpui_component::input::InputState>,
@@ -110,6 +114,7 @@ impl ChatView {
             completion_ix: 0,
             completions_dismissed: None,
             composer_error: None,
+            tab_leaves: false,
             panel: Panel::None,
             kick_channel: cx.new(|cx| {
                 gpui_component::input::InputState::new(window, cx).placeholder("Kick channel name")
@@ -254,6 +259,7 @@ impl ChatView {
             InputEvent::Change => {
                 self.completion_ix = 0;
                 self.composer_error = None;
+                self.tab_leaves = false;
                 cx.notify();
             }
             InputEvent::PressEnter { shift: false, .. } => self.on_enter(window, cx),
@@ -293,13 +299,13 @@ impl ChatView {
                 _ => format!("{p}: {}. Click to connect.", status.label()),
             }
             .into();
-            div()
-                .id(SharedString::from(format!("filter-{p}")))
+            Button::new(SharedString::from(format!("filter-{p}")))
+                .ghost()
+                .xsmall()
                 .relative()
-                .p_1()
-                .rounded_md()
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(style::RAISED)))
+                .toggled(shown)
+                .accessibility_label(tip.clone())
+                .tooltip(tip)
                 .when(!shown, |d| d.opacity(0.35))
                 .child(style::platform_icon(p, 16.))
                 .when_some(dot, |d, color| {
@@ -313,8 +319,10 @@ impl ChatView {
                             .bg(rgb(color)),
                     )
                 })
-                .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-                .on_click(cx.listener(move |view, _, _, cx| view.toggle_platform(p, cx)))
+                .on_click(cx.listener(move |view, click, window, cx| {
+                    view.toggle_platform(p, cx);
+                    view.after_click(click, window, cx);
+                }))
         });
         let mentions = filter.mentions_only;
         let compact = self.compact;
@@ -333,12 +341,12 @@ impl ChatView {
                 "Accounts",
                 matches!(self.panel, Panel::Accounts),
                 "Connect or disconnect your platform accounts",
-                cx.listener(|view, _, _, cx| {
+                cx.listener(|view, click, window, cx| {
                     view.panel = match view.panel {
                         Panel::Accounts => Panel::None,
                         _ => Panel::Accounts,
                     };
-                    cx.notify();
+                    view.after_click(click, window, cx);
                 }),
             ))
             .child(header_toggle(
@@ -346,10 +354,11 @@ impl ChatView {
                 "@",
                 mentions,
                 "Show only messages that mention you",
-                cx.listener(move |view, _, _, cx| {
+                cx.listener(move |view, click, window, cx| {
                     let mut f = view.session.feed.filter().clone();
                     f.mentions_only = !f.mentions_only;
                     view.set_filter(f, cx);
+                    view.after_click(click, window, cx);
                 }),
             ))
             .child(header_toggle(
@@ -357,9 +366,9 @@ impl ChatView {
                 "≡",
                 compact,
                 "Compact mode: hide times and badges",
-                cx.listener(|view, _, _, cx| {
+                cx.listener(|view, click, window, cx| {
                     view.compact = !view.compact;
-                    cx.notify();
+                    view.after_click(click, window, cx);
                 }),
             ))
     }
@@ -419,18 +428,15 @@ fn header_toggle(
     tip: &'static str,
     handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    div()
-        .id(id)
-        .px_2()
-        .py_0p5()
-        .rounded_md()
-        .text_sm()
-        .cursor_pointer()
+    Button::new(id)
+        .ghost()
+        .xsmall()
+        .label(label)
+        .selected(on)
+        .toggled(on)
         .text_color(rgb(if on { style::TEXT } else { style::FAINT }))
-        .when(on, |d| d.bg(rgb(style::RAISED)))
-        .hover(|s| s.bg(rgb(style::RAISED)))
-        .child(label)
-        .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
+        .accessibility_label(tip)
+        .tooltip(tip)
         .on_click(handler)
 }
 
@@ -476,6 +482,11 @@ impl Render for ChatView {
             self.list.remeasure();
         }
         div()
+            .key_context(focus::CONTEXT)
+            .on_action(cx.listener(Self::on_focus_next))
+            .on_action(cx.listener(Self::on_focus_prev))
+            .on_action(cx.listener(Self::on_switch_region))
+            .on_action(cx.listener(Self::on_to_composer))
             .size_full()
             .flex()
             .flex_col()

@@ -32,6 +32,9 @@ go to Windows Credential Manager under `rill-dev`. Release builds use `%LOCALAPP
 - **Header:** click a platform icon to hide or show its messages (or to connect it), `@` for
   mentions only, `≡` for compact mode. Narrow windows go compact by themselves.
 - **Accounts:** connect and disconnect platforms.
+- **Keyboard:** F6 moves between the composer and the buttons; Tab and Shift+Tab move between
+  buttons, and Enter or Space presses one. In the composer, press Esc (with nothing to close),
+  then Tab, to leave it. Esc anywhere else returns to the composer.
 
 ## Platform setup
 

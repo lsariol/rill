@@ -4,6 +4,7 @@
 mod assets;
 mod chat_view;
 mod composer;
+mod focus;
 mod image_cache;
 mod panels;
 mod row;
@@ -197,6 +198,7 @@ fn main() -> ExitCode {
         gpui_component::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
         composer::init(cx);
+        focus::init(cx);
 
         let bounds = Bounds::centered(None, size(px(440.), px(720.)), cx);
         let window_options = WindowOptions {
