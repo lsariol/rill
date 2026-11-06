@@ -5,6 +5,7 @@ use gpui::{App, Context, KeyBinding, Window, actions};
 use rill_core::Item;
 
 use crate::chat_view::ChatView;
+use crate::composer::Replying;
 use crate::panels::{Panel, UserCard};
 
 actions!(
@@ -14,7 +15,8 @@ actions!(
         SelectNext,
         SelectFirst,
         SelectLast,
-        OpenSelected
+        OpenSelected,
+        ReplySelected
     ]
 );
 
@@ -29,6 +31,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("end", SelectLast, feed),
         KeyBinding::new("enter", OpenSelected, feed),
         KeyBinding::new("space", OpenSelected, feed),
+        KeyBinding::new("r", ReplySelected, feed),
     ]);
 }
 
@@ -112,6 +115,33 @@ impl ChatView {
         }
     }
 
+    /// R on a chat message starts a reply to it, where the platform takes replies.
+    pub(crate) fn on_reply_selected(
+        &mut self,
+        _: &ReplySelected,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self
+            .selected_ix()
+            .and_then(|ix| self.session.feed.visible(ix))
+        else {
+            return;
+        };
+        if let Item::Chat(m) = &entry.item
+            && !entry.deleted
+            && self.session.can(m.platform, rill_core::Action::Reply)
+        {
+            let replying = Replying {
+                platform: m.platform,
+                message_id: m.id.clone(),
+                author: m.author.display_name.clone(),
+                text: m.plain_text(),
+            };
+            self.start_reply(replying, window, cx);
+        }
+    }
+
     /// Enter on a chat message opens its user card (delete, timeouts, ban).
     pub(crate) fn on_open_selected(
         &mut self,
@@ -131,6 +161,7 @@ impl ChatView {
                 author: m.author.clone(),
                 message_id: Some(m.id.clone()),
                 deleted: entry.deleted,
+                text: m.plain_text(),
             };
             self.open_panel(Panel::User(card), window, cx);
         }

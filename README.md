@@ -40,6 +40,9 @@ go to Windows Credential Manager under `rill-dev`. Release builds use `%LOCALAPP
   platform name or ends with a duration. The broadcaster, moderators, VIPs and you are never
   included. Rill shows how many users each platform would hit and waits for Enter, then reports
   one summary line. `/unnuke` lifts the last nuke's bans and timeouts.
+- **Replies:** Reply on a user card (or R on a message picked with the keyboard) answers that
+  message on its platform (Twitch and Kick); the composer quotes it until you send or press Esc.
+  Replies in chat show the message they answer.
 - **Moderation:** click a message to open the user card (delete, timeouts, ban, unban), showing
   only what that platform allows.
 - **Emotes:** platform emotes, plus 7TV, BetterTTV and FrankerFaceZ. The channel's 7TV set loads on

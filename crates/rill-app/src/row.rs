@@ -61,14 +61,30 @@ impl ChatView {
                     author: m.author.clone(),
                     message_id: Some(m.id.clone()),
                     deleted: entry.deleted,
+                    text: m.plain_text(),
                 };
+                // What a reply answers, quoted above it.
+                let quote = m.reply_to.as_ref().map(|r| {
+                    let text: String = r.text.chars().take(80).collect();
+                    div()
+                        .text_xs()
+                        .text_color(rgb(style::FAINT))
+                        .truncate()
+                        .child(format!("↩ @{}: {text}", r.author))
+                });
                 row_frame(entry.seq, entry.highlighted, compact)
                     .child(gutter(Some(m.platform)))
                     .when(!compact, |d| d.child(time(entry.received_ms)))
                     .when(!compact && !m.author.badges.is_empty(), |d| {
                         d.child(badges(&m.author.badges))
                     })
-                    .child(div().flex_1().min_w_0().child(chat_body(m, entry.deleted)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .children(quote)
+                            .child(chat_body(m, entry.deleted)),
+                    )
                     .cursor_pointer()
                     .on_click(cx.listener(move |view, _, window, cx| {
                         view.open_panel(Panel::User(card.clone()), window, cx);

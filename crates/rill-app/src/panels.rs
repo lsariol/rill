@@ -12,6 +12,7 @@ use rill_core::session::Batch;
 use rill_core::{Action, Author, Command, ConnectionStatus, Plan, Platform, UserRef, now_ms};
 
 use crate::chat_view::ChatView;
+use crate::composer::Replying;
 use crate::style;
 
 /// Twitch's poll limits, the strictest of the platforms.
@@ -46,6 +47,8 @@ pub struct UserCard {
     pub author: Author,
     pub message_id: Option<String>,
     pub deleted: bool,
+    /// The clicked message's text, quoted when replying.
+    pub text: String,
 }
 
 /// The poll form's fields.
@@ -614,7 +617,27 @@ impl ChatView {
                 false,
             ));
         }
-        let no_actions = actions.is_empty() && self.session.connected().contains(&p);
+        let reply = card
+            .message_id
+            .clone()
+            .filter(|_| !card.deleted && can(Action::Reply))
+            .map(|message_id| {
+                let replying = Replying {
+                    platform: p,
+                    message_id,
+                    author: a.display_name.clone(),
+                    text: card.text.clone(),
+                };
+                Button::new("reply")
+                    .xsmall()
+                    .primary()
+                    .label("Reply")
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.start_reply(replying.clone(), window, cx);
+                    }))
+            });
+        let no_actions =
+            actions.is_empty() && reply.is_none() && self.session.connected().contains(&p);
         let buttons = actions
             .into_iter()
             .enumerate()
@@ -653,17 +676,21 @@ impl ChatView {
                         )
                     }),
             )
-            .child(div().flex().flex_wrap().gap_1().children(buttons).when(
-                !self.session.connected().contains(&p),
-                |d| {
-                    d.child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(style::FAINT))
-                            .child(format!("{p} isn't connected, so no actions are available.")),
-                    )
-                },
-            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .children(reply)
+                    .children(buttons)
+                    .when(!self.session.connected().contains(&p), |d| {
+                        d.child(
+                            div().text_xs().text_color(rgb(style::FAINT)).child(format!(
+                                "{p} isn't connected, so no actions are available."
+                            )),
+                        )
+                    }),
+            )
             .when(no_actions, |d| {
                 d.child(div().text_xs().text_color(rgb(style::FAINT)).child(format!(
                     "This {p} account can't moderate here (read-only, or not a moderator)."

@@ -13,6 +13,16 @@ use crate::chat_view::ChatView;
 use crate::panels::Panel;
 use crate::style;
 
+/// The message the composer replies to.
+#[derive(Debug, Clone)]
+pub struct Replying {
+    pub platform: rill_core::Platform,
+    pub message_id: String,
+    pub author: String,
+    /// The message's text, quoted above the composer.
+    pub text: String,
+}
+
 actions!(
     composer,
     [
@@ -140,6 +150,8 @@ impl ChatView {
     fn dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
         if !self.completions(cx).is_empty() {
             self.completions_dismissed = Some(self.input.read(cx).value());
+        } else if self.replying.is_some() {
+            self.end_reply();
         } else if !matches!(self.panel, Panel::None) {
             self.panel = Panel::None;
         } else if !self.is_following() {
@@ -175,10 +187,41 @@ impl ChatView {
             self.accept_completion(spec, window, cx);
             return;
         }
-        let submitted = self.session.submit(&text, self.destination, now_ms());
+        let submitted = match &self.replying {
+            Some(r) => self
+                .session
+                .submit_reply(&text, r.platform, &r.message_id, now_ms()),
+            None => self.session.submit(&text, self.destination, now_ms()),
+        };
         if self.handle_submitted(submitted, window, cx) {
+            self.end_reply();
             self.input
                 .update(cx, |state, cx| state.set_value("", window, cx));
+        }
+    }
+
+    /// Starts a reply: the composer goes to the message's platform and quotes it.
+    pub(crate) fn start_reply(
+        &mut self,
+        replying: Replying,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.replying.is_none() {
+            self.before_reply = Some(self.destination);
+        }
+        self.destination = Destination::One(replying.platform);
+        self.replying = Some(replying);
+        self.panel = Panel::None;
+        self.focus_composer(window, cx);
+    }
+
+    /// Stops replying and puts the destination back.
+    fn end_reply(&mut self) {
+        if self.replying.take().is_some()
+            && let Some(d) = self.before_reply.take()
+        {
+            self.destination = d;
         }
     }
 
@@ -367,6 +410,26 @@ impl ChatView {
                     ),
                 ),
             )
+            .when_some(self.replying.clone(), |d, r| {
+                let text: String = r.text.chars().take(80).collect();
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_xs()
+                        .child(style::platform_icon(r.platform, 12.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(rgb(style::MUTED))
+                                .child(format!("Replying to {}: {text}", r.author)),
+                        )
+                        .child(div().text_color(rgb(style::FAINT)).child("Esc cancels")),
+                )
+            })
             .when_some(self.composer_error.clone(), |d, why| {
                 d.child(div().text_xs().text_color(rgb(style::ERROR)).child(why))
             })

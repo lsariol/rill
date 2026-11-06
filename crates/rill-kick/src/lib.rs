@@ -42,6 +42,7 @@ const BUILTIN_AUTH_HELPER: Option<&str> = option_env!("RILL_KICK_AUTH_HELPER");
 /// (with a clear message) where the account isn't a moderator.
 const SIGNED_IN: Capabilities = Capabilities::of(&[
     Action::Send,
+    Action::Reply,
     Action::Delete,
     Action::Timeout,
     Action::Ban,

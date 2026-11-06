@@ -341,12 +341,57 @@ impl Session {
         }
     }
 
+    /// Handles the composer while replying to a message: text goes to that platform as a reply;
+    /// commands run as usual there.
+    pub fn submit_reply(
+        &mut self,
+        input: &str,
+        platform: Platform,
+        message_id: &str,
+        now_ms: i64,
+    ) -> Submitted {
+        match command::parse(input) {
+            Parsed::Text(text) => {
+                if !self.connected().contains(&platform) {
+                    return Submitted::Rejected(format!("{platform} isn't connected."));
+                }
+                if !self.can(platform, Action::Reply) {
+                    return Submitted::Rejected(format!(
+                        "{platform} can't take replies from this account. Press Esc to send a normal message."
+                    ));
+                }
+                self.send(
+                    text,
+                    Destination::One(platform),
+                    Some(message_id.to_string()),
+                    now_ms,
+                )
+            }
+            _ => self.submit(input, Destination::One(platform), now_ms),
+        }
+    }
+
     fn send_text(&mut self, text: String, destination: Destination, now_ms: i64) -> Submitted {
+        self.send(text, destination, None, now_ms)
+    }
+
+    fn send(
+        &mut self,
+        text: String,
+        destination: Destination,
+        reply_to: Option<String>,
+        now_ms: i64,
+    ) -> Submitted {
         let connected = self.connected();
+        let action = if reply_to.is_some() {
+            Action::Reply
+        } else {
+            Action::Send
+        };
         let targets: Vec<Platform> = destination
             .targets(&connected)
             .into_iter()
-            .filter(|p| self.can(*p, Action::Send))
+            .filter(|p| self.can(*p, action))
             .collect();
         // Refuse before anything is sent, rather than reaching some platforms and not others.
         let chars = text.chars().count();
@@ -393,7 +438,7 @@ impl Session {
                         id,
                         command: Command::Send {
                             text: text.clone(),
-                            reply_to: None,
+                            reply_to: reply_to.clone(),
                         },
                     },
                 }
@@ -798,6 +843,41 @@ mod tests {
         // Someone else saying the same thing is shown.
         s.apply(msg(Platform::Twitch, "t10", "other", "hi there"), 0);
         assert_eq!(s.feed.len(), 2);
+    }
+
+    #[test]
+    fn replies_go_to_the_messages_platform_only() {
+        let mut s = Session::new(10);
+        connect(
+            &mut s,
+            Platform::Twitch,
+            Capabilities::of(&[Action::Send, Action::Reply]),
+        );
+        connect(
+            &mut s,
+            Platform::YouTube,
+            Capabilities::of(&[Action::Send, Action::Timeout]),
+        );
+        let Submitted::Send(out) = s.submit_reply("hi back", Platform::Twitch, "m1", 0) else {
+            panic!("expected a send");
+        };
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0].request.command,
+            Command::Send {
+                text: "hi back".into(),
+                reply_to: Some("m1".into())
+            }
+        );
+        assert!(matches!(
+            s.submit_reply("hi", Platform::YouTube, "m2", 0),
+            Submitted::Rejected(why) if why.contains("replies")
+        ));
+        // Commands still work while replying, on that platform.
+        assert!(matches!(
+            s.submit_reply("/timeout bob", Platform::YouTube, "m2", 0),
+            Submitted::Send(out) if out[0].platform == Platform::YouTube
+        ));
     }
 
     #[test]
