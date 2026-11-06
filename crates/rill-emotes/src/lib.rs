@@ -174,9 +174,12 @@ async fn run(http: reqwest::Client, cfg: Config, channel: Option<Channel>, emote
     tokio::join!(global, channel);
 }
 
+/// A global set that loads once and is then shared.
+type GlobalCell = Arc<OnceCell<Arc<EmoteSet>>>;
+
 /// The global set for one 7TV address, loaded once per run and shared by every chat.
-fn global_cell(cfg: &Config) -> Arc<OnceCell<Arc<EmoteSet>>> {
-    static CELLS: Mutex<Vec<(String, Arc<OnceCell<Arc<EmoteSet>>>)>> = Mutex::new(Vec::new());
+fn global_cell(cfg: &Config) -> GlobalCell {
+    static CELLS: Mutex<Vec<(String, GlobalCell)>> = Mutex::new(Vec::new());
     let mut cells = CELLS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((_, cell)) = cells.iter().find(|(api, _)| *api == cfg.api) {
         return cell.clone();
