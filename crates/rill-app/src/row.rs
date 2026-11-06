@@ -212,16 +212,27 @@ fn chat_body(m: &ChatMessage, deleted: bool) -> AnyElement {
     // Actions and platform events read as one sentence: "Bob subscribed", not "Bob: subscribed".
     let sentence = action || m.kind == MessageKind::Event;
     let sep = if sentence { "" } else { ":" };
-    let mut words: Vec<AnyElement> = vec![
+    let words: Vec<AnyElement> = vec![
         div()
             .font_weight(FontWeight::BOLD)
             .text_color(name_color)
             .child(format!("{}{sep}", m.author.display_name))
             .into_any_element(),
     ];
+    flow(words, &m.fragments, action, name_color)
+}
+
+/// Lays out fragments after `words` (the name) one word or image at a time, so emotes wrap with
+/// the text.
+fn flow(
+    mut words: Vec<AnyElement>,
+    fragments: &[Fragment],
+    action: bool,
+    name_color: gpui::Hsla,
+) -> AnyElement {
     // The last emote drawn, which a zero-width emote after it sits on.
     let mut base: Option<usize> = None;
-    for f in &m.fragments {
+    for f in fragments {
         match f {
             Fragment::Text(t) => {
                 if !t.trim().is_empty() {
@@ -416,18 +427,29 @@ fn sent_row(entry: &Entry, s: &SentMessage, name: &str, compact: bool) -> impl I
         }
         _ => None,
     });
-    let text = format!("{name}: {}", s.text);
-    let highlights = vec![(0..name.len(), bold(style::hsla(0x53fc18)))];
+    let name_color = style::hsla(0x53fc18);
+    let images = s
+        .fragments
+        .iter()
+        .any(|f| matches!(f, Fragment::Emote { url: Some(_), .. }));
+    let body = if images {
+        let name = div()
+            .font_weight(FontWeight::BOLD)
+            .text_color(name_color)
+            .child(format!("{name}:"))
+            .into_any_element();
+        flow(vec![name], &s.fragments, false, name_color)
+    } else {
+        let text = format!("{name}: {}", s.text);
+        let highlights = vec![(0..name.len(), bold(name_color))];
+        StyledText::new(text)
+            .with_highlights(highlights)
+            .into_any_element()
+    };
     row_frame(entry.seq, false, compact)
         .child(div().flex().flex_none().gap_1().pt(px(1.)).children(marks))
         .when(!compact, |d| d.child(time(entry.received_ms)))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .child(StyledText::new(text).with_highlights(highlights))
-                .children(failures),
-        )
+        .child(div().flex_1().min_w_0().child(body).children(failures))
 }
 
 fn notice_row(entry: &Entry, n: &Notice, compact: bool) -> impl IntoElement {

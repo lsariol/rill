@@ -1,13 +1,14 @@
 //! The chat core: applies adapter events to the feed and turns composer input into requests.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use crate::command::{self, Invocation, Parsed};
 use crate::event::SignInPrompt;
 use crate::feed::{Delivery, DeliveryState, Feed, Item, Notice, SentMessage};
+use crate::merge_text;
 use crate::{
-    Account, Action, Capabilities, Command, ConnectionStatus, Destination, EmoteOption,
-    EmoteSource, Event, Level, Platform, Request, RequestId, UserRef,
+    Account, Action, Capabilities, ChatMessage, Command, ConnectionStatus, Destination,
+    EmoteOption, EmoteSource, Event, Fragment, Level, Platform, Request, RequestId, UserRef,
 };
 
 /// How many sent message IDs are remembered to hide the platform's echo of them.
@@ -94,7 +95,8 @@ pub struct Session {
     links: BTreeMap<Platform, Link>,
     next_request: u64,
     pending: HashMap<(Platform, RequestId), Pending>,
-    suppress: HashSet<(Platform, String)>,
+    /// Sent message IDs, with the feed entry each one belongs to.
+    suppress: HashMap<(Platform, String), u64>,
     suppress_order: VecDeque<(Platform, String)>,
     batches: HashMap<u64, BatchState>,
     next_batch: u64,
@@ -166,7 +168,7 @@ impl Session {
                     .get(&m.platform)
                     .and_then(|l| l.account.as_ref())
                     .is_some_and(|a| a.id == m.author.id);
-                if mine && self.is_own_echo(m.platform, &m.id, &m.plain_text()) {
+                if mine && self.is_own_echo(&m) {
                     return;
                 }
                 self.feed.push(Item::Chat(m), now_ms);
@@ -258,7 +260,7 @@ impl Session {
                     Err(e) => DeliveryState::Failed(e.clone()),
                 };
                 if let Ok(Some(id)) = result {
-                    self.remember_sent(platform, id);
+                    self.remember_sent(platform, id, seq);
                 }
                 self.feed.update(seq, |e| {
                     if let Item::Sent(s) = &mut e.item
@@ -283,11 +285,15 @@ impl Session {
         }
     }
 
-    /// Whether an incoming message of ours echoes a send; marks the send delivered if so.
-    fn is_own_echo(&mut self, platform: Platform, id: &str, text: &str) -> bool {
-        if self.suppress.contains(&(platform, id.to_string())) {
+    /// Whether an incoming message of ours echoes a send; marks the send delivered if so, and
+    /// takes the echo's emotes when it shows more than Rill found.
+    fn is_own_echo(&mut self, m: &ChatMessage) -> bool {
+        let (platform, id) = (m.platform, m.id.as_str());
+        if let Some(&seq) = self.suppress.get(&(platform, id.to_string())) {
+            self.take_echo_emotes(seq, m);
             return true;
         }
+        let text = m.plain_text();
         let text = text.trim();
         let seq = self.pending.iter().find_map(|(key, p)| match p {
             Pending::Send { seq } if key.0 == platform => {
@@ -309,12 +315,62 @@ impl Session {
                 d.state = DeliveryState::Sent;
             }
         });
-        self.remember_sent(platform, id.to_string());
+        self.take_echo_emotes(seq, m);
+        self.remember_sent(platform, id.to_string(), seq);
         true
     }
 
-    fn remember_sent(&mut self, platform: Platform, id: String) {
-        if self.suppress.insert((platform, id.clone())) {
+    fn take_echo_emotes(&mut self, seq: u64, echo: &ChatMessage) {
+        let count = |f: &[Fragment]| {
+            f.iter()
+                .filter(|f| matches!(f, Fragment::Emote { url: Some(_), .. }))
+                .count()
+        };
+        let theirs = count(&echo.fragments);
+        self.feed.update(seq, |e| {
+            if let Item::Sent(s) = &mut e.item
+                && theirs > count(&s.fragments)
+            {
+                s.fragments = echo.fragments.clone();
+            }
+        });
+    }
+
+    /// The text with every word that names an emote usable on `targets` shown as that emote.
+    fn emote_fragments(&self, text: &str, targets: &[Platform]) -> Vec<Fragment> {
+        let mut known: HashMap<&str, &EmoteOption> = HashMap::new();
+        // Lists are in (platform, source) order; a platform's own emote wins over 7TV's.
+        let mut lists: Vec<_> = self
+            .emotes
+            .iter()
+            .filter(|((p, _), _)| targets.contains(p))
+            .collect();
+        lists.sort_by_key(|((_, source), _)| *source);
+        for (_, list) in lists {
+            for e in list {
+                known.entry(e.name.as_str()).or_insert(e);
+            }
+        }
+        let mut out = Vec::new();
+        for (i, word) in text.split(' ').enumerate() {
+            if i > 0 {
+                out.push(Fragment::Text(" ".into()));
+            }
+            match known.get(word) {
+                Some(e) => out.push(Fragment::Emote {
+                    name: e.name.clone(),
+                    url: e.url.clone(),
+                    size: e.size,
+                    overlay: false,
+                }),
+                None => out.push(Fragment::Text(word.into())),
+            }
+        }
+        merge_text(out)
+    }
+
+    fn remember_sent(&mut self, platform: Platform, id: String, seq: u64) {
+        if self.suppress.insert((platform, id.clone()), seq).is_none() {
             self.suppress_order.push_back((platform, id));
             if self.suppress_order.len() > SUPPRESS_LIMIT
                 && let Some(old) = self.suppress_order.pop_front()
@@ -431,6 +487,7 @@ impl Session {
         }
         let seq = self.feed.push(
             Item::Sent(SentMessage {
+                fragments: self.emote_fragments(&text, &targets),
                 text: text.clone(),
                 deliveries: targets
                     .iter()
@@ -894,6 +951,95 @@ mod tests {
         // Someone else saying the same thing is shown.
         s.apply(msg(Platform::Twitch, "t10", "other", "hi there"), 0);
         assert_eq!(s.feed.len(), 2);
+    }
+
+    fn sent_emotes(s: &Session) -> Vec<String> {
+        s.feed
+            .entries()
+            .find_map(|e| match &e.item {
+                Item::Sent(m) => Some(m),
+                _ => None,
+            })
+            .expect("a sent message")
+            .fragments
+            .iter()
+            .filter_map(|f| match f {
+                Fragment::Emote {
+                    name, url: Some(_), ..
+                } => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Our own message as the platform echoes it, with `emotes` drawn as images.
+    fn echo(text: &str, emotes: &[&str]) -> Event {
+        let Event::Message(mut m) = msg(Platform::Twitch, "t9", "me-Twitch", text) else {
+            unreachable!()
+        };
+        m.fragments = text
+            .split(' ')
+            .enumerate()
+            .flat_map(|(i, w)| {
+                let space = (i > 0).then(|| Fragment::Text(" ".into()));
+                let word = if emotes.contains(&w) {
+                    Fragment::emote(w, Some(format!("https://example.com/{w}")))
+                } else {
+                    Fragment::Text(w.into())
+                };
+                space.into_iter().chain([word])
+            })
+            .collect();
+        m.fragments = merge_text(m.fragments);
+        Event::Message(m)
+    }
+
+    #[test]
+    fn sent_messages_show_known_emotes_and_take_the_echos() {
+        let mut s = Session::new(100);
+        connect(&mut s, Platform::Twitch, ALL_CAPS);
+        s.apply(
+            Event::Emotes {
+                platform: Platform::Twitch,
+                source: EmoteSource::ThirdParty,
+                emotes: vec![EmoteOption {
+                    name: "peepoHappy".into(),
+                    url: Some("https://example.com/p".into()),
+                    size: Some((32, 32)),
+                }],
+            },
+            0,
+        );
+        // Known when sending: shown as an emote straight away.
+        let Submitted::Send(out) = s.submit("hi peepoHappy Kappa", Destination::All, 0) else {
+            panic!("expected sends");
+        };
+        assert_eq!(sent_emotes(&s), ["peepoHappy"]);
+        // Twitch's echo shows Kappa too (a subscription emote Rill didn't know): it's taken.
+        s.apply(
+            Event::Done {
+                platform: Platform::Twitch,
+                request: out[0].request.id,
+                result: Ok(Some("t9".into())),
+            },
+            0,
+        );
+        s.apply(echo("hi peepoHappy Kappa", &["peepoHappy", "Kappa"]), 0);
+        assert_eq!(s.feed.len(), 1, "the echo itself stays hidden");
+        assert_eq!(sent_emotes(&s), ["peepoHappy", "Kappa"]);
+    }
+
+    #[test]
+    fn an_echo_before_the_result_brings_its_emotes() {
+        let mut s = Session::new(100);
+        connect(&mut s, Platform::Twitch, ALL_CAPS);
+        let Submitted::Send(_) = s.submit("hi Kappa", Destination::All, 0) else {
+            panic!("expected sends");
+        };
+        assert!(sent_emotes(&s).is_empty());
+        s.apply(echo("hi Kappa", &["Kappa"]), 0);
+        assert_eq!(sent_emotes(&s), ["Kappa"]);
+        assert_eq!(s.feed.len(), 1);
     }
 
     #[test]
