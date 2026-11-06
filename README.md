@@ -57,7 +57,10 @@ folder; the benchmark scripts use `.dev\bench\data`.
   only what that platform allows, and the user's last five messages this session.
 - **Emotes:** platform emotes, plus 7TV, BetterTTV and FrankerFaceZ. The channel's 7TV set loads on
   Twitch and Kick (changes show up without a restart), its BetterTTV and FrankerFaceZ sets on
-  Twitch, and the three services' global emotes everywhere.
+  Twitch, and the three services' global emotes everywhere. In the composer, type `:` and the
+  start of a name (`:sm`) for a list of the emotes you can use where the message is going, with
+  the platforms each works on; Tab or Enter picks one, Up and Down move, Esc closes the list. On
+  Twitch this includes your subscription emotes from other channels.
 - **Header:** click a platform icon to hide or show its messages (or to connect it), `@` for
   mentions only, `≡` for compact mode. Narrow windows go compact by themselves.
 - **Accounts:** connect and disconnect platforms. Connect opens the platform's sign-in page in the

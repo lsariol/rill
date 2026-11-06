@@ -11,8 +11,8 @@ use std::time::Duration;
 use rill_core::backoff::SmallRng;
 use rill_core::{
     Account, Action, Adapter, AdapterIo, Author, Badge, Capabilities, ChatMessage, Command,
-    ConnectionStatus, Event, EventSink, Fragment, Level, MessageKind, Platform, Request, Roles,
-    adapter::BoxFuture, merge_text, now_ms,
+    ConnectionStatus, EmoteOption, EmoteSource, Event, EventSink, Fragment, Level, MessageKind,
+    Platform, Request, Roles, adapter::BoxFuture, merge_text, now_ms,
 };
 use tokio::time::{MissedTickBehavior, interval, sleep};
 
@@ -338,6 +338,41 @@ fn make_user(rng: &mut SmallRng, platform: Platform, i: usize) -> Author {
     }
 }
 
+/// The emotes the simulated user can type: the platform's own, then 7TV's (overlays left out).
+fn emote_lists(platform: Platform) -> [Event; 2] {
+    let own = EMOTES
+        .iter()
+        .map(|(name, id)| EmoteOption {
+            name: name.to_string(),
+            url: Some(format!(
+                "https://static-cdn.jtvnw.net/emoticons/v2/{id}/default/dark/1.0"
+            )),
+            size: None,
+        })
+        .collect();
+    let seven = SEVEN_TV
+        .iter()
+        .filter(|e| !e.4)
+        .map(|(name, id, w, h, _)| EmoteOption {
+            name: name.to_string(),
+            url: Some(format!("https://cdn.7tv.app/emote/{id}/1x.webp")),
+            size: Some((*w, *h)),
+        })
+        .collect();
+    [
+        Event::Emotes {
+            platform,
+            source: EmoteSource::Platform,
+            emotes: own,
+        },
+        Event::Emotes {
+            platform,
+            source: EmoteSource::ThirdParty,
+            emotes: seven,
+        },
+    ]
+}
+
 async fn run(adapter: SimAdapter, io: AdapterIo) {
     let AdapterIo {
         events,
@@ -353,6 +388,9 @@ async fn run(adapter: SimAdapter, io: AdapterIo) {
     events
         .status(ConnectionStatus::Connected, account.clone(), caps)
         .await;
+    for event in emote_lists(adapter.platform) {
+        events.send(event).await;
+    }
 
     let step = Duration::from_millis(20);
     let mut tick = interval(step);

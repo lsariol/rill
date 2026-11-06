@@ -6,11 +6,14 @@ mod others;
 pub mod seven_tv;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use rill_core::backoff::Backoff;
-use rill_core::{ChatMessage, Enrich, Fragment, replace_words};
+use rill_core::{
+    ChatMessage, EmoteOption, EmoteSource, Enrich, Event, EventSink, Fragment, replace_words,
+};
 use tokio::sync::OnceCell;
 use tokio::task::JoinHandle;
 
@@ -56,6 +59,8 @@ struct Sets {
 #[derive(Default)]
 pub struct Emotes {
     sets: RwLock<Sets>,
+    /// Bumped on every change, so the composer's list is sent again.
+    version: AtomicU64,
 }
 
 impl Emotes {
@@ -75,7 +80,25 @@ impl Emotes {
     }
 
     fn write(&self) -> std::sync::RwLockWriteGuard<'_, Sets> {
+        self.version.fetch_add(1, Ordering::Relaxed);
         self.sets.write().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Every emote by name, the channel's first, for the composer's `:` suggestions.
+    pub fn options(&self) -> Vec<EmoteOption> {
+        let s = self.read();
+        let mut seen = std::collections::HashSet::new();
+        s.channel
+            .values()
+            .chain(s.others.values())
+            .chain(s.global.values())
+            .filter(|e| !e.overlay && seen.insert(e.name.clone()))
+            .map(|e| EmoteOption {
+                name: e.name.clone(),
+                url: Some(e.url.clone()),
+                size: (e.size.0 > 0 && e.size.1 > 0).then_some(e.size),
+            })
+            .collect()
     }
 
     pub(crate) fn set_global(&self, set: Arc<EmoteSet>) {
@@ -148,14 +171,50 @@ impl Drop for Follow {
     }
 }
 
-/// Starts loading global emotes, and a channel's when given. Call on a Tokio runtime.
-pub fn follow(http: reqwest::Client, cfg: Config, channel: Option<Channel>) -> Follow {
+/// Starts loading global emotes, and a channel's when given. With `events`, the usable list goes
+/// to the composer whenever it changes. Call on a Tokio runtime.
+pub fn follow(
+    http: reqwest::Client,
+    cfg: Config,
+    channel: Option<Channel>,
+    events: Option<EventSink>,
+) -> Follow {
     let emotes = Arc::new(Emotes::default());
-    let task = tokio::spawn(run(http, cfg, channel, emotes.clone()));
+    let task = tokio::spawn(run(http, cfg, channel, emotes.clone(), events));
     Follow { emotes, task }
 }
 
-async fn run(http: reqwest::Client, cfg: Config, channel: Option<Channel>, emotes: Arc<Emotes>) {
+/// Sends the emote list when it has changed, at most every 2 s (7TV changes can come in bursts).
+async fn publish(events: EventSink, emotes: Arc<Emotes>) {
+    let mut sent = u64::MAX;
+    loop {
+        let now = emotes.version.load(Ordering::Relaxed);
+        if now != sent {
+            sent = now;
+            let list = emotes.options();
+            let event = Event::Emotes {
+                platform: events.platform(),
+                source: EmoteSource::ThirdParty,
+                emotes: list,
+            };
+            if !events.send(event).await {
+                return;
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+async fn run(
+    http: reqwest::Client,
+    cfg: Config,
+    channel: Option<Channel>,
+    emotes: Arc<Emotes>,
+    events: Option<EventSink>,
+) {
+    if let Some(events) = events {
+        tokio::spawn(publish(events, emotes.clone()));
+    }
     let global = async {
         let mut backoff = Backoff::new(Duration::from_secs(5), Duration::from_secs(600));
         let cell = global_cell(&cfg);
@@ -371,7 +430,12 @@ mod live_7tv {
             platform: "twitch",
             ids: vec!["42163359".into()],
         };
-        let f = follow(reqwest::Client::new(), Config::default(), Some(channel));
+        let f = follow(
+            reqwest::Client::new(),
+            Config::default(),
+            Some(channel),
+            None,
+        );
         loop {
             let (global, channel) = f.emotes().counts();
             // 7TV's 3,000-odd plus the channel's BetterTTV and FrankerFaceZ emotes.

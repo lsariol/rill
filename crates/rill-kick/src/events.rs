@@ -86,6 +86,48 @@ pub fn to_event(event: &str, data: &Value, sub_badges: &SubBadges) -> Option<Eve
     }
 }
 
+/// The emotes in Kick's emote list for a channel (kick.com/emotes/<channel>): the channel's own,
+/// Kick's global ones and its emoji, by name with their IDs. Read loosely: any object with a
+/// numeric `id` and a `name` inside an `emotes` list counts.
+pub fn emote_list(v: &Value) -> Vec<(String, u64)> {
+    fn walk(v: &Value, inside_emotes: bool, out: &mut Vec<(String, u64)>) {
+        match v {
+            Value::Array(items) => items.iter().for_each(|i| walk(i, inside_emotes, out)),
+            Value::Object(o) => {
+                if inside_emotes
+                    && let (Some(id), Some(name)) = (
+                        o.get("id").and_then(Value::as_u64),
+                        o.get("name").and_then(Value::as_str),
+                    )
+                {
+                    out.push((name.to_string(), id));
+                    return;
+                }
+                for (k, child) in o {
+                    walk(child, k == "emotes", out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(v, false, &mut out);
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|(name, _)| seen.insert(name.clone()));
+    out
+}
+
+/// Turns emote names in outgoing text into Kick's `[emote:id:name]` codes.
+pub fn encode_emotes(text: &str, emotes: &std::collections::HashMap<String, u64>) -> String {
+    text.split(' ')
+        .map(|w| match emotes.get(w) {
+            Some(id) => format!("[emote:{id}:{w}]"),
+            None => w.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Kick events Rill knows and shows nothing for.
 const QUIET: &[&str] = &[
     "LuckyUsersWhoGotGiftSubscriptionsEvent",
@@ -308,6 +350,26 @@ mod tests {
             })
         );
     }
+    #[test]
+    fn reads_the_emote_list_and_encodes_names_when_sending() {
+        let v = json!([
+            {"id": 8, "slug": "somechannel", "emotes": [
+                {"id": 101, "channel_id": 8, "name": "myHype", "subscribers_only": true},
+                {"id": 102, "channel_id": 8, "name": "myWave"}
+            ]},
+            {"name": "Global", "id": "Global", "emotes": [{"id": 37226, "name": "KEKW"}]},
+            {"name": "Emojis", "id": "Emoji", "emotes": [{"id": 1730762, "name": "emojiAngel"}, {"id": 1, "name": "KEKW"}]}
+        ]);
+        let list = emote_list(&v);
+        let names: Vec<_> = list.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["myHype", "myWave", "KEKW", "emojiAngel"]);
+        let map: std::collections::HashMap<_, _> = list.into_iter().collect();
+        assert_eq!(
+            encode_emotes("hi myWave and KEKW KEKWs", &map),
+            "hi [emote:102:myWave] and [emote:37226:KEKW] KEKWs"
+        );
+    }
+
     #[test]
     fn subs_gifts_hosts_and_redemptions_read_as_event_lines() {
         let line = |event: &str, data: Value| match to_event(event, &data, &SubBadges::new()) {

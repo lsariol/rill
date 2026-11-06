@@ -297,7 +297,7 @@ fn chat_body(m: &ChatMessage, deleted: bool) -> AnyElement {
 }
 
 /// An emote image at its own proportions (third-party emotes vary), or its name without one.
-fn emote_image(name: &str, url: Option<&str>, size: Option<(u16, u16)>) -> AnyElement {
+pub(crate) fn emote_image(name: &str, url: Option<&str>, size: Option<(u16, u16)>) -> AnyElement {
     let label = |name: String| {
         div()
             .font_weight(FontWeight::BOLD)

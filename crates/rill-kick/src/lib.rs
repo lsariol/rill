@@ -149,6 +149,8 @@ struct State {
     broadcaster: Option<u64>,
     /// Recent chatters' user IDs by login, for commands that name a user.
     logins: HashMap<String, u64>,
+    /// The channel's Kick emotes by name, so sent messages show them as emotes.
+    kick_emotes: HashMap<String, u64>,
     /// Ad breaks already announced, by Kick's ID.
     ads_seen: std::collections::HashSet<String>,
     /// Event names already logged as unknown.
@@ -472,10 +474,12 @@ async fn perform(
         })
     };
     let result = match command {
-        Command::Send { text, reply_to } => api
-            .send(broadcaster, &text, reply_to.as_deref())
-            .await
-            .map(Some),
+        Command::Send { text, reply_to } => {
+            let text = events::encode_emotes(&text, &shared.lock().kick_emotes);
+            api.send(broadcaster, &text, reply_to.as_deref())
+                .await
+                .map(Some)
+        }
         Command::Delete { message_id } => api.delete(&message_id).await.map(|_| None),
         Command::Timeout {
             user,
@@ -634,6 +638,14 @@ async fn follow(ctx: &mut Ctx, slug: &str) -> Interrupt {
             Ok(channel) => {
                 ctx.shared.lock().broadcaster = channel.broadcaster_id;
                 if emotes.is_none() {
+                    tokio::spawn(load_emotes(
+                        ctx.http.clone(),
+                        channel.slug.clone(),
+                        ctx.shared.clone(),
+                        ctx.events.clone(),
+                    ));
+                }
+                if emotes.is_none() {
                     let f = rill_emotes::follow(
                         ctx.http.clone(),
                         rill_emotes::Config::default(),
@@ -641,6 +653,7 @@ async fn follow(ctx: &mut Ctx, slug: &str) -> Interrupt {
                             platform: "kick",
                             ids: channel.seven_tv_ids.clone(),
                         }),
+                        Some(ctx.events.clone()),
                     );
                     ctx.events.set_enrich(Some(f.enrich()));
                     emotes = Some(f);
@@ -698,6 +711,50 @@ async fn follow(ctx: &mut Ctx, slug: &str) -> Interrupt {
 enum Lookup {
     Missing,
     Retry(String),
+}
+
+/// Loads the channel's Kick emotes for the composer's `:` suggestions and for sending.
+async fn load_emotes(http: reqwest::Client, slug: String, shared: Shared, events: EventSink) {
+    let res = http
+        .get(format!("https://kick.com/emotes/{slug}"))
+        .header("Accept", "application/json")
+        .send()
+        .await;
+    let v: Value = match res {
+        Ok(r) if r.status().is_success() => match r.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::info!(err = %e, "Kick emotes unreadable");
+                return;
+            }
+        },
+        Ok(r) => {
+            tracing::info!(status = r.status().as_u16(), "Kick emotes not loaded");
+            return;
+        }
+        Err(e) => {
+            tracing::info!(err = %e, "Kick emotes not loaded");
+            return;
+        }
+    };
+    let list = events::emote_list(&v);
+    tracing::debug!(count = list.len(), "Kick emotes loaded");
+    let options = list
+        .iter()
+        .map(|(name, id)| rill_core::EmoteOption {
+            name: name.clone(),
+            url: Some(events::emote_url(&id.to_string())),
+            size: None,
+        })
+        .collect();
+    shared.lock().kick_emotes = list.into_iter().collect();
+    events
+        .send(Event::Emotes {
+            platform: Platform::Kick,
+            source: rill_core::EmoteSource::Platform,
+            emotes: options,
+        })
+        .await;
 }
 
 /// Finds a channel's chatroom from its public page data.

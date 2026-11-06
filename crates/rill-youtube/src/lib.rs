@@ -312,7 +312,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
     tracing::info!("YouTube signed in");
     // 7TV has no YouTube channel sets; its global emotes still apply.
     let _emotes = ctx.seven_tv.clone().map(|cfg| {
-        let f = rill_emotes::follow(ctx.http.clone(), cfg, None);
+        let f = rill_emotes::follow(ctx.http.clone(), cfg, None, Some(ctx.events.clone()));
         ctx.events.set_enrich(Some(f.enrich()));
         f
     });

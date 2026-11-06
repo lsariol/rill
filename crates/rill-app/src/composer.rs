@@ -1,4 +1,7 @@
-//! The composer: destination outline and label, Tab cycling, `/` autocomplete and submitting.
+//! The composer: destination outline and label, Tab cycling, `/` and `:` autocomplete and
+//! submitting.
+
+use std::ops::Range;
 
 use gpui::{
     App, Context, InteractiveElement, IntoElement, KeyBinding, ParentElement,
@@ -7,11 +10,11 @@ use gpui::{
 };
 use gpui_component::input::{Position, Textarea};
 use rill_core::command::{self, CommandSpec};
-use rill_core::{Destination, Submitted, now_ms};
+use rill_core::{Destination, EmoteOption, Platform, Submitted, now_ms};
 
 use crate::chat_view::ChatView;
 use crate::panels::Panel;
-use crate::style;
+use crate::{row, style};
 
 /// The message the composer replies to.
 #[derive(Debug, Clone)]
@@ -38,6 +41,41 @@ actions!(
 
 const CONTEXT: &str = "Composer";
 const MAX_COMPLETIONS: usize = 6;
+const MAX_EMOTES: usize = 8;
+
+/// A row in the popup above the composer.
+#[derive(Clone)]
+pub(crate) enum Suggestion {
+    Command(&'static CommandSpec),
+    /// With the platforms it works on.
+    Emote(Vec<Platform>, EmoteOption),
+}
+
+/// The `:name` being typed just before the cursor: its byte range and the name so far.
+pub(crate) fn emote_token(text: &str, cursor: usize) -> Option<(Range<usize>, &str)> {
+    let cursor = (0..=cursor.min(text.len()))
+        .rev()
+        .find(|&i| text.is_char_boundary(i))?;
+    let before = &text[..cursor];
+    let start = before
+        .char_indices()
+        .rev()
+        .find(|(_, c)| c.is_whitespace())
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let name = before[start..].strip_prefix(':')?;
+    (!name.is_empty() && !name.contains(':')).then_some((start..cursor, name))
+}
+
+/// The text with `range` replaced by the emote and a space, and the cursor's new line and column.
+pub(crate) fn insert_emote(text: &str, range: Range<usize>, name: &str) -> (String, Position) {
+    let rest = &text[range.end..];
+    let gap = if rest.starts_with(' ') { "" } else { " " };
+    let head = format!("{}{name}{gap}", &text[..range.start]);
+    let line = head.matches('\n').count() as u32;
+    let column = head.rsplit('\n').next().unwrap_or("").chars().count() as u32;
+    let cursor = Position::new(line, column + u32::from(gap.is_empty()));
+    (format!("{head}{rest}"), cursor)
+}
 
 /// Binds the composer's keys inside its text box.
 pub fn init(cx: &mut App) {
@@ -54,34 +92,60 @@ pub fn init(cx: &mut App) {
 }
 
 impl ChatView {
-    /// Commands matching the composer text, unless dismissed with Esc.
-    fn completions(&self, cx: &App) -> Vec<&'static CommandSpec> {
-        let text = self.input.read(cx).value();
+    /// Commands matching the composer text, or emotes for a `:name` before the cursor, unless
+    /// dismissed with Esc.
+    fn completions(&self, cx: &App) -> Vec<Suggestion> {
+        let state = self.input.read(cx);
+        let text = state.value();
         if self.completions_dismissed.as_ref() == Some(&text) {
             return Vec::new();
         }
-        let mut c = command::completions(&text);
-        c.truncate(MAX_COMPLETIONS);
-        c
+        let mut commands = command::completions(&text);
+        if !commands.is_empty() {
+            commands.truncate(MAX_COMPLETIONS);
+            return commands.into_iter().map(Suggestion::Command).collect();
+        }
+        match emote_token(&text, state.cursor()) {
+            Some((_, name)) => self
+                .session
+                .emote_choices(self.destination, name, MAX_EMOTES)
+                .into_iter()
+                .map(|(p, e)| Suggestion::Emote(p, e))
+                .collect(),
+            None => Vec::new(),
+        }
     }
 
-    fn selected_completion(&self, cx: &App) -> Option<&'static CommandSpec> {
-        let c = self.completions(cx);
-        c.get(self.completion_ix.min(c.len().saturating_sub(1)))
-            .copied()
+    fn selected_completion(&self, cx: &App) -> Option<Suggestion> {
+        let mut c = self.completions(cx);
+        let ix = self.completion_ix.min(c.len().saturating_sub(1));
+        (ix < c.len()).then(|| c.swap_remove(ix))
     }
 
     fn accept_completion(
         &mut self,
-        spec: &CommandSpec,
+        suggestion: &Suggestion,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = format!("/{} ", spec.name);
-        let len = text.len() as u32;
+        let (text, cursor) = match suggestion {
+            Suggestion::Command(spec) => {
+                let text = format!("/{} ", spec.name);
+                let len = text.chars().count() as u32;
+                (text, Position::new(0, len))
+            }
+            Suggestion::Emote(_, emote) => {
+                let state = self.input.read(cx);
+                let text = state.value();
+                let Some((range, _)) = emote_token(&text, state.cursor()) else {
+                    return;
+                };
+                insert_emote(&text, range, &emote.name)
+            }
+        };
         self.input.update(cx, |state, cx| {
             state.set_value(text, window, cx);
-            state.set_cursor_position(Position::new(0, len), window, cx);
+            state.set_cursor_position(cursor, window, cx);
         });
         self.completion_ix = 0;
         cx.notify();
@@ -97,8 +161,8 @@ impl ChatView {
             self.leave_composer(true, window, cx);
             return;
         }
-        if let Some(spec) = self.selected_completion(cx) {
-            self.accept_completion(spec, window, cx);
+        if let Some(suggestion) = self.selected_completion(cx) {
+            self.accept_completion(&suggestion, window, cx);
             return;
         }
         self.destination = self.destination.next(&self.session.sendable());
@@ -181,11 +245,15 @@ impl ChatView {
             self.confirm_batch(window, cx);
             return;
         }
-        if let Some(spec) = self.selected_completion(cx)
-            && text.trim() != format!("/{}", spec.name)
-        {
-            self.accept_completion(spec, window, cx);
-            return;
+        if let Some(suggestion) = self.selected_completion(cx) {
+            let finished = match &suggestion {
+                Suggestion::Command(spec) => text.trim() == format!("/{}", spec.name),
+                Suggestion::Emote(..) => false,
+            };
+            if !finished {
+                self.accept_completion(&suggestion, window, cx);
+                return;
+            }
         }
         let submitted = match &self.replying {
             Some(r) => self
@@ -315,41 +383,57 @@ impl ChatView {
                 .bg(rgb(style::PANEL))
                 .border_1()
                 .border_color(rgb(style::BORDER))
-                .children(completions.iter().enumerate().map(|(i, spec)| {
-                    let spec: &'static CommandSpec = spec;
-                    let kind = match spec.is_platform() {
-                        false => "Rill",
-                        true => "Platform",
-                    };
-                    div()
-                        .id(spec.name)
+                .children(completions.into_iter().enumerate().map(|(i, suggestion)| {
+                    let row = div()
+                        .id(("suggestion", i))
                         .flex()
+                        .items_center()
                         .gap_2()
                         .px_2()
                         .py_0p5()
                         .rounded_sm()
                         .cursor_pointer()
                         .when(i == selected, |d| d.bg(rgb(style::RAISED)))
-                        .hover(|s| s.bg(rgb(style::RAISED)))
-                        .child(div().flex_none().child(spec.usage))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(rgb(style::MUTED))
-                                .child(spec.summary),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .text_xs()
-                                .text_color(rgb(style::FAINT))
-                                .child(kind),
-                        )
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            view.accept_completion(spec, window, cx);
-                        }))
+                        .hover(|s| s.bg(rgb(style::RAISED)));
+                    let row = match &suggestion {
+                        Suggestion::Command(spec) => {
+                            let kind = match spec.is_platform() {
+                                false => "Rill",
+                                true => "Platform",
+                            };
+                            row.child(div().flex_none().child(spec.usage))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_color(rgb(style::MUTED))
+                                        .child(spec.summary),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_xs()
+                                        .text_color(rgb(style::FAINT))
+                                        .child(kind),
+                                )
+                        }
+                        Suggestion::Emote(platforms, emote) => row
+                            .child(div().flex_none().w(px(36.)).flex().justify_center().child(
+                                row::emote_image(&emote.name, emote.url.as_deref(), emote.size),
+                            ))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(emote.name.clone()),
+                            )
+                            .children(platforms.iter().map(|p| style::platform_icon(*p, 12.))),
+                    };
+                    row.on_click(cx.listener(move |view, _, window, cx| {
+                        view.accept_completion(&suggestion, window, cx);
+                    }))
                 }))
         });
 
@@ -395,7 +479,7 @@ impl ChatView {
                                     .child(if self.tab_leaves {
                                         "Tab leaves the composer · Esc stays"
                                     } else {
-                                        "Tab switches · / commands · PgUp scrolls"
+                                        "Tab switches · / commands · : emotes · PgUp scrolls"
                                     }),
                             )
                             .children(count),
@@ -463,5 +547,46 @@ fn outline(destination: Destination) -> gpui::Div {
                     })),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_the_emote_name_before_the_cursor() {
+        assert_eq!(emote_token(":s", 2), Some((0..2, "s")));
+        assert_eq!(emote_token("hi :smi", 7), Some((3..7, "smi")));
+        assert_eq!(emote_token("hi :smi there", 7), Some((3..7, "smi")));
+        assert_eq!(
+            emote_token("héllo :Ka", "héllo :Ka".len()),
+            Some((7..10, "Ka"))
+        );
+        assert_eq!(emote_token(":", 1), None, "a colon alone");
+        assert_eq!(
+            emote_token("at 12:30", 8),
+            None,
+            "not at the start of a word"
+        );
+        assert_eq!(emote_token("hi :smi there", 13), None, "cursor past it");
+        assert_eq!(emote_token("::x", 3), None);
+    }
+
+    #[test]
+    fn inserting_an_emote_replaces_the_name_and_adds_a_space() {
+        let (text, at) = insert_emote("hi :smi", 3..7, "Smile");
+        assert_eq!(text, "hi Smile ");
+        assert_eq!(at, Position::new(0, 9));
+        let (text, at) = insert_emote("hi :smi there", 3..7, "Smile");
+        assert_eq!(text, "hi Smile there");
+        assert_eq!(
+            at,
+            Position::new(0, 9),
+            "after the space that was already there"
+        );
+        let (text, at) = insert_emote("é\nok :K", 6..8, "Kappa");
+        assert_eq!(text, "é\nok Kappa ");
+        assert_eq!(at, Position::new(1, 9));
     }
 }
