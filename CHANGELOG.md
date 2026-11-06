@@ -14,6 +14,7 @@ Rill's first release, in progress.
 - `/purge`, Twitch chat modes (`/slow`, `/followers`, `/subscribers`, `/emoteonly`, `/uniquechat`), `/announce`, `/shoutout` and `/search`. A command that only one connected platform can run goes there without asking. A Twitch sign-in from before these commands says to reconnect, instead of looking expired.
 - `/nuke`, `/meganuke` and `/unnuke`: time out or ban everyone who recently said a phrase, on every platform or one, after a confirmation that shows the count per platform; undo the last one. Moderators, VIPs, the broadcaster and you are left out, and Twitch rate limits are waited out instead of failing.
 - Replies: from a user card or with R on a picked message, on Twitch and Kick; the composer quotes the message, and replies in chat show what they answer.
+- The user card lists the user's last five messages this session, deleted ones struck through.
 - Clicking a message opens a user card with the moderation actions that platform allows: delete, timeouts, ban and unban.
 - A poll form (question, 2 to 5 choices, length) for Twitch.
 - Accounts: connect Twitch with a device code, YouTube through the browser, and pick a Kick channel to read. Tokens are kept in the system's credential store.

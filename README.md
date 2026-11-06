@@ -43,8 +43,8 @@ folder; the benchmark scripts use `.dev\bench\data`.
 - **Replies:** Reply on a user card (or R on a message picked with the keyboard) answers that
   message on its platform (Twitch and Kick); the composer quotes it until you send or press Esc.
   Replies in chat show the message they answer.
-- **Moderation:** click a message to open the user card (delete, timeouts, ban, unban), showing
-  only what that platform allows.
+- **Moderation:** click a message to open the user card: delete, timeouts, ban and unban, showing
+  only what that platform allows, and the user's last five messages this session.
 - **Emotes:** platform emotes, plus 7TV, BetterTTV and FrankerFaceZ. The channel's 7TV set loads on
   Twitch and Kick (changes show up without a restart), its BetterTTV and FrankerFaceZ sets on
   Twitch, and the three services' global emotes everywhere.

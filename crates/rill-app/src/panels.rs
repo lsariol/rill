@@ -1,5 +1,6 @@
 //! Panels above the composer: the user card, the "which platform?" prompt and the poll form.
 
+use chrono::TimeZone;
 use gpui::{
     AnyElement, AppContext, Context, Entity, IntoElement, ParentElement, SharedString, Styled,
     Window, div, prelude::FluentBuilder, px, rgb,
@@ -562,6 +563,26 @@ impl ChatView {
                 roles.push(label);
             }
         }
+        // Their latest messages this session, newest first: context before acting.
+        let history: Vec<_> = self
+            .session
+            .feed
+            .entries()
+            .rev()
+            .filter_map(|e| match &e.item {
+                rill_core::Item::Chat(m) if m.platform == p && m.author.id == a.id => {
+                    let at = chrono::Local
+                        .timestamp_millis_opt(e.received_ms)
+                        .single()
+                        .map(|t| t.format("%H:%M").to_string())
+                        .unwrap_or_default();
+                    let text: String = m.plain_text().chars().take(120).collect();
+                    Some((at, text, e.deleted))
+                }
+                _ => None,
+            })
+            .take(5)
+            .collect();
         let can = |action| self.session.can(p, action);
         let mut actions: Vec<(SharedString, Plan, bool)> = Vec::new();
         if let Some(id) = card
@@ -691,6 +712,24 @@ impl ChatView {
                         )
                     }),
             )
+            .when(!history.is_empty(), |d| {
+                d.child(div().flex().flex_col().gap_0p5().text_xs().children(
+                    history.into_iter().map(|(at, text, deleted)| {
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(div().flex_none().text_color(rgb(style::FAINT)).child(at))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(rgb(style::MUTED))
+                                    .when(deleted, |d| d.line_through())
+                                    .child(text),
+                            )
+                    }),
+                ))
+            })
             .when(no_actions, |d| {
                 d.child(div().text_xs().text_color(rgb(style::FAINT)).child(format!(
                     "This {p} account can't moderate here (read-only, or not a moderator)."
