@@ -34,6 +34,7 @@ const QUOTA_WARN: u64 = 8_000;
 const AUTHOR_LIMIT: usize = 5_000;
 
 const OWNER: Capabilities = Capabilities::of(&[
+    Action::Ads,
     Action::Title,
     Action::Send,
     Action::Delete,
@@ -658,7 +659,7 @@ async fn handle(ctx: &mut Ctx, api: &Api, live: &Live, req: Option<Request>) -> 
             // Requests run on their own, so the chat keeps flowing meanwhile.
             let (events, api, live) = (ctx.events.clone(), api.clone(), live.clone());
             tokio::spawn(async move {
-                let result = run_request(&api, &live, command).await;
+                let result = run_request(&api, &live, &events, command).await;
                 if let Err(e) = &result {
                     tracing::warn!(err = %e, "YouTube request failed");
                 }
@@ -669,7 +670,12 @@ async fn handle(ctx: &mut Ctx, api: &Api, live: &Live, req: Option<Request>) -> 
     None
 }
 
-async fn run_request(api: &Api, live: &Live, command: Command) -> Result<Option<String>, String> {
+async fn run_request(
+    api: &Api,
+    live: &Live,
+    events: &EventSink,
+    command: Command,
+) -> Result<Option<String>, String> {
     let Some(chat) = live.chat.lock().await.clone() else {
         return Err(NOT_LIVE.into());
     };
@@ -706,6 +712,12 @@ async fn run_request(api: &Api, live: &Live, command: Command) -> Result<Option<
             );
         }
         Command::SetTitle { title } => api.set_title(&title).await.map(|_| None),
+        Command::StartAds { seconds } => {
+            api.insert_ad(seconds).await.map_err(|e| e.message())?;
+            // YouTube reports nothing about ads, so the notices come from here.
+            events.ads_started(seconds, "started by you").await;
+            return Ok(None);
+        }
         Command::SetCategory { .. } => {
             return Err(
                 "YouTube: streams have no category to set here. Change it in YouTube Studio."
@@ -879,6 +891,7 @@ mod sessions {
             ("POST", "/liveChat/bans") => (200, json!({"id": "ban-1"})),
             ("DELETE", "/liveChat/bans") => (204, Value::Null),
             ("PUT", "/liveBroadcasts") => (200, json!({"id": "b1"})),
+            ("POST", "/liveBroadcasts/cuepoint") => (200, json!({"id": "cue1"})),
             _ => (404, json!({"error": {"message": "no route"}})),
         }
     }
@@ -1298,6 +1311,40 @@ mod sessions {
             put.body,
             json!({"id": "b1", "snippet": {"title": "New title",
                 "scheduledStartTime": "2026-11-06T12:00:00Z", "description": "desc"}})
+        );
+    }
+
+    #[tokio::test]
+    async fn starts_an_ad_break_and_says_so() {
+        fn route(r: &Seen) -> (u16, Value) {
+            match (r.method.as_str(), r.path.as_str()) {
+                ("GET", "/liveBroadcasts") => (
+                    200,
+                    json!({"items": [{"id": "b1", "snippet": {"liveChatId": "chat1"}}]}),
+                ),
+                _ => route_with(r, || (200, json!({"items": []}))),
+            }
+        }
+        let (base, log) = api_server(route).await;
+        let (mut rx, tx, task) = start(&base);
+        until(&mut rx, |e| matches!(e, Event::Message(_))).await;
+        request(&tx, 1, Command::StartAds { seconds: 60 }).await;
+        let seen = until(&mut rx, |e| done(e, 1)).await;
+        assert!(seen.iter().any(|e| matches!(
+            e,
+            Event::Notice { text, .. } if text == "Ads started on YouTube: 1m (started by you)"
+        )));
+        drop(tx);
+        assert!(task.await.unwrap());
+        let log = log.lock().unwrap().clone();
+        let cue = log
+            .iter()
+            .find(|r| r.path == "/liveBroadcasts/cuepoint")
+            .unwrap();
+        assert_eq!(cue.query, "id=b1");
+        assert_eq!(
+            cue.body,
+            json!({"cueType": "cueTypeAd", "durationSecs": 60})
         );
     }
 

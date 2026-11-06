@@ -110,6 +110,23 @@ impl EventSink {
         .await
     }
 
+    /// Posts "Ads started on <platform>: <length> (<why>)" now, and "Ads finished" when they end.
+    pub async fn ads_started(&self, seconds: u32, why: &str) {
+        let length = crate::command::format_duration(seconds.max(1));
+        let platform = self.platform;
+        self.notice(
+            Level::Info,
+            format!("Ads started on {platform}: {length} ({why})"),
+        )
+        .await;
+        let sink = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(u64::from(seconds))).await;
+            sink.notice(Level::Info, format!("Ads finished on {platform}"))
+                .await;
+        });
+    }
+
     pub async fn done(&self, request: RequestId, result: Result<Option<String>, String>) -> bool {
         self.send(Event::Done {
             platform: self.platform,

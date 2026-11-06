@@ -270,11 +270,96 @@ impl Api {
         })
     }
 
+    /// Starts an ad break on the signed-in user's channel; returns its ID.
+    pub async fn start_ad(&self, seconds: u32) -> Result<String, ApiError> {
+        let body = json!({
+            "break_duration_seconds": seconds.clamp(7, MAX_AD_SECONDS),
+            "id": crate::random_uuid(),
+        });
+        let v = self
+            .call(Method::POST, "/ads/ad-break", Some(body))
+            .await
+            .map_err(ad_error)?;
+        Ok(v["data"]["ad_break_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string())
+    }
+
+    /// The channel's recent ad breaks.
+    pub async fn ad_breaks(&self) -> Result<Vec<AdBreak>, ApiError> {
+        let v = self.call(Method::GET, "/ads/ad-break-status", None).await?;
+        Ok(v["data"]["ad_breaks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|b| {
+                Some(AdBreak {
+                    id: b["ad_break_id"].as_str().or(b["id"].as_str())?.to_string(),
+                    seconds: u32::try_from(b["break_duration_seconds"].as_u64()?).ok()?,
+                    started: chrono::DateTime::parse_from_rfc3339(b["created_at"].as_str()?)
+                        .ok()?
+                        .with_timezone(&chrono::Utc),
+                    source: b["source"].as_str().unwrap_or_default().to_lowercase(),
+                })
+            })
+            .collect())
+    }
+
     pub async fn unban(&self, broadcaster: u64, user: u64) -> Result<(), ApiError> {
         let body = json!({"broadcaster_user_id": broadcaster, "user_id": user});
         self.call(Method::DELETE, "/moderation/bans", Some(body))
             .await
             .map(|_| ())
+    }
+}
+
+/// Kick's longest ad break, in seconds.
+pub const MAX_AD_SECONDS: u32 = 90;
+
+/// One of Kick's ad breaks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdBreak {
+    pub id: String,
+    pub seconds: u32,
+    pub started: chrono::DateTime<chrono::Utc>,
+    /// Lowercase; contains "auto" for Kick's automatic ads.
+    pub source: String,
+}
+
+impl AdBreak {
+    /// Seconds left at `now`; `None` once it's over.
+    pub fn remaining(&self, now: chrono::DateTime<chrono::Utc>) -> Option<u32> {
+        let end = self.started + chrono::Duration::seconds(i64::from(self.seconds));
+        let left = (end - now).num_seconds();
+        (left > 0).then(|| u32::try_from(left).unwrap_or(self.seconds))
+    }
+}
+
+/// Kick's ad errors, in words.
+fn ad_error(e: ApiError) -> ApiError {
+    let ApiError::Api { status, message } = &e else {
+        return e;
+    };
+    let says = |code: &str| message.contains(code);
+    let why = if says("CHANNEL_IS_NOT_LIVE") {
+        "you're not live"
+    } else if says("CHANNEL_NOT_OPTED_IN") {
+        "the channel isn't enrolled in ads"
+    } else if says("AD_BREAK_ACTIVE") {
+        "an ad break is already running"
+    } else if says("MAX_AD_BREAKS_REACHED") {
+        "the limit of ad breaks for now is reached"
+    } else if says("AUTO_ADS_ACTIVE") {
+        "automatic ads are on"
+    } else if says("ADS_BLOCKED") || says("ADS_RESTRICTED") {
+        "ads aren't allowed on this channel right now"
+    } else {
+        return e;
+    };
+    ApiError::Api {
+        status: *status,
+        message: format!("no ad break started: {why}"),
     }
 }
 

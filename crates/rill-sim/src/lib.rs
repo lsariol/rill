@@ -65,12 +65,12 @@ impl SimAdapter {
         match platform {
             Platform::Twitch => Capabilities::of(&[
                 Send, Reply, Delete, Timeout, Ban, Unban, Poll, ChatMode, Announce, Shoutout,
-                Title, Category,
+                Title, Category, Ads,
             ]),
-            Platform::YouTube => Capabilities::of(&[Send, Delete, Timeout, Ban, Unban, Title]),
-            Platform::Kick => {
-                Capabilities::of(&[Send, Reply, Delete, Timeout, Ban, Unban, Title, Category])
-            }
+            Platform::YouTube => Capabilities::of(&[Send, Delete, Timeout, Ban, Unban, Title, Ads]),
+            Platform::Kick => Capabilities::of(&[
+                Send, Reply, Delete, Timeout, Ban, Unban, Title, Category, Ads,
+            ]),
             // Rumble's Live Stream API only reads.
             Platform::Rumble => Capabilities::NONE,
         }
@@ -451,6 +451,11 @@ fn handle(sim: &mut Sim, events: &EventSink, req: Request) {
             | Command::Shoutout { .. }
             | Command::SetTitle { .. }
             | Command::SetCategory { .. } => Ok(None),
+            Command::StartAds { seconds } => {
+                let (events, seconds) = (events.clone(), *seconds);
+                tokio::spawn(async move { events.ads_started(seconds, "started by you").await });
+                Ok(None)
+            }
             Command::Announce { text } => {
                 follow_up.push(Event::Notice {
                     platform,

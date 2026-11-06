@@ -41,6 +41,7 @@ const BUILTIN_AUTH_HELPER: Option<&str> = option_env!("RILL_KICK_AUTH_HELPER");
 /// What a signed-in account can do on Kick. Moderation is offered on any channel; Kick refuses it
 /// (with a clear message) where the account isn't a moderator.
 const SIGNED_IN: Capabilities = Capabilities::of(&[
+    Action::Ads,
     Action::Title,
     Action::Category,
     Action::Send,
@@ -146,6 +147,8 @@ struct State {
     broadcaster: Option<u64>,
     /// Recent chatters' user IDs by login, for commands that name a user.
     logins: HashMap<String, u64>,
+    /// Ad breaks already announced, by Kick's ID.
+    ads_seen: std::collections::HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -201,6 +204,7 @@ async fn run(adapter: KickAdapter, io: AdapterIo) {
     let shared = Shared::default();
     let (work, work_rx) = mpsc::channel(2_048);
     tokio::spawn(worker(shared.clone(), events.clone(), work_rx));
+    tokio::spawn(watch_ads(shared.clone(), events.clone()));
     let (wake_tx, wake) = mpsc::channel(4);
     let mut ctx = Ctx {
         client_id: random_client_id(),
@@ -240,6 +244,11 @@ async fn run(adapter: KickAdapter, io: AdapterIo) {
 
 /// A random version-4 UUID, as Kick's web player makes for anonymous viewers.
 fn random_client_id() -> String {
+    random_uuid()
+}
+
+/// A random version-4 UUID.
+pub(crate) fn random_uuid() -> String {
     let mut rng = rill_core::backoff::SmallRng::from_time();
     let (a, b) = (rng.next_u64(), rng.next_u64());
     format!(
@@ -371,6 +380,45 @@ async fn sign_out(ctx: &Ctx) {
     }
 }
 
+/// How often Kick's ad status is checked while signed in to your own channel.
+const ADS_EVERY: Duration = Duration::from_secs(30);
+
+/// Announces ad breaks that start without Rill (Kick's automatic ads), since Kick sends no event.
+async fn watch_ads(shared: Shared, events: EventSink) {
+    loop {
+        tokio::time::sleep(ADS_EVERY).await;
+        let (api, own) = {
+            let s = shared.lock();
+            let own = matches!((&s.signed, s.broadcaster), (Some(signed), Some(b)) if signed.account.id == b.to_string());
+            (s.signed.as_ref().map(|x| x.api.clone()), own)
+        };
+        let (Some(api), true) = (api, own) else {
+            continue;
+        };
+        let breaks = match api.ad_breaks().await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::debug!(err = %e.message(), "Kick ad status not read");
+                continue;
+            }
+        };
+        let now = chrono::Utc::now();
+        for b in breaks {
+            let Some(remaining) = b.remaining(now) else {
+                continue;
+            };
+            if shared.lock().ads_seen.insert(b.id.clone()) {
+                let why = if b.source.contains("auto") {
+                    "automatic"
+                } else {
+                    "started on Kick"
+                };
+                events.ads_started(remaining, why).await;
+            }
+        }
+    }
+}
+
 /// Carries out sends and moderation one at a time, so the chat loop never waits on them.
 async fn worker(shared: Shared, events: EventSink, mut requests: mpsc::Receiver<Request>) {
     while let Some(req) = requests.recv().await {
@@ -393,7 +441,10 @@ async fn perform(
             );
         }
         Command::SetMode { .. } | Command::Announce { .. } | Command::Shoutout { .. } => {
-            return Err("Kick: chat modes, announcements and shoutouts aren't in Kick's API yet. Use kick.com.".into());
+            return Err(
+                "Kick: chat modes, announcements and shoutouts aren't in Kick's API yet. Use kick.com."
+                    .into(),
+            );
         }
         _ => {}
     }
@@ -446,6 +497,13 @@ async fn perform(
         Command::Unban { user } => {
             let id = user_id(&user)?;
             api.unban(broadcaster, id).await.map(|_| None)
+        }
+        Command::StartAds { seconds } => {
+            let seconds = seconds.clamp(7, api::MAX_AD_SECONDS);
+            let id = api.start_ad(seconds).await.map_err(|e| e.message())?;
+            shared.lock().ads_seen.insert(id);
+            events.ads_started(seconds, "started by you").await;
+            Ok(None)
         }
         Command::SetTitle { title } => api
             .set_channel(serde_json::json!({ "stream_title": title }))
@@ -1439,6 +1497,20 @@ mod official_api {
                         }
                         ("POST" | "DELETE", "/moderation/bans") => (200, json!({"data": {}})),
                         ("PATCH", "/channels") => (204, Value::Null),
+                        ("POST", "/ads/ad-break") => (
+                            202,
+                            json!({"data": {"ad_break_id": "ab1", "remaining_ad_breaks": 2}}),
+                        ),
+                        ("GET", "/ads/ad-break-status") => (
+                            200,
+                            json!({"data": {"ad_breaks": [
+                                {"ad_break_id": "ab9", "break_duration_seconds": 60,
+                                 "created_at": (chrono::Utc::now() - chrono::Duration::seconds(10)).to_rfc3339(),
+                                 "source": "AUTO", "status": "active"},
+                                {"ad_break_id": "old", "break_duration_seconds": 30,
+                                 "created_at": "2026-01-01T00:00:00Z", "source": "manual"}
+                            ]}}),
+                        ),
                         ("GET", p) if p.starts_with("/v2/categories") => (200, json!({"data": []})),
                         ("GET", p) if p.starts_with("/categories") => {
                             (200, json!({"data": [{"id": 15, "name": "Just Chatting"}]}))
@@ -1628,6 +1700,44 @@ mod official_api {
         );
         assert!(log.iter().any(|r| r.path == "/v2/categories?name=chatting"));
         assert!(log.iter().any(|r| r.path == "/categories?q=chatting"));
+    }
+
+    #[tokio::test]
+    async fn starts_ads_and_sees_kicks_automatic_ones() {
+        let (base, log) = kick_server().await;
+        let shared = signed(&base);
+        let (events, mut rx) = EventSink::channel(Platform::Kick, 100);
+        let ads = Command::StartAds { seconds: 120 };
+        assert_eq!(perform(&shared, &events, ads).await, Ok(None));
+        let Some(Event::Notice { text, .. }) = rx.recv().await else {
+            panic!("no notice")
+        };
+        assert_eq!(text, "Ads started on Kick: 90s (started by you)");
+        let body: Value = serde_json::from_str(
+            &log.lock()
+                .unwrap()
+                .iter()
+                .find(|r| r.path == "/ads/ad-break")
+                .unwrap()
+                .body,
+        )
+        .unwrap();
+        assert_eq!(body["break_duration_seconds"], 90, "Kick's longest break");
+        assert_eq!(body["id"].as_str().unwrap().len(), 36, "a UUID");
+        assert!(shared.lock().ads_seen.contains("ab1"));
+
+        // The status shows a running automatic break and an old one; only the running one counts.
+        let api = shared.lock().signed.clone().unwrap().api;
+        let breaks = api.ad_breaks().await.unwrap();
+        let now = chrono::Utc::now();
+        let running: Vec<_> = breaks
+            .iter()
+            .filter_map(|b| b.remaining(now).map(|r| (b, r)))
+            .collect();
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0].0.id, "ab9");
+        assert!(running[0].0.source.contains("auto"));
+        assert!((45..=50).contains(&running[0].1), "{} s left", running[0].1);
     }
 
     #[tokio::test]

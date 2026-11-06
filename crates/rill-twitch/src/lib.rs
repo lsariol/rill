@@ -26,6 +26,7 @@ const VALIDATE_EVERY: Duration = Duration::from_secs(3600);
 const NOT_CONNECTED: &str = "Twitch isn't connected. Click the Twitch icon to sign in.";
 
 const BROADCASTER: Capabilities = Capabilities::of(&[
+    Action::Ads,
     Action::Title,
     Action::Category,
     Action::Send,
@@ -598,6 +599,11 @@ async fn run_request(
                     .await?;
                 None
             }
+            Command::StartAds { seconds } => {
+                // Twitch's begin event posts the notices, including for automatic breaks.
+                helix.start_commercial(channel, seconds).await?;
+                None
+            }
             Command::SetCategory { name } => {
                 let (id, found) = helix.find_category(&name).await?;
                 helix
@@ -685,6 +691,21 @@ async fn connection(
                 Err(e) => tracing::warn!(kind, err = %e.message(), "Twitch subscription failed"),
             }
         }
+        // Ad breaks and redemptions are only for the broadcaster's own channel.
+        if id.me.id == id.channel.id {
+            for (kind, version) in eventsub::BROADCASTER_SUBSCRIPTIONS {
+                match helix
+                    .subscribe_broadcaster(&session_id, kind, version, &id.channel.id)
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(HelixError::Unauthorized) => return Ws::Expired,
+                    Err(e) => {
+                        tracing::warn!(kind, err = %e.message(), "Twitch subscription failed")
+                    }
+                }
+            }
+        }
     }
     tracing::info!(channel = %id.channel.login, resumed = !fresh, "Twitch EventSub connected");
     ctx.events
@@ -702,6 +723,9 @@ async fn connection(
                     last = Instant::now();
                     match eventsub::parse(&t) {
                         Ok(Frame::Notification { kind, timestamp, event }) => {
+                            if let Some((seconds, why)) = eventsub::ad_break(&kind, &event) {
+                                ctx.events.ads_started(seconds, &why).await;
+                            }
                             if let Some(e) = eventsub::to_event(&kind, &timestamp, &event, &id.badges)
                                 && !ctx.events.send(e).await
                             {
@@ -839,6 +863,9 @@ mod sessions {
                         "/eventsub/subscriptions" => json!({"data": [{"status": "enabled"}]}),
                         "/chat/messages" => {
                             json!({"data": [{"message_id": "sent-1", "is_sent": true}]})
+                        }
+                        "/channels/commercial" => {
+                            json!({"data": [{"length": 60, "message": "", "retry_after": 480}]})
                         }
                         p if p.starts_with("/search/categories") => json!({"data": [
                             {"id": "9", "name": "Elden Ring Nightreign"},
@@ -1112,6 +1139,17 @@ mod sessions {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn starts_an_ad_break_within_twitchs_lengths() {
+        let (helix_url, seen) = helix_server().await;
+        let (_ctx, helix, _rx, _tx) = setup(&helix_url);
+        helix.start_commercial("200", 600).await.unwrap();
+        let seen = seen.lock().unwrap().clone();
+        assert!(seen.iter().any(|(m, p, b)| m == "POST"
+            && p == "/channels/commercial"
+            && *b == json!({"broadcaster_id": "200", "length": 180})));
     }
 
     #[tokio::test]

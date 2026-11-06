@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub const SCOPES: &str = "user:read:chat user:write:chat moderator:manage:banned_users \
 moderator:manage:chat_messages channel:manage:polls user:read:moderated_channels \
 moderator:manage:chat_settings moderator:manage:announcements moderator:manage:shoutouts \
-channel:manage:broadcast";
+channel:manage:broadcast channel:edit:commercial channel:read:ads channel:read:redemptions";
 
 const DEVICE_URL: &str = "https://id.twitch.tv/oauth2/device";
 const TOKEN_URL: &str = "https://id.twitch.tv/oauth2/token";

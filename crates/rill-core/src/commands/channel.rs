@@ -27,6 +27,44 @@ pub(super) fn category(s: &mut Session, inv: &Invocation) -> Submitted {
     apply(s, inv, Field::Category, inv.args)
 }
 
+/// `/ad [length]`: an ad break on every platform that can (or the destination), 60 s by default.
+pub(super) fn ad(s: &mut Session, inv: &Invocation) -> Submitted {
+    let seconds = match inv.args.split_whitespace().next() {
+        None => 60,
+        Some(a) => match crate::command::parse_duration(a) {
+            Some(secs) if secs <= 600 => secs,
+            _ => return usage(inv),
+        },
+    };
+    let connected = s.connected();
+    let targets: Vec<_> = inv
+        .destination
+        .targets(&connected)
+        .into_iter()
+        .filter(|p| s.can(*p, Action::Ads))
+        .collect();
+    if targets.is_empty() {
+        return Submitted::Rejected(
+            "No connected platform can start ads with this account (it takes the broadcaster)."
+                .into(),
+        );
+    }
+    let names: Vec<_> = targets.iter().map(|p| p.name()).collect();
+    let batch = Batch {
+        label: format!(
+            "Ad break requested: {} on {}",
+            crate::command::format_duration(seconds),
+            names.join(", ")
+        ),
+        items: targets
+            .into_iter()
+            .map(|p| (p, Command::StartAds { seconds }))
+            .collect(),
+        undoable: false,
+    };
+    s.run_batch(batch, inv.now_ms)
+}
+
 #[derive(Clone, Copy)]
 enum Field {
     Title,
@@ -100,7 +138,10 @@ mod tests {
             Platform::Twitch,
             Capabilities::of(&[Action::Title, Action::Category]),
         );
-        connect(Platform::YouTube, Capabilities::of(&[Action::Title]));
+        connect(
+            Platform::YouTube,
+            Capabilities::of(&[Action::Title, Action::Ads]),
+        );
         connect(Platform::Rumble, Capabilities::NONE);
         s
     }
@@ -139,7 +180,22 @@ mod tests {
                 }
             )]
         );
-        for bad in ["/set", "/set colour red", "/title", "/category   "] {
+        assert_eq!(
+            sent(s.submit("/ad 90s", Destination::All, 0)),
+            [(Platform::YouTube, Command::StartAds { seconds: 90 })]
+        );
+        assert_eq!(
+            sent(s.submit("/ad", Destination::All, 0)),
+            [(Platform::YouTube, Command::StartAds { seconds: 60 })]
+        );
+        for bad in [
+            "/set",
+            "/set colour red",
+            "/title",
+            "/category   ",
+            "/ad soon",
+            "/ad 2h",
+        ] {
             assert!(
                 matches!(s.submit(bad, Destination::All, 0), Submitted::Rejected(_)),
                 "{bad}"

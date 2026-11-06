@@ -20,6 +20,86 @@ pub const SUBSCRIPTIONS: [&str; 5] = [
     "channel.chat.notification",
 ];
 
+/// Subscriptions only the broadcaster's own token can make: type and version.
+pub const BROADCASTER_SUBSCRIPTIONS: [(&str, &str); 3] = [
+    ("channel.ad_break.begin", "1"),
+    ("channel.channel_points_custom_reward_redemption.add", "1"),
+    (
+        "channel.channel_points_automatic_reward_redemption.add",
+        "2",
+    ),
+];
+
+/// An ad break that began: its length and why ("automatic" or who started it).
+pub fn ad_break(kind: &str, e: &Value) -> Option<(u32, String)> {
+    if kind != "channel.ad_break.begin" {
+        return None;
+    }
+    let seconds = e["duration_seconds"]
+        .as_u64()
+        .or_else(|| e["duration_seconds"].as_str()?.parse().ok())?;
+    let why = if e["is_automatic"].as_bool().unwrap_or(false) {
+        "automatic".to_string()
+    } else {
+        match e["requester_user_name"]
+            .as_str()
+            .or(e["requester_user_login"].as_str())
+        {
+            Some(who) if !who.is_empty() => format!("started by {who}"),
+            _ => "started from Twitch".to_string(),
+        }
+    };
+    Some((u32::try_from(seconds).unwrap_or(u32::MAX), why))
+}
+
+/// "Foo redeemed Hydrate: what they typed", as an event line.
+fn redemption(kind: &str, timestamp: &str, e: &Value) -> Option<ChatMessage> {
+    let s = |v: &Value| v.as_str().unwrap_or_default().to_string();
+    let title = match kind {
+        "channel.channel_points_custom_reward_redemption.add" => s(&e["reward"]["title"]),
+        "channel.channel_points_automatic_reward_redemption.add" => {
+            match e["reward"]["type"].as_str().unwrap_or_default() {
+                "send_highlighted_message" => "Highlight My Message".into(),
+                "single_message_bypass_sub_mode" => "Send a Message in Sub-Only Mode".into(),
+                "random_sub_emote_unlock" => "Unlock a Random Sub Emote".into(),
+                "chosen_sub_emote_unlock" => "Choose an Emote to Unlock".into(),
+                "chosen_modified_sub_emote_unlock" => "Modify a Single Emote".into(),
+                "message_effect" => "Message Effects".into(),
+                "gigantify_an_emote" => "Gigantify an Emote".into(),
+                "celebration" => "On-Screen Celebration".into(),
+                other => other.replace('_', " "),
+            }
+        }
+        _ => return None,
+    };
+    let input = e["user_input"]
+        .as_str()
+        .or(e["message"]["text"].as_str())
+        .unwrap_or_default()
+        .trim();
+    let mut fragments = vec![Fragment::Text(format!("redeemed {title}"))];
+    if !input.is_empty() {
+        fragments.push(Fragment::Text(": ".into()));
+        fragments.extend(split_text(input));
+    }
+    Some(ChatMessage {
+        platform: Platform::Twitch,
+        id: s(&e["id"]),
+        author: Author {
+            id: s(&e["user_id"]),
+            login: s(&e["user_login"]),
+            display_name: s(&e["user_name"]),
+            ..Author::default()
+        },
+        fragments: merge_text(fragments),
+        kind: MessageKind::Event,
+        sent_at_ms: chrono::DateTime::parse_from_rfc3339(timestamp)
+            .map(|t| t.timestamp_millis())
+            .unwrap_or_else(|_| rill_core::now_ms()),
+        reply_to: None,
+    })
+}
+
 /// A decoded WebSocket message.
 #[derive(Debug, PartialEq)]
 pub enum Frame {
@@ -113,6 +193,9 @@ pub fn to_event(kind: &str, timestamp: &str, event: &Value, badges: &Badges) -> 
         }),
         "channel.chat.clear" => Some(Event::Cleared { platform }),
         "channel.chat.notification" => notification(timestamp, event, badges).map(Event::Message),
+        k if k.starts_with("channel.channel_points_") => {
+            redemption(k, timestamp, event).map(Event::Message)
+        }
         _ => None,
     }
 }
@@ -253,6 +336,46 @@ mod tests {
     use serde_json::json;
 
     const MESSAGE: &str = include_str!("../tests/fixtures/chat_message.json");
+
+    #[test]
+    fn redemptions_and_ad_breaks() {
+        let custom = json!({"id": "r1", "user_id": "5", "user_login": "foo", "user_name": "Foo",
+            "user_input": "drink water", "reward": {"title": "Hydrate", "cost": 100}});
+        let Some(Event::Message(m)) = to_event(
+            "channel.channel_points_custom_reward_redemption.add",
+            "",
+            &custom,
+            &Badges::new(),
+        ) else {
+            panic!("expected a message");
+        };
+        assert_eq!(m.kind, MessageKind::Event);
+        assert_eq!(m.plain_text(), "redeemed Hydrate: drink water");
+        assert_eq!(m.author.display_name, "Foo");
+        let auto = json!({"id": "r2", "user_name": "Bar", "reward": {"type": "send_highlighted_message"},
+            "message": {"text": "look at me"}});
+        let Some(Event::Message(m)) = to_event(
+            "channel.channel_points_automatic_reward_redemption.add",
+            "",
+            &auto,
+            &Badges::new(),
+        ) else {
+            panic!("expected a message");
+        };
+        assert_eq!(m.plain_text(), "redeemed Highlight My Message: look at me");
+
+        let auto_ad = json!({"duration_seconds": 90, "is_automatic": true});
+        assert_eq!(
+            ad_break("channel.ad_break.begin", &auto_ad),
+            Some((90, "automatic".into()))
+        );
+        let by = json!({"duration_seconds": "60", "is_automatic": false, "requester_user_login": "mod1"});
+        assert_eq!(
+            ad_break("channel.ad_break.begin", &by),
+            Some((60, "started by mod1".into()))
+        );
+        assert_eq!(ad_break("channel.chat.message", &by), None);
+    }
 
     #[test]
     fn notifications_read_as_one_line() {

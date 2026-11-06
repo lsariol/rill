@@ -32,7 +32,9 @@ folder; the benchmark scripts use `.dev\bench\data`.
   (`on` or `off`). Twitch also has `/announce <message>`, `/shoutout <user>` and `/poll`.
   `/set title <text>` (or `/title`) changes the stream title on Twitch, Kick and YouTube, and
   `/set category <name>` (or `/category`) the category on Twitch and Kick, picking the closest
-  match; both go to every platform that can, or only the destination when one is selected. With
+  match; both go to every platform that can, or only the destination when one is selected.
+  `/ad [length]` starts an ad break the same way (60 s by default; Twitch takes 30 s to 3 min,
+  Kick 7 to 90 s, and YouTube only on monetized channels). With
   "All platforms" selected, Rill asks which platform when more than one can do it.
   `/search <text>`, `/clear` and `/help` are Rill's own. Start a message with `//` to send a
   literal slash.
@@ -43,6 +45,10 @@ folder; the benchmark scripts use `.dev\bench\data`.
   platform name or ends with a duration. The broadcaster, moderators, VIPs and you are never
   included. Rill shows how many users each platform would hit and waits for Enter, then reports
   one summary line. `/unnuke` lifts the last nuke's bans and timeouts.
+- **Ads:** whenever an ad break starts, whether from `/ad`, from the platform's dashboard or
+  automatically, a line says so with its length, and another when it ends. Twitch reports every
+  break; Kick's are checked every 30 seconds; YouTube only reports the ones started from Rill.
+- **Channel points:** Twitch redemptions show as event lines, such as "Foo redeemed Hydrate".
 - **Replies:** Reply on a user card (or R on a message picked with the keyboard) answers that
   message on its platform (Twitch and Kick); the composer quotes it until you send or press Esc.
   Replies in chat show the message they answer.

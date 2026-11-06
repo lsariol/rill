@@ -149,6 +149,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         run: channel::category,
     },
     CommandSpec {
+        name: "ad",
+        aliases: &["ads", "commercial"],
+        usage: "/ad [length, e.g. 90s]",
+        summary: "Start an ad break everywhere you can (default 60s)",
+        needs: Some(Action::Ads),
+        run: channel::ad,
+    },
+    CommandSpec {
         name: "poll",
         aliases: &[],
         usage: "/poll",

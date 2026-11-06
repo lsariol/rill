@@ -466,6 +466,53 @@ impl Helix {
     }
 
     /// Subscribes an EventSub WebSocket session to one event type.
+    /// Starts an ad break (30 s to 3 min) on the broadcaster's channel.
+    pub async fn start_commercial(
+        &self,
+        broadcaster: &str,
+        seconds: u32,
+    ) -> Result<(), HelixError> {
+        let v = self
+            .call(
+                Method::POST,
+                "/channels/commercial",
+                &[],
+                Some(json!({"broadcaster_id": broadcaster, "length": seconds.clamp(30, 180)})),
+            )
+            .await?;
+        // Twitch says why it didn't run one (too soon after the last) in `message`.
+        match v["data"][0]["length"].as_u64() {
+            Some(0) | None => Err(HelixError::Api {
+                status: 400,
+                message: v["data"][0]["message"]
+                    .as_str()
+                    .filter(|m| !m.is_empty())
+                    .unwrap_or("the ad break didn't start")
+                    .to_string(),
+            }),
+            Some(_) => Ok(()),
+        }
+    }
+
+    /// Subscribes to a broadcaster-only event (ad breaks, redemptions).
+    pub async fn subscribe_broadcaster(
+        &self,
+        session_id: &str,
+        kind: &str,
+        version: &str,
+        broadcaster: &str,
+    ) -> Result<(), HelixError> {
+        let body = json!({
+            "type": kind,
+            "version": version,
+            "condition": {"broadcaster_user_id": broadcaster},
+            "transport": {"method": "websocket", "session_id": session_id},
+        });
+        self.call(Method::POST, "/eventsub/subscriptions", &[], Some(body))
+            .await
+            .map(|_| ())
+    }
+
     pub async fn subscribe(
         &self,
         session_id: &str,

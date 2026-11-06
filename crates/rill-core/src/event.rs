@@ -22,6 +22,8 @@ pub enum Action {
     Title,
     /// The stream's category (the game).
     Category,
+    /// Starting an ad break.
+    Ads,
 }
 
 impl Action {
@@ -44,6 +46,7 @@ impl Action {
             Action::Shoutout => "give shoutouts",
             Action::Title => "change the stream title",
             Action::Category => "change the stream category",
+            Action::Ads => "start ads",
         }
     }
 }
@@ -175,6 +178,10 @@ pub enum Command {
     SetCategory {
         name: String,
     },
+    /// An ad break of about this length; each platform rounds to what it allows.
+    StartAds {
+        seconds: u32,
+    },
     /// Start signing in (shows a code or opens the browser).
     SignIn,
     /// Forget the stored account and disconnect.
@@ -203,6 +210,7 @@ impl Command {
             Command::Shoutout { .. } => Action::Shoutout,
             Command::SetTitle { .. } => Action::Title,
             Command::SetCategory { .. } => Action::Category,
+            Command::StartAds { .. } => Action::Ads,
             Command::SignIn | Command::SignOut | Command::Join { .. } => return None,
         })
     }

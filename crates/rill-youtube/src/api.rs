@@ -193,6 +193,49 @@ impl Api {
             .find_map(|b| b["snippet"]["liveChatId"].as_str().map(str::to_string)))
     }
 
+    /// Inserts a mid-roll ad break into the live broadcast (monetized channels only).
+    pub async fn insert_ad(&self, seconds: u32) -> Result<(), ApiError> {
+        let id = self.active_broadcast().await?["id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        self.call(
+            Method::POST,
+            "/liveBroadcasts/cuepoint",
+            &[("id", id.as_str())],
+            Some(json!({"cueType": "cueTypeAd", "durationSecs": seconds})),
+            cost::WRITE,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// The live broadcast, or a "not live" error.
+    async fn active_broadcast(&self) -> Result<Value, ApiError> {
+        let v = self
+            .call(
+                Method::GET,
+                "/liveBroadcasts",
+                &[
+                    ("part", "snippet"),
+                    ("broadcastStatus", "active"),
+                    ("broadcastType", "all"),
+                ],
+                None,
+                cost::LIST_BROADCASTS,
+            )
+            .await?;
+        v["items"]
+            .as_array()
+            .and_then(|i| i.first())
+            .cloned()
+            .ok_or_else(|| ApiError::Api {
+                status: 404,
+                reason: "notLive".into(),
+                message: "you're not live".into(),
+            })
+    }
+
     /// Renames the live broadcast. YouTube replaces the whole snippet, so the rest is sent back.
     pub async fn set_title(&self, title: &str) -> Result<(), ApiError> {
         let v = self
