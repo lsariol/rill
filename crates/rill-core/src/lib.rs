@@ -14,8 +14,8 @@ pub mod session;
 pub use adapter::{Adapter, AdapterIo, Enrich, EventSink, Hub};
 pub use destination::Destination;
 pub use event::{
-    Account, Action, Capabilities, ChatMode, Command, ConnectionStatus, Event, Level, Request,
-    RequestId, SignInPrompt, UserRef,
+    Account, Action, Capabilities, ChatMode, Command, ConnectionStatus, EmoteOption, EmoteSource,
+    Event, Level, Request, RequestId, SignInPrompt, UserRef,
 };
 pub use feed::{Entry, Feed, Filter, Item};
 pub use message::{

@@ -337,8 +337,29 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
             platform: "twitch",
             ids: vec![id.channel.id.clone()],
         }),
+        Some(ctx.events.clone()),
     );
     ctx.events.set_enrich(Some(emotes.enrich()));
+    // The emotes this account can type, for the composer's `:` suggestions.
+    {
+        let (helix, events) = (helix.clone(), ctx.events.clone());
+        let (me, channel) = (id.me.id.clone(), id.channel.id.clone());
+        tokio::spawn(async move {
+            match helix.user_emotes(&me, &channel).await {
+                Ok(emotes) => {
+                    tracing::debug!(count = emotes.len(), "Twitch emotes loaded");
+                    events
+                        .send(Event::Emotes {
+                            platform: Platform::Twitch,
+                            source: rill_core::EmoteSource::Platform,
+                            emotes,
+                        })
+                        .await;
+                }
+                Err(e) => tracing::info!(err = %e.message(), "Twitch emotes not loaded"),
+            }
+        });
+    }
 
     let mut url = eventsub::URL.to_string();
     let mut fresh = true;

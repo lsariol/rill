@@ -118,7 +118,7 @@ async fn run(adapter: RumbleAdapter, io: AdapterIo) {
         persist: adapter.persist,
     };
     // 7TV's global emotes; Rumble has no channel sets.
-    let emotes = rill_emotes::follow(ctx.http.clone(), rill_emotes::Config::default(), None);
+    let emotes = rill_emotes::follow(ctx.http.clone(), rill_emotes::Config::default(), None, None);
     ctx.events.set_enrich(Some(emotes.enrich()));
     let mut link = adapter.link;
     loop {

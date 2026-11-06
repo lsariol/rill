@@ -281,6 +281,31 @@ pub enum Event {
         request: RequestId,
         result: Result<Option<String>, String>,
     },
+    /// Emotes the signed-in user can use on a platform, from one source; replaces that source's
+    /// last list.
+    Emotes {
+        platform: Platform,
+        source: EmoteSource,
+        emotes: Vec<EmoteOption>,
+    },
+}
+
+/// Where a platform's usable emotes come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum EmoteSource {
+    /// The platform's own emotes.
+    Platform,
+    /// 7TV, BetterTTV and FrankerFaceZ.
+    ThirdParty,
+}
+
+/// An emote the composer can offer: typing its name sends it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmoteOption {
+    pub name: String,
+    pub url: Option<String>,
+    /// Pixels at 1x, when known.
+    pub size: Option<(u16, u16)>,
 }
 
 impl fmt::Display for Action {

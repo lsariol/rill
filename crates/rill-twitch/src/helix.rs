@@ -466,6 +466,45 @@ impl Helix {
     }
 
     /// Subscribes an EventSub WebSocket session to one event type.
+    /// The emotes the user can use in `channel`: global, subscriptions, follower emotes and the
+    /// like. Pages through Twitch's list, up to a few thousand.
+    pub async fn user_emotes(
+        &self,
+        user: &str,
+        channel: &str,
+    ) -> Result<Vec<rill_core::EmoteOption>, HelixError> {
+        let mut out = Vec::new();
+        let mut after: Option<String> = None;
+        for _ in 0..20 {
+            let mut q = vec![("user_id", user), ("broadcaster_id", channel)];
+            if let Some(a) = after.as_deref() {
+                q.push(("after", a));
+            }
+            let v = self
+                .call(Method::GET, "/chat/emotes/user", &q, None)
+                .await?;
+            for e in v["data"].as_array().into_iter().flatten() {
+                let (id, name) = (s(&e["id"]), s(&e["name"]));
+                if id.is_empty() || name.is_empty() {
+                    continue;
+                }
+                out.push(rill_core::EmoteOption {
+                    url: Some(crate::eventsub::emote_url(&id)),
+                    name,
+                    size: None,
+                });
+            }
+            after = v["pagination"]["cursor"]
+                .as_str()
+                .filter(|c| !c.is_empty())
+                .map(str::to_string);
+            if after.is_none() {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
     /// Starts an ad break (30 s to 3 min) on the broadcaster's channel.
     pub async fn start_commercial(
         &self,

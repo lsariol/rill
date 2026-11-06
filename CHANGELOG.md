@@ -28,6 +28,7 @@ Rill's first release, in progress.
 - Connecting an account opens the sign-in page in the browser straight away; Accounts keeps Open page and Copy link for using another browser.
 - Rumble: read-only live chat, Rants, follows and subscriptions through Rumble's Live Stream API, connected by pasting the private link from Rumble's account settings; the link is kept in the system's credential store.
 - 7TV emotes: the channel's set on Twitch and Kick and 7TV's global set everywhere, animated, at their own sizes, with zero-width emotes drawn over the emote before them. Emotes the streamer adds, removes or renames update live. BetterTTV and FrankerFaceZ emotes too: the channel's sets on Twitch and their global sets everywhere.
+- Emote suggestions: typing `:` and the start of a name in the composer lists the emotes you can use on the platforms the message goes to (your Twitch emotes including subscriptions, Kick's, and 7TV, BetterTTV and FrankerFaceZ), and Tab or Enter fills one in. Kick emote names in sent messages show as emotes.
 - Ctrl+F (Cmd+F on macOS) searches the feed: only messages whose text or author matches stay visible, with a count. Esc closes the search.
 - Keyboard use: F6 moves between the composer and the messages; arrow keys pick a message and Enter opens its user card; Tab and Shift+Tab move between buttons; Esc closes a card and returns to the composer, and Esc then Tab leaves the composer.
 - Rill reopens at the size and place it was closed (kept in `window.json` beside `settings.json`), unless that spot is no longer on a screen.

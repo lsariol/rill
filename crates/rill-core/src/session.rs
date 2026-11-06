@@ -6,8 +6,8 @@ use crate::command::{self, Invocation, Parsed};
 use crate::event::SignInPrompt;
 use crate::feed::{Delivery, DeliveryState, Feed, Item, Notice, SentMessage};
 use crate::{
-    Account, Action, Capabilities, Command, ConnectionStatus, Destination, Event, Level, Platform,
-    Request, RequestId, UserRef,
+    Account, Action, Capabilities, Command, ConnectionStatus, Destination, EmoteOption,
+    EmoteSource, Event, Level, Platform, Request, RequestId, UserRef,
 };
 
 /// How many sent message IDs are remembered to hide the platform's echo of them.
@@ -100,6 +100,8 @@ pub struct Session {
     next_batch: u64,
     /// The users the last nuke hit, for `/unnuke`.
     pub(crate) last_nuke: Vec<(Platform, UserRef)>,
+    /// Emotes the user can use, by platform and source.
+    emotes: BTreeMap<(Platform, EmoteSource), Vec<EmoteOption>>,
 }
 
 impl Session {
@@ -186,6 +188,13 @@ impl Session {
                 request,
                 result,
             } => self.apply_done(platform, request, result, now_ms),
+            Event::Emotes {
+                platform,
+                source,
+                emotes,
+            } => {
+                self.emotes.insert((platform, source), emotes);
+            }
         }
     }
 
@@ -510,6 +519,42 @@ impl Session {
                 }])
             }
         }
+    }
+
+    /// Emotes whose names start with `prefix` (any case) on the destination's platforms: every
+    /// platform you can send to for All. A platform's own emotes come before 7TV's and the like,
+    /// then shorter names; each name once, with every platform it works on.
+    pub fn emote_choices(
+        &self,
+        destination: Destination,
+        prefix: &str,
+        limit: usize,
+    ) -> Vec<(Vec<Platform>, EmoteOption)> {
+        let prefix = prefix.to_lowercase();
+        let platforms = destination.targets(&self.sendable());
+        let mut found: Vec<(EmoteSource, Platform, &EmoteOption)> = self
+            .emotes
+            .iter()
+            .filter(|((p, _), _)| platforms.contains(p))
+            .flat_map(|((p, source), list)| list.iter().map(move |e| (*source, *p, e)))
+            .filter(|(_, _, e)| e.name.to_lowercase().starts_with(&prefix))
+            .collect();
+        found.sort_by(|a, b| {
+            (a.0, a.2.name.len(), &a.2.name).cmp(&(b.0, b.2.name.len(), &b.2.name))
+        });
+        let mut out: Vec<(Vec<Platform>, EmoteOption)> = Vec::new();
+        for (_, p, e) in found {
+            match out.iter().position(|(_, o)| o.name == e.name) {
+                Some(i) if !out[i].0.contains(&p) => out[i].0.push(p),
+                Some(_) => {}
+                None if out.len() < limit => out.push((vec![p], e.clone())),
+                None => {}
+            }
+        }
+        for (ps, _) in &mut out {
+            ps.sort();
+        }
+        out
     }
 
     /// Starts a confirmed batch.
@@ -843,6 +888,76 @@ mod tests {
         // Someone else saying the same thing is shown.
         s.apply(msg(Platform::Twitch, "t10", "other", "hi there"), 0);
         assert_eq!(s.feed.len(), 2);
+    }
+
+    #[test]
+    fn emote_choices_follow_the_destination() {
+        let mut s = Session::new(10);
+        connect(&mut s, Platform::Twitch, ALL_CAPS);
+        connect(&mut s, Platform::Kick, ALL_CAPS);
+        let e = |n: &str| EmoteOption {
+            name: n.into(),
+            url: None,
+            size: None,
+        };
+        let list = |platform, source, names: &[&str]| Event::Emotes {
+            platform,
+            source,
+            emotes: names.iter().map(|n| e(n)).collect(),
+        };
+        s.apply(
+            list(
+                Platform::Twitch,
+                EmoteSource::ThirdParty,
+                &["Smoked", "Smadge", "KEKW"],
+            ),
+            0,
+        );
+        s.apply(list(Platform::Twitch, EmoteSource::Platform, &["Smile"]), 0);
+        s.apply(
+            list(
+                Platform::Kick,
+                EmoteSource::Platform,
+                &["SmileKick", "Smile"],
+            ),
+            0,
+        );
+        fn names(s: &Session, d: Destination, p: &str) -> Vec<String> {
+            s.emote_choices(d, p, 10)
+                .into_iter()
+                .map(|(_, e)| e.name)
+                .collect()
+        }
+        assert_eq!(
+            names(&s, Destination::All, "s"),
+            ["Smile", "SmileKick", "Smadge", "Smoked"],
+            "own emotes first, shorter first, each name once"
+        );
+        assert_eq!(names(&s, Destination::All, "SMI"), ["Smile", "SmileKick"]);
+        assert_eq!(
+            names(&s, Destination::One(Platform::Twitch), "sm"),
+            ["Smile", "Smadge", "Smoked"]
+        );
+        assert_eq!(
+            names(&s, Destination::One(Platform::Kick), "sm"),
+            ["Smile", "SmileKick"]
+        );
+        assert!(names(&s, Destination::All, "zzz").is_empty());
+        let smile = s.emote_choices(Destination::All, "smile", 10);
+        assert_eq!(
+            smile[0].0,
+            [Platform::Twitch, Platform::Kick],
+            "every platform it works on"
+        );
+        // A new list from the same source replaces the old one.
+        s.apply(
+            list(Platform::Twitch, EmoteSource::ThirdParty, &["Smug"]),
+            0,
+        );
+        assert_eq!(
+            names(&s, Destination::One(Platform::Twitch), "sm"),
+            ["Smile", "Smug"]
+        );
     }
 
     #[test]
