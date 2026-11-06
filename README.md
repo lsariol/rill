@@ -63,9 +63,13 @@ folder; the benchmark scripts use `.dev\bench\data`.
   the platforms each works on; Tab or Enter picks one, Up and Down move, Esc closes the list. A
   `:` alone lists them all, the channel's own first; scroll with the mouse wheel, PgUp and PgDn. On
   Twitch this includes your subscription emotes from other channels. Without the `:`, Tab after
-  the start of a word puts in the emotes that start with it one at a time, alphabetically (`s`,
-  then `sadge`, `smash`, `smile`), and Shift+Tab goes back; with no match, Tab switches the
-  destination as usual.
+  the start of a word puts in the emotes and names that start with it one at a time,
+  alphabetically (`s`, then `sadge`, `smash`, `smile`), and Shift+Tab goes back; with no match,
+  Tab switches the destination as usual.
+- **Mentions:** type `@` and the start of a name for a list of the people who have chatted since
+  Rill started, alphabetically: on the destination's platform, or on every platform for All, with
+  the platforms each was seen on. Tab or Enter fills in `@name`. Tab completion on a plain word
+  includes these names too, so `moba` then Tab gives `mobasity`.
 - **Header:** click a platform icon to hide or show its messages (or to connect it), `@` for
   mentions only, `≡` for compact mode. Narrow windows go compact by themselves.
 - **Accounts:** connect and disconnect platforms. Connect opens the platform's sign-in page in the
