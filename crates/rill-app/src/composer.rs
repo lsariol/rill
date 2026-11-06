@@ -221,6 +221,11 @@ impl ChatView {
                 self.panel = Panel::Confirm { prompt, batch };
                 true
             }
+            Submitted::Search(text) => {
+                let text = (!text.trim().is_empty()).then_some(text);
+                self.open_search(text, window, cx);
+                true
+            }
         };
         self.sync_list();
         cx.notify();

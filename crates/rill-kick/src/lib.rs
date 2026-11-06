@@ -383,10 +383,16 @@ async fn perform(
     events: &EventSink,
     command: Command,
 ) -> Result<Option<String>, String> {
-    if let Command::Poll { .. } = command {
-        return Err(
-            "Kick: polls can't be started through Kick's API. Start them on kick.com.".into(),
-        );
+    match command {
+        Command::Poll { .. } => {
+            return Err(
+                "Kick: polls can't be started through Kick's API. Start them on kick.com.".into(),
+            );
+        }
+        Command::SetMode { .. } | Command::Announce { .. } | Command::Shoutout { .. } => {
+            return Err("Kick: chat modes, announcements and shoutouts aren't in Kick's API yet. Use kick.com.".into());
+        }
+        _ => {}
     }
     let (signed, broadcaster) = {
         let s = shared.lock();

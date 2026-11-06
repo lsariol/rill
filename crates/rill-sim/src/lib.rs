@@ -58,7 +58,9 @@ impl SimAdapter {
     pub fn capabilities(platform: Platform) -> Capabilities {
         use Action::*;
         match platform {
-            Platform::Twitch => Capabilities::of(&[Send, Reply, Delete, Timeout, Ban, Unban, Poll]),
+            Platform::Twitch => Capabilities::of(&[
+                Send, Reply, Delete, Timeout, Ban, Unban, Poll, ChatMode, Announce, Shoutout,
+            ]),
             Platform::YouTube | Platform::Kick => {
                 Capabilities::of(&[Send, Delete, Timeout, Ban, Unban])
             }
@@ -434,7 +436,18 @@ fn handle(sim: &mut Sim, events: &EventSink, req: Request) {
                     None => Err(format!("{platform}: no user named \"{}\".", user.login)),
                 }
             }
-            Command::Unban { .. } | Command::SignIn | Command::SignOut | Command::Join { .. } => {
+            Command::Unban { .. }
+            | Command::SignIn
+            | Command::SignOut
+            | Command::Join { .. }
+            | Command::SetMode { .. }
+            | Command::Shoutout { .. } => Ok(None),
+            Command::Announce { text } => {
+                follow_up.push(Event::Notice {
+                    platform,
+                    level: rill_core::Level::Info,
+                    text: format!("Announcement: {text}"),
+                });
                 Ok(None)
             }
             Command::Poll { title, .. } => {

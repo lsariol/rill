@@ -27,6 +27,31 @@ pub fn init(cx: &mut App) {
 impl ChatView {
     /// Opens the search bar, or selects its text when it's already open.
     pub(crate) fn on_find(&mut self, _: &Find, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_search(None, window, cx);
+    }
+
+    /// Opens the search bar (with `text`, from `/search`), or selects its text when it's open.
+    pub(crate) fn open_search(
+        &mut self,
+        text: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(text) = &text {
+            if self.search.is_none() {
+                self.open_search(None, window, cx);
+            }
+            if let Some(search) = &self.search {
+                // Setting the value fires a change, which applies the filter.
+                search
+                    .input
+                    .update(cx, |s, cx| s.set_value(text.clone(), window, cx));
+            }
+            let mut filter = self.session.feed.filter().clone();
+            filter.search_for(text);
+            self.set_filter(filter, cx);
+            return;
+        }
         if let Some(search) = &self.search {
             search.input.update(cx, |s, cx| {
                 s.focus(window, cx);

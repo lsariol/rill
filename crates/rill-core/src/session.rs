@@ -58,6 +58,8 @@ pub enum Submitted {
     Rejected(String),
     /// Ask before running a batch (such as a nuke).
     Confirm { prompt: String, batch: Batch },
+    /// Open the search bar with this text.
+    Search(String),
 }
 
 /// Many requests that run after one confirmation and report back as one notice.
@@ -405,6 +407,10 @@ impl Session {
                     .collect();
                 if choices.is_empty() {
                     return Submitted::Rejected(format!("No connected platform can {action}."));
+                }
+                // Nothing to choose: run it where it can run.
+                if let [only] = choices[..] {
+                    return self.execute(only, plan);
                 }
                 let prompt = match &plan {
                     Plan::Run { label, .. } => format!("{label} on which platform?"),

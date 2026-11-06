@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use reqwest::Method;
+use rill_core::ChatMode;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -140,12 +141,25 @@ impl Helix {
             })?;
             let status = res.status().as_u16();
             match status {
-                401 if !refreshed => {
+                401 => {
+                    let body: Value = res.json().await.unwrap_or(Value::Null);
+                    let message = body["message"].as_str().unwrap_or_default();
+                    // An older sign-in without a newer scope: refreshing won't add it.
+                    if message.to_lowercase().contains("scope") {
+                        return Err(HelixError::Api {
+                            status: 401,
+                            message: format!(
+                                "this sign-in can't do that yet ({message}). Open Accounts, disconnect Twitch and connect it again"
+                            ),
+                        });
+                    }
+                    if refreshed {
+                        return Err(HelixError::Unauthorized);
+                    }
                     refreshed = true;
                     self.refresh(&access).await?;
                     continue;
                 }
-                401 => return Err(HelixError::Unauthorized),
                 429 => {
                     let reset = res
                         .headers()
@@ -301,6 +315,67 @@ impl Helix {
                 ("broadcaster_id", broadcaster),
                 ("moderator_id", moderator),
                 ("user_id", user_id),
+            ],
+            None,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Turns one chat mode on or off.
+    pub async fn chat_settings(
+        &self,
+        broadcaster: &str,
+        moderator: &str,
+        mode: ChatMode,
+    ) -> Result<(), HelixError> {
+        let body = match mode {
+            ChatMode::Slow(Some(secs)) => {
+                json!({"slow_mode": true, "slow_mode_wait_time": secs.clamp(3, 120)})
+            }
+            ChatMode::Slow(None) => json!({"slow_mode": false}),
+            ChatMode::Followers(Some(minutes)) => {
+                json!({"follower_mode": true, "follower_mode_duration": minutes.min(129_600)})
+            }
+            ChatMode::Followers(None) => json!({"follower_mode": false}),
+            ChatMode::Subscribers(on) => json!({"subscriber_mode": on}),
+            ChatMode::EmoteOnly(on) => json!({"emote_mode": on}),
+            ChatMode::UniqueChat(on) => json!({"unique_chat_mode": on}),
+        };
+        self.call(
+            Method::PATCH,
+            "/chat/settings",
+            &[("broadcaster_id", broadcaster), ("moderator_id", moderator)],
+            Some(body),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn announce(
+        &self,
+        broadcaster: &str,
+        moderator: &str,
+        text: &str,
+    ) -> Result<(), HelixError> {
+        self.call(
+            Method::POST,
+            "/chat/announcements",
+            &[("broadcaster_id", broadcaster), ("moderator_id", moderator)],
+            Some(json!({"message": text, "color": "primary"})),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn shoutout(&self, from: &str, to: &str, moderator: &str) -> Result<(), HelixError> {
+        self.call(
+            Method::POST,
+            "/chat/shoutouts",
+            &[
+                ("from_broadcaster_id", from),
+                ("to_broadcaster_id", to),
+                ("moderator_id", moderator),
             ],
             None,
         )

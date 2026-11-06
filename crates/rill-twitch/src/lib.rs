@@ -33,6 +33,9 @@ const BROADCASTER: Capabilities = Capabilities::of(&[
     Action::Ban,
     Action::Unban,
     Action::Poll,
+    Action::ChatMode,
+    Action::Announce,
+    Action::Shoutout,
 ]);
 const MODERATOR: Capabilities = Capabilities::of(&[
     Action::Send,
@@ -41,6 +44,9 @@ const MODERATOR: Capabilities = Capabilities::of(&[
     Action::Timeout,
     Action::Ban,
     Action::Unban,
+    Action::ChatMode,
+    Action::Announce,
+    Action::Shoutout,
 ]);
 const VIEWER: Capabilities = Capabilities::of(&[Action::Send, Action::Reply]);
 
@@ -101,6 +107,8 @@ struct Identity {
     channel: User,
     caps: Capabilities,
     badges: Badges,
+    /// Scopes Rill asks for that this sign-in predates.
+    missing: Vec<String>,
 }
 
 async fn run(adapter: TwitchAdapter, io: AdapterIo) {
@@ -309,6 +317,15 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
         display_name: id.me.display_name.clone(),
     };
     tracing::info!(channel = %id.channel.login, "Twitch signed in");
+    if !id.missing.is_empty() {
+        tracing::info!(missing = %id.missing.join(" "), "Twitch sign-in lacks newer scopes");
+        ctx.events
+            .notice(
+                Level::Warn,
+                "Twitch: this sign-in is from an older Rill. To use /slow, /announce, /shoutout and the other new commands, open Accounts, disconnect Twitch and connect it again.",
+            )
+            .await;
+    }
     // The channel's 7TV emotes, kept current for as long as this session runs.
     let emotes = rill_emotes::follow(
         ctx.http.clone(),
@@ -428,11 +445,17 @@ async fn identify(
         tracing::warn!(err = %e.message(), "Twitch badges not loaded");
         Badges::new()
     });
+    let missing = auth::SCOPES
+        .split_whitespace()
+        .filter(|s| !validated.scopes.iter().any(|have| have == s))
+        .map(str::to_string)
+        .collect();
     Ok(Identity {
         me,
         channel,
         caps,
         badges,
+        missing,
     })
 }
 
@@ -552,6 +575,19 @@ async fn run_request(
                 helix
                     .create_poll(channel, &title, &choices, seconds)
                     .await?;
+                None
+            }
+            Command::SetMode { mode } => {
+                helix.chat_settings(channel, me, mode).await?;
+                None
+            }
+            Command::Announce { text } => {
+                helix.announce(channel, me, &text).await?;
+                None
+            }
+            Command::Shoutout { user } => {
+                let id = resolve(helix, &user).await?;
+                helix.shoutout(channel, &id, me).await?;
                 None
             }
             Command::SignIn | Command::SignOut | Command::Join { .. } => None,
@@ -845,6 +881,7 @@ mod sessions {
             channel: user("200", "somechannel"),
             caps: MODERATOR,
             badges: Badges::new(),
+            missing: Vec::new(),
         }
     }
 
@@ -1010,6 +1047,85 @@ mod sessions {
             e,
             Event::Notice { text, .. } if text.contains("authorization_revoked")
         )));
+    }
+
+    #[tokio::test]
+    async fn chat_modes_announcements_and_shoutouts_reach_helix() {
+        let (helix_url, seen) = helix_server().await;
+        let (_ctx, helix, _rx, _tx) = setup(&helix_url);
+        helix
+            .chat_settings("200", "100", rill_core::ChatMode::Slow(Some(500)))
+            .await
+            .unwrap();
+        helix
+            .chat_settings("200", "100", rill_core::ChatMode::Followers(None))
+            .await
+            .unwrap();
+        helix.announce("200", "100", "hi all").await.unwrap();
+        helix.shoutout("200", "300", "100").await.unwrap();
+        let seen = seen.lock().unwrap().clone();
+        let q = "broadcaster_id=200&moderator_id=100";
+        assert_eq!(
+            seen,
+            [
+                (
+                    "PATCH".to_string(),
+                    format!("/chat/settings?{q}"),
+                    json!({"slow_mode": true, "slow_mode_wait_time": 120})
+                ),
+                (
+                    "PATCH".to_string(),
+                    format!("/chat/settings?{q}"),
+                    json!({"follower_mode": false})
+                ),
+                (
+                    "POST".to_string(),
+                    format!("/chat/announcements?{q}"),
+                    json!({"message": "hi all", "color": "primary"})
+                ),
+                (
+                    "POST".to_string(),
+                    "/chat/shoutouts?from_broadcaster_id=200&to_broadcaster_id=300&moderator_id=100"
+                        .to_string(),
+                    Value::Null
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_scope_says_to_reconnect_instead_of_expiring() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = listener.accept().await.unwrap();
+                let mut buf = [0; 4096];
+                let _ = s.read(&mut buf).await;
+                let body = r#"{"error":"Unauthorized","status":401,"message":"Missing scope: moderator:manage:chat_settings"}"#;
+                let res = format!(
+                    "HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+Content-Length: {}
+Connection: close
+
+{body}",
+                    body.len()
+                );
+                let _ = s.write_all(res.as_bytes()).await;
+            }
+        });
+        let (_ctx, helix, _rx, _tx) = setup(&format!("http://{addr}"));
+        let err = helix
+            .chat_settings("200", "100", rill_core::ChatMode::EmoteOnly(true))
+            .await
+            .unwrap_err();
+        assert!(!matches!(err, HelixError::Unauthorized), "{err:?}");
+        assert!(
+            err.message().contains("connect it again"),
+            "{}",
+            err.message()
+        );
     }
 
     #[tokio::test]

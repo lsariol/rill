@@ -14,6 +14,10 @@ pub enum Action {
     Ban,
     Unban,
     Poll,
+    /// Slow, followers-only, subscribers-only, emote-only and unique chat.
+    ChatMode,
+    Announce,
+    Shoutout,
 }
 
 impl Action {
@@ -31,6 +35,9 @@ impl Action {
             Action::Ban => "ban users",
             Action::Unban => "unban users",
             Action::Poll => "run polls",
+            Action::ChatMode => "change chat modes",
+            Action::Announce => "post announcements",
+            Action::Shoutout => "give shoutouts",
         }
     }
 }
@@ -106,6 +113,19 @@ pub struct UserRef {
     pub login: String,
 }
 
+/// A chat restriction, turned on or off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatMode {
+    /// Seconds between one user's messages; `None` turns slow mode off.
+    Slow(Option<u32>),
+    /// Minutes someone must have followed to chat; `None` turns it off.
+    Followers(Option<u32>),
+    Subscribers(bool),
+    EmoteOnly(bool),
+    /// No repeated messages.
+    UniqueChat(bool),
+}
+
 /// Something the core asks an adapter to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -133,6 +153,15 @@ pub enum Command {
         choices: Vec<String>,
         seconds: u32,
     },
+    SetMode {
+        mode: ChatMode,
+    },
+    Announce {
+        text: String,
+    },
+    Shoutout {
+        user: UserRef,
+    },
     /// Start signing in (shows a code or opens the browser).
     SignIn,
     /// Forget the stored account and disconnect.
@@ -156,6 +185,9 @@ impl Command {
             Command::Ban { .. } => Action::Ban,
             Command::Unban { .. } => Action::Unban,
             Command::Poll { .. } => Action::Poll,
+            Command::SetMode { .. } => Action::ChatMode,
+            Command::Announce { .. } => Action::Announce,
+            Command::Shoutout { .. } => Action::Shoutout,
             Command::SignIn | Command::SignOut | Command::Join { .. } => return None,
         })
     }

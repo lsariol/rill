@@ -170,7 +170,7 @@ mod tests {
         assert!(completions("hi").is_empty());
         assert!(completions("//").is_empty());
         let names: Vec<_> = completions("/un").iter().map(|c| c.name).collect();
-        assert_eq!(names, ["unban", "unnuke"]);
+        assert_eq!(names, ["unban", "unnuke", "uniquechat"]);
     }
 
     #[test]

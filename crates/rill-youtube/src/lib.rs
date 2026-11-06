@@ -548,6 +548,9 @@ async fn run_request(api: &Api, live: &Live, command: Command) -> Result<Option<
                     .into(),
             );
         }
+        Command::SetMode { .. } | Command::Announce { .. } | Command::Shoutout { .. } => {
+            return Err("YouTube: chat modes, announcements and shoutouts aren't in YouTube's API. Use YouTube Studio.".into());
+        }
         Command::SignIn | Command::SignOut | Command::Join { .. } => Ok(None),
     };
     result.map_err(|e| match e {

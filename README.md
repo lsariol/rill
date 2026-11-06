@@ -25,9 +25,13 @@ go to Windows Credential Manager under `rill-dev`. Release builds use `%LOCALAPP
 - **Composer:** Enter sends, Shift+Enter starts a new line. Tab and Shift+Tab switch the
   destination: all platforms (rainbow outline) or one platform (its color); the label above says
   which.
-- **Commands:** type `/` for the list. `/ban`, `/timeout`, `/unban` and `/poll` run on a platform's
-  API; with "All platforms" selected Rill asks which platform. `/clear` and `/help` are Rill's own.
-  Start a message with `//` to send a literal slash.
+- **Commands:** type `/` for the list, or `/help`. Moderation: `/ban`, `/timeout`, `/unban`, and
+  `/purge <user>` to clear someone's messages with a one-second timeout. Twitch chat modes:
+  `/slow [3s-2m|off]`, `/followers [10m|off]`, `/subscribers`, `/emoteonly` and `/uniquechat`
+  (`on` or `off`). Twitch also has `/announce <message>`, `/shoutout <user>` and `/poll`. With
+  "All platforms" selected, Rill asks which platform when more than one can do it.
+  `/search <text>`, `/clear` and `/help` are Rill's own. Start a message with `//` to send a
+  literal slash.
 - **Nukes:** for bot raids and spam waves. `/nuke <phrase>` times out everyone who said the phrase
   in the last 5 minutes for 24 hours; `/nuke haha 48h` sets the timeout, and `/nuke haha 48h 15m`
   also looks back 15 minutes. `/meganuke <phrase> [lookback]` bans instead. Put a platform first
