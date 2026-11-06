@@ -268,11 +268,24 @@ impl Sim {
         if self.recent.len() > 50 {
             self.recent.pop_front();
         }
-        let kind = if self.rng.unit() < 0.01 {
+        let roll = self.rng.unit();
+        let kind = if roll < 0.01 {
             MessageKind::Action
+        } else if roll < 0.025 {
+            MessageKind::Event
         } else {
             MessageKind::Chat
         };
+        // Now and then a channel event, as the platforms send them.
+        if kind == MessageKind::Event {
+            let n = 1 + self.rng.below(24);
+            let what = match self.rng.below(3) {
+                0 => format!("subscribed for {n} months!"),
+                1 => format!("gifted {n} subs to the community!"),
+                _ => format!("is raiding with {} viewers!", n * 17),
+            };
+            fragments = vec![Fragment::Text(what)];
+        }
         ChatMessage {
             platform: self.platform,
             id,

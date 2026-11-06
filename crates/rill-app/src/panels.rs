@@ -487,15 +487,13 @@ impl ChatView {
                 )
                 .into_any_element(),
         };
-        div()
-            .mx_3()
-            .mb_1()
+        // A tall panel (Settings) scrolls, with a scroll bar, rather than pushing the chat off
+        // the window. It grows with its content up to 70% of the window.
+        let max = window.viewport_size().height * 0.7;
+        let content = div()
             .p_3()
-            .rounded_md()
-            .bg(rgb(style::PANEL))
-            .border_1()
-            .border_color(rgb(style::BORDER))
             .flex()
+            .items_start()
             .gap_2()
             .child(div().flex_1().min_w_0().child(body))
             .child(
@@ -505,6 +503,26 @@ impl ChatView {
                     .label("✕")
                     .tooltip("Close (Esc)")
                     .on_click(cx.listener(|view, _, window, cx| view.close_panel(window, cx))),
+            );
+        div()
+            .relative()
+            .mx_3()
+            .mb_1()
+            .rounded_md()
+            .bg(rgb(style::PANEL))
+            .border_1()
+            .border_color(rgb(style::BORDER))
+            .child(
+                div()
+                    .id("panel")
+                    .max_h(max)
+                    .overflow_y_scroll()
+                    .track_scroll(&self.panel_scroll)
+                    .child(content),
+            )
+            .child(
+                gpui_component::scroll::Scrollbar::vertical(&self.panel_scroll)
+                    .mode(gpui_component::scroll::ScrollbarMode::Always),
             )
             .into_any_element()
     }
@@ -919,6 +937,108 @@ impl ChatView {
                     ),
             )
             .child(self.render_history_choice(cx))
+            .child(self.render_highlight_settings(cx))
+            .into_any_element()
+    }
+
+    /// Highlights: mentions and events, each on or off with its color, and the scroll bar marks.
+    fn render_highlight_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        let h = &self.highlights;
+        let row = |id: &'static str,
+                   title: &'static str,
+                   what: &'static str,
+                   on: bool,
+                   color: Option<String>,
+                   cx: &mut Context<Self>| {
+            let swatches = color.map(|current| {
+                let current = style::parse_hex(&current);
+                div()
+                    .flex()
+                    .gap_1()
+                    .children(style::HIGHLIGHT_COLORS.iter().map(|&c| {
+                        let picked = current == Some(c);
+                        div()
+                            .id(SharedString::from(format!("{id}-{c:06x}")))
+                            .size(px(16.))
+                            .rounded_full()
+                            .cursor_pointer()
+                            .bg(rgb(c))
+                            .border_2()
+                            .border_color(rgb(if picked { 0xffffff } else { style::PANEL }))
+                            .on_click(cx.listener(move |view, _, _, cx| {
+                                let hex = style::to_hex(c);
+                                view.set_highlights(
+                                    |h| match id {
+                                        "mentions" => h.mention_color = hex.clone(),
+                                        _ => h.event_color = hex.clone(),
+                                    },
+                                    cx,
+                                );
+                            }))
+                    }))
+            });
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(title)
+                        .child(div().text_xs().text_color(rgb(style::FAINT)).child(what))
+                        .children(swatches),
+                )
+                .child(
+                    Switch::new(SharedString::from(format!("highlight-{id}")))
+                        .small()
+                        .checked(on)
+                        .accessibility_label(title)
+                        .on_click(cx.listener(move |view, on: &bool, _, cx| {
+                            let on = *on;
+                            view.set_highlights(
+                                |h| match id {
+                                    "mentions" => h.mentions = on,
+                                    "events" => h.events = on,
+                                    _ => h.scrollbar_marks = on,
+                                },
+                                cx,
+                            );
+                        })),
+                )
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().pt_2().font_bold().text_sm().child("Highlights"))
+            .child(row(
+                "mentions",
+                "Mentions of you",
+                "Messages that name you stand out in this color.",
+                h.mentions,
+                Some(h.mention_color.clone()),
+                cx,
+            ))
+            .child(row(
+                "events",
+                "Events",
+                "Subscriptions, gifted subs, raids, Rants, redemptions and ad breaks.",
+                h.events,
+                Some(h.event_color.clone()),
+                cx,
+            ))
+            .child(row(
+                "marks",
+                "Marks on the scroll bar",
+                "Shows where highlighted lines are along the right edge; click one to go there.",
+                h.scrollbar_marks,
+                None,
+                cx,
+            ))
             .into_any_element()
     }
 

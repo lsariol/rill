@@ -18,6 +18,7 @@ pub struct Settings {
     pub link_previews: bool,
     /// How many chat lines Rill keeps for scrolling back, searching and user cards.
     pub message_history: usize,
+    pub highlights: Highlights,
     pub twitch: TwitchSettings,
     pub youtube: YouTubeSettings,
     pub kick: KickSettings,
@@ -30,6 +31,7 @@ impl Default for Settings {
             show_deleted_messages: false,
             link_previews: true,
             message_history: 5_000,
+            highlights: Highlights::default(),
             twitch: TwitchSettings::default(),
             youtube: YouTubeSettings::default(),
             kick: KickSettings::default(),
@@ -54,6 +56,33 @@ pub struct YouTubeSettings {
     pub client_secret: Option<String>,
     /// The shortest wait between chat polls, in milliseconds (default 5000). Longer saves quota.
     pub min_poll_ms: Option<u64>,
+}
+
+/// Which lines stand out with a colored background and bar, and get a mark on the scroll bar.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Highlights {
+    /// Messages that mention you.
+    pub mentions: bool,
+    /// As `#rrggbb`.
+    pub mention_color: String,
+    /// Subscriptions, gifts, raids, Rants, redemptions and ad breaks.
+    pub events: bool,
+    pub event_color: String,
+    /// Marks on the scroll bar where highlighted lines are.
+    pub scrollbar_marks: bool,
+}
+
+impl Default for Highlights {
+    fn default() -> Self {
+        Highlights {
+            mentions: true,
+            mention_color: "#f23f43".into(),
+            events: true,
+            event_color: "#a970ff".into(),
+            scrollbar_marks: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -124,5 +153,6 @@ mod tests {
         assert!(!s.show_deleted_messages);
         assert!(s.link_previews, "previews are on unless turned off");
         assert_eq!(s.message_history, 5_000);
+        assert!(s.highlights.mentions && s.highlights.events && s.highlights.scrollbar_marks);
     }
 }

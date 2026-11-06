@@ -11,7 +11,6 @@ pub const TEXT: u32 = 0xdcddde;
 pub const MUTED: u32 = 0x949ba4;
 pub const FAINT: u32 = 0x6d7178;
 pub const LINK: u32 = 0x00a8fc;
-pub const MENTION_BG: u32 = 0x4a2226;
 pub const MENTION_BAR: u32 = 0xf23f43;
 pub const OK: u32 = 0x23a55a;
 pub const WARN: u32 = 0xf0b232;
@@ -53,7 +52,26 @@ pub fn level_color(level: Level) -> Rgba {
         Level::Info => MUTED,
         Level::Warn => WARN,
         Level::Error => ERROR,
+        Level::Event => TEXT,
     })
+}
+
+/// Highlight colors to choose from in Settings.
+pub const HIGHLIGHT_COLORS: [u32; 8] = [
+    0xf23f43, 0xf0883e, 0xf0b232, 0x23a55a, 0x1abc9c, 0x4da6ff, 0xa970ff, 0xe05bb5,
+];
+
+/// Reads `#rrggbb` (or `rrggbb`).
+pub fn parse_hex(s: &str) -> Option<u32> {
+    let hex = s.trim().trim_start_matches('#');
+    (hex.len() == 6)
+        .then(|| u32::from_str_radix(hex, 16).ok())
+        .flatten()
+}
+
+/// Writes a color as `#rrggbb`.
+pub fn to_hex(color: u32) -> String {
+    format!("#{color:06x}")
 }
 
 /// A color from a hex value.

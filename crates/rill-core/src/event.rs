@@ -244,6 +244,8 @@ pub enum Level {
     Info,
     Warn,
     Error,
+    /// A channel event told as a notice, such as an ad break.
+    Event,
 }
 
 /// Something an adapter reports.

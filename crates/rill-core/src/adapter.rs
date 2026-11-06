@@ -124,14 +124,14 @@ impl EventSink {
         let length = crate::command::format_duration(seconds.max(1));
         let platform = self.platform;
         self.notice(
-            Level::Info,
+            Level::Event,
             format!("Ads started on {platform}: {length} ({why})"),
         )
         .await;
         let sink = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(u64::from(seconds))).await;
-            sink.notice(Level::Info, format!("Ads finished on {platform}"))
+            sink.notice(Level::Event, format!("Ads finished on {platform}"))
                 .await;
         });
     }

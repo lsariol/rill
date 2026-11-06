@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
-use crate::{ChatMessage, Fragment, Level, Platform};
+use crate::{ChatMessage, Fragment, Level, MessageKind, Platform};
 
 /// The default number of entries kept.
 pub const DEFAULT_CAPACITY: usize = 5_000;
@@ -18,6 +18,26 @@ pub struct Entry {
     /// Mentions the signed-in user.
     pub highlighted: bool,
     pub deleted: bool,
+}
+
+impl Entry {
+    /// A channel event: a subscription, gift, raid, Rant, redemption or ad break.
+    pub fn is_event(&self) -> bool {
+        match &self.item {
+            Item::Chat(m) => m.kind == MessageKind::Event,
+            Item::Notice(n) => n.level == Level::Event,
+            Item::Sent(_) => false,
+        }
+    }
+}
+
+/// A line marked on the scroll bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mark {
+    /// Its place among the visible lines.
+    pub ix: usize,
+    /// Mentions you (otherwise it's an event).
+    pub mention: bool,
 }
 
 /// What a feed line holds.
@@ -139,6 +159,8 @@ pub struct Feed {
     changes: Changes,
     /// Visible entries the UI knew about at the last take, not yet evicted.
     known: usize,
+    /// Seqs of entries that mention you or are events, oldest first, for scroll bar marks.
+    flagged: VecDeque<u64>,
 }
 
 impl Default for Feed {
@@ -159,6 +181,7 @@ impl Feed {
             own_names: HashMap::new(),
             changes: Changes::default(),
             known: 0,
+            flagged: VecDeque::new(),
         }
     }
 
@@ -183,6 +206,9 @@ impl Feed {
             self.visible.push_back(seq);
             self.changes.appended += 1;
         }
+        if entry.highlighted || entry.is_event() {
+            self.flagged.push_back(seq);
+        }
         self.entries.push_back(entry);
         self.evict();
         seq
@@ -199,9 +225,26 @@ impl Feed {
         self.evict();
     }
 
+    /// Visible lines that mention you or are events, oldest first.
+    pub fn marks(&self) -> Vec<Mark> {
+        self.flagged
+            .iter()
+            .filter_map(|&seq| {
+                let ix = self.visible_index(seq)?;
+                let mention = self.get(seq)?.highlighted;
+                Some(Mark { ix, mention })
+            })
+            .collect()
+    }
+
     /// Drops the oldest entries past capacity.
     fn evict(&mut self) {
         while self.entries.len() > self.capacity {
+            if let Some(front) = self.entries.front().map(|e| e.seq) {
+                while self.flagged.front().is_some_and(|&s| s <= front) {
+                    self.flagged.pop_front();
+                }
+            }
             let old = self.entries.pop_front().map(|e| e.seq);
             if old.is_some() && self.visible.front().copied() == old {
                 self.visible.pop_front();
@@ -278,6 +321,7 @@ impl Feed {
     /// Removes every entry (the local `/clear`).
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.flagged.clear();
         self.rebuild();
     }
 
@@ -395,6 +439,54 @@ mod tests {
             sent_at_ms: 0,
             reply_to: None,
         })
+    }
+
+    #[test]
+    fn marks_mentions_and_events_by_visible_place() {
+        let mut f = Feed::new(4);
+        f.set_own_name(Platform::Twitch, "me");
+        f.push(chat(Platform::Twitch, "1", "a", "hi @me"), 0);
+        f.push(chat(Platform::Twitch, "2", "a", "hi"), 0);
+        let mut sub = chat(Platform::Kick, "3", "b", "subscribed");
+        if let Item::Chat(m) = &mut sub {
+            m.kind = MessageKind::Event;
+        }
+        f.push(sub, 0);
+        f.push(
+            Item::Notice(Notice {
+                platform: Some(Platform::Twitch),
+                level: Level::Event,
+                text: "Ads started".into(),
+            }),
+            0,
+        );
+        assert_eq!(
+            f.marks(),
+            [
+                Mark {
+                    ix: 0,
+                    mention: true
+                },
+                Mark {
+                    ix: 2,
+                    mention: false
+                },
+                Mark {
+                    ix: 3,
+                    mention: false
+                },
+            ]
+        );
+        // Hidden platforms' marks go with them; evicted lines' marks too.
+        let mut filter = f.filter().clone();
+        filter.hidden.insert(Platform::Kick);
+        f.set_filter(filter);
+        assert_eq!(f.marks().len(), 2);
+        f.push(chat(Platform::Twitch, "5", "a", "hi"), 0);
+        assert!(
+            f.marks().iter().all(|m| !m.mention),
+            "the mention was evicted"
+        );
     }
 
     #[test]
