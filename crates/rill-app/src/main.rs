@@ -2,6 +2,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod assets;
+mod chat_text;
 mod chat_view;
 mod composer;
 mod focus;
@@ -9,6 +10,7 @@ mod image_cache;
 mod navigate;
 mod panels;
 mod platforms;
+mod preview;
 mod row;
 mod search;
 mod style;

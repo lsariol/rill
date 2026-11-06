@@ -54,8 +54,15 @@ folder; the benchmark scripts use `.dev\bench\data`.
 - **Replies:** Reply on a user card (or R on a message picked with the keyboard) answers that
   message on its platform (Twitch and Kick); the composer quotes it until you send or press Esc.
   Replies in chat show the message they answer.
-- **Moderation:** click a message to open the user card: delete, timeouts, ban and unban, showing
-  only what that platform allows, and the user's last five messages this session.
+- **Moderation:** click a name to open the user card, which floats over the chat beside the
+  message while chat keeps moving: delete, timeouts, ban and unban, showing only what that
+  platform allows, and every message from that user still in the chat.
+- **Copying:** drag across messages to select them and press Ctrl+C. Emotes copy as their names,
+  and each message is a line of its own.
+- **Links:** links open in the default browser. Hovering one shows the page's title, description
+  and picture; **Link previews** in Settings turns that off (`link_previews`), and hovering then
+  shows only the address. Rill fetches a preview only for the link you're hovering, and never for
+  addresses on your computer or local network.
 - **Emotes:** platform emotes, plus 7TV, BetterTTV and FrankerFaceZ. The channel's 7TV set loads on
   Twitch and Kick (changes show up without a restart), its BetterTTV and FrankerFaceZ sets on
   Twitch, and the three services' global emotes everywhere. In the composer, type `:` and the

@@ -16,6 +16,8 @@ pub const MENTION_BAR: u32 = 0xf23f43;
 pub const OK: u32 = 0x23a55a;
 pub const WARN: u32 = 0xf0b232;
 pub const ERROR: u32 = 0xf23f43;
+/// Selected text's background, drawn see-through.
+pub const SELECTION: u32 = 0x3d7eff;
 
 /// The rainbow outline for ALL, as stops from left to right.
 pub const RAINBOW: [u32; 6] = [0xff4d4d, 0xffa64d, 0xffe14d, 0x53fc18, 0x4da6ff, 0xb84dff];
@@ -57,6 +59,13 @@ pub fn level_color(level: Level) -> Rgba {
 /// A color from a hex value.
 pub fn hsla(hex: u32) -> Hsla {
     rgb(hex).into()
+}
+
+/// A color from a hex value, see-through by `alpha` (0 to 1).
+pub fn hsla_alpha(hex: u32, alpha: f32) -> Hsla {
+    let mut c = hsla(hex);
+    c.a = alpha;
+    c
 }
 
 /// A user's name color, lightened if it would be hard to read on the dark background.
