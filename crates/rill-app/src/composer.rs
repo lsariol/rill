@@ -71,10 +71,63 @@ pub(crate) fn insert_emote(text: &str, range: Range<usize>, name: &str) -> (Stri
     let rest = &text[range.end..];
     let gap = if rest.starts_with(' ') { "" } else { " " };
     let head = format!("{}{name}{gap}", &text[..range.start]);
+    let end = position_at(&head);
+    // Past the space that was already there.
+    let cursor = Position::new(end.line, end.character + u32::from(gap.is_empty()));
+    (format!("{head}{rest}"), cursor)
+}
+
+/// The line and column (in characters) at the end of `head`.
+fn position_at(head: &str) -> Position {
     let line = head.matches('\n').count() as u32;
     let column = head.rsplit('\n').next().unwrap_or("").chars().count() as u32;
-    let cursor = Position::new(line, column + u32::from(gap.is_empty()));
-    (format!("{head}{rest}"), cursor)
+    Position::new(line, column)
+}
+
+/// The plain word just before the cursor, for Tab completion: not a `:name`, `/command` or
+/// `@mention`, and with nothing but space after the cursor.
+pub(crate) fn tab_word(text: &str, cursor: usize) -> Option<(usize, &str)> {
+    if !text.is_char_boundary(cursor.min(text.len())) {
+        return None;
+    }
+    let cursor = cursor.min(text.len());
+    if text[cursor..]
+        .chars()
+        .next()
+        .is_some_and(|c| !c.is_whitespace())
+    {
+        return None;
+    }
+    let before = &text[..cursor];
+    let start = before
+        .char_indices()
+        .rev()
+        .find(|(_, c)| c.is_whitespace())
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let word = &before[start..];
+    let plain = !word.is_empty() && !word.starts_with([':', '/', '@']);
+    plain.then_some((start, word))
+}
+
+/// Emote names in Tab order: alphabetical, ignoring case.
+pub(crate) fn tab_order(mut names: Vec<String>) -> Vec<String> {
+    names.sort_by(|a, b| {
+        a.to_lowercase()
+            .cmp(&b.to_lowercase())
+            .then_with(|| a.cmp(b))
+    });
+    names
+}
+
+/// Tab stepping through the emotes that start with a typed word.
+pub(crate) struct EmoteCycle {
+    names: Vec<String>,
+    ix: usize,
+    /// Where the word starts, in bytes.
+    start: usize,
+    /// The text and cursor right after the last step; anything else typed ends the cycle.
+    text: String,
+    cursor: usize,
 }
 
 /// Binds the composer's keys inside its text box.
@@ -165,6 +218,9 @@ impl ChatView {
             self.accept_completion(&suggestion, window, cx);
             return;
         }
+        if self.cycle_emote(1, window, cx) {
+            return;
+        }
         self.destination = self.destination.next(&self.session.sendable());
         cx.notify();
     }
@@ -183,8 +239,65 @@ impl ChatView {
             self.move_completion(-1, cx);
             return;
         }
+        if self.cycle_emote(-1, window, cx) {
+            return;
+        }
         self.destination = self.destination.prev(&self.session.sendable());
         cx.notify();
+    }
+
+    /// Tab on a word: puts in the next (or previous) emote starting with it, alphabetically.
+    /// Returns false when there's no word or no emote to put in.
+    fn cycle_emote(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let (text, cursor) = {
+            let state = self.input.read(cx);
+            (state.value().to_string(), state.cursor())
+        };
+        let going = self
+            .emote_cycle
+            .as_ref()
+            .is_some_and(|c| c.text == text && c.cursor == cursor);
+        if !going {
+            self.emote_cycle = None;
+            let Some((start, word)) = tab_word(&text, cursor) else {
+                return false;
+            };
+            let names = self
+                .session
+                .emote_choices(self.destination, word, usize::MAX)
+                .into_iter()
+                .map(|(_, e)| e.name)
+                .collect::<Vec<_>>();
+            if names.is_empty() {
+                return false;
+            }
+            let names = tab_order(names);
+            // The first step lands on the first name (or the last, going back).
+            let ix = if by < 0 { 0 } else { names.len() - 1 };
+            self.emote_cycle = Some(EmoteCycle {
+                names,
+                ix,
+                start,
+                text: String::new(),
+                cursor,
+            });
+        }
+        let Some(c) = self.emote_cycle.as_mut() else {
+            return false;
+        };
+        c.ix = (c.ix as isize + by).rem_euclid(c.names.len() as isize) as usize;
+        let name = &c.names[c.ix];
+        let head = format!("{}{name}", &text[..c.start]);
+        let new_text = format!("{head}{}", &text[cursor..]);
+        c.cursor = head.len();
+        c.text = new_text.clone();
+        let at = position_at(&head);
+        self.input.update(cx, |state, cx| {
+            state.set_value(new_text, window, cx);
+            state.set_cursor_position(at, window, cx);
+        });
+        cx.notify();
+        true
     }
 
     fn next_completion(&mut self, _: &NextCompletion, _: &mut Window, cx: &mut Context<Self>) {
@@ -588,5 +701,27 @@ mod tests {
         let (text, at) = insert_emote("é\nok :K", 6..8, "Kappa");
         assert_eq!(text, "é\nok Kappa ");
         assert_eq!(at, Position::new(1, 9));
+    }
+
+    #[test]
+    fn tab_takes_the_plain_word_before_the_cursor() {
+        assert_eq!(tab_word("s", 1), Some((0, "s")));
+        assert_eq!(tab_word("hi Sm", 5), Some((3, "Sm")));
+        assert_eq!(tab_word("hi sm there", 5), Some((3, "sm")));
+        assert_eq!(tab_word("hi smthere", 5), None, "in the middle of a word");
+        assert_eq!(tab_word("hi ", 3), None, "no word");
+        assert_eq!(tab_word("", 0), None);
+        assert_eq!(tab_word("hi :sm", 6), None, "the : list handles it");
+        assert_eq!(tab_word("/ban", 4), None);
+        assert_eq!(tab_word("hi @bo", 6), None);
+        assert_eq!(tab_word("é s", "é s".len()), Some((3, "s")));
+    }
+
+    #[test]
+    fn tab_order_is_alphabetical_ignoring_case() {
+        let names = ["smile", "Smash", "sadge", "SADGE"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(tab_order(names), ["SADGE", "sadge", "Smash", "smile"]);
     }
 }

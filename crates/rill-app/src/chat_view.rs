@@ -50,6 +50,8 @@ pub struct ChatView {
     pub(crate) completion_ix: usize,
     /// Composer text for which the user dismissed autocomplete.
     pub(crate) completions_dismissed: Option<SharedString>,
+    /// Tab stepping through emotes for the word before the cursor.
+    pub(crate) emote_cycle: Option<crate::composer::EmoteCycle>,
     pub(crate) composer_error: Option<SharedString>,
     /// Set by Esc in the composer: the next Tab leaves it instead of switching the destination.
     pub(crate) tab_leaves: bool,
@@ -131,6 +133,7 @@ impl ChatView {
             destination: Destination::All,
             completion_ix: 0,
             completions_dismissed: None,
+            emote_cycle: None,
             composer_error: None,
             tab_leaves: false,
             panel: Panel::None,
