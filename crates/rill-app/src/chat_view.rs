@@ -144,8 +144,10 @@ impl ChatView {
         self.stats.events += batch.len() as u64;
         self.stats.batches += 1;
         for event in batch {
-            if matches!(event, Event::SignIn { .. }) {
+            if let Event::SignIn { prompt, .. } = &event {
                 self.panel = Panel::Accounts;
+                // Straight to the sign-in page; Accounts keeps Open page and Copy link.
+                cx.open_url(&prompt.url);
             }
             self.session.apply(event, now);
         }

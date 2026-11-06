@@ -10,14 +10,17 @@ publish.workspace = true
 rill-core.workspace = true
 rill-os.workspace = true
 rill-emotes.workspace = true
-tokio = { workspace = true, features = ["rt", "time", "macros", "sync"] }
-reqwest = { version = "0.13", features = ["json"] }
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync", "net", "io-util"] }
+reqwest = { version = "0.13", features = ["json", "form", "query"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 chrono.workspace = true
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
 
 [dev-dependencies]
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }

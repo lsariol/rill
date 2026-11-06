@@ -59,7 +59,7 @@ Rill needs an app registration on each platform. Until release builds carry them
 {
   "twitch": { "client_id": "…", "channel": null },
   "youtube": { "client_id": "…", "client_secret": "…", "min_poll_ms": 5000 },
-  "kick": { "channel": "somechannel" }
+  "kick": { "channel": "somechannel", "client_id": "…", "client_secret": "…" }
 }
 ```
 
@@ -69,8 +69,14 @@ Rill needs an app registration on each platform. Until release builds carry them
 - **YouTube:** in Google Cloud, enable the YouTube Data API v3 and create an OAuth client of type
   **Desktop app**. Chat appears while you're live. Polling uses API quota (about 5 units per poll;
   the default daily quota is 10,000); raise `min_poll_ms` to stretch it.
-- **Kick:** read-only, and needs no account. Rill reads chat from Kick's unofficial chat socket, as an
-  anonymous viewer would; Kick can change it without notice.
+- **Kick:** reading needs no account: Rill reads chat from Kick's unofficial chat socket, as an
+  anonymous viewer would, and Kick can change it without notice. Sending and moderating use Kick's
+  official API: at kick.com, under Settings → Developer, create an app with the redirect URL
+  `http://localhost:47831/callback` and the scopes `user:read`, `channel:read`, `chat:write`,
+  `moderation:ban` and `moderation:chat_message:manage`. Kick's sign-in needs the app's client
+  secret, so a development build takes `client_secret` from `settings.json`; a release build instead
+  sets `auth_helper` to a small token-exchange service that holds the secret. Sign-in listens on
+  port 47831 while it waits for Kick. Kick timeouts last at most 7 days.
 
 Release builds can carry the IDs instead: set `RILL_TWITCH_CLIENT_ID`, `RILL_YOUTUBE_CLIENT_ID` and
 `RILL_YOUTUBE_CLIENT_SECRET` when building.
@@ -91,7 +97,7 @@ powershell -File scripts/soak.ps1 -Minutes 480   # long-stream memory check
 | `rill-sim` | Simulated chat traffic, for prototyping and benchmarks |
 | `rill-twitch` | Twitch: device-code sign-in, EventSub chat, Helix actions |
 | `rill-youtube` | YouTube: desktop sign-in with PKCE, live chat polling, moderation |
-| `rill-kick` | Kick: asks Kick which chat socket to use (Centrifugo or Pusher) and reads chat from it |
+| `rill-kick` | Kick: reads chat from Kick's chat socket (Centrifugo or Pusher); signs in, sends and moderates through the official API |
 | `rill-emotes` | 7TV emotes: loads global and channel sets and follows changes over 7TV's event socket |
 | `rill-os` | Data folders, `settings.json`, the OS credential store |
 | `rill-app` | The GPUI app; the only crate that depends on GPUI |

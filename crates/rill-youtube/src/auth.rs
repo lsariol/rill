@@ -149,13 +149,20 @@ pub async fn finish(
         let n = sock.read(&mut buf).await.unwrap_or(0);
         let request = String::from_utf8_lossy(&buf[..n]);
         let outcome = parse_redirect(&request, &pending.state);
-        let page = match &outcome {
-            Some(Ok(_)) => "Rill is signed in to YouTube. You can close this tab.",
-            Some(Err(_)) => "YouTube sign-in didn't finish. Go back to Rill and try again.",
-            None => "",
+        let body = match &outcome {
+            Some(Ok(_)) => page(
+                "Signed in to YouTube",
+                "Rill can now read and send in your live chat. You can close this tab.",
+            ),
+            Some(Err(_)) => page(
+                "YouTube sign-in didn't finish",
+                "Go back to Rill and connect YouTube again.",
+            ),
+            None => String::new(),
         };
         let reply = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!doctype html><title>Rill</title><p style=\"font:16px system-ui\">{page}</p>"
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
         );
         let _ = sock.write_all(reply.as_bytes()).await;
         match outcome {
@@ -194,6 +201,15 @@ pub async fn finish(
         refresh,
         expires_at_ms: rill_core::now_ms() + t.expires_in * 1000,
     })
+}
+
+/// The page the browser shows after the redirect.
+fn page(title: &str, text: &str) -> String {
+    format!(
+        "<!doctype html><meta charset=utf-8><title>Rill</title>\
+         <body style=\"font:16px system-ui;background:#18181b;color:#e4e4e7;display:grid;place-items:center;height:90vh\">\
+         <div><h2 style=\"color:#ff4e45\">{title}</h2><p>{text}</p></div>"
+    )
 }
 
 /// Reads the code from Google's redirect request. `None` for unrelated requests (like a favicon).

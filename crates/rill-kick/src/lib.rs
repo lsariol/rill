@@ -1,24 +1,30 @@
 //! Rill's Kick adapter. Reads a channel's chat from Kick's unofficial socket (Centrifugo or Pusher,
-//! whichever Kick offers); read-only.
+//! whichever Kick offers), and, once signed in, sends and moderates through Kick's official API.
 
+pub mod api;
+pub mod auth;
 pub mod centrifugo;
 pub mod events;
 pub mod pusher;
 pub mod realtime;
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use rill_core::backoff::Backoff;
 use rill_core::{
-    Adapter, AdapterIo, Capabilities, Command, ConnectionStatus, EventSink, Level, Platform,
-    Request, adapter::BoxFuture,
+    Account, Action, Adapter, AdapterIo, Capabilities, Command, ConnectionStatus, Event, EventSink,
+    Level, Platform, Request, UserRef, adapter::BoxFuture, event::SignInPrompt,
 };
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until, timeout};
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 
+use crate::api::{Api, ApiError};
+use crate::auth::{AuthError, Exchange};
 use crate::centrifugo::Reply;
 use crate::events::SubBadges;
 use crate::pusher::Frame;
@@ -26,18 +32,43 @@ use crate::realtime::Transport;
 
 /// Prefix of errors where Kick's socket refused Rill outright; retrying won't help.
 const REFUSED: &str = "Kick: Kick's chat refused Rill; Kick may have changed it. Reading Kick chat needs a Rill update.";
-const READ_ONLY: &str =
-    "Kick is read-only in this version of Rill: send and moderate from kick.com for now.";
+const NOT_SIGNED_IN: &str = "Kick: reading chat needs no account, but sending and moderating do. Open Accounts and sign in to Kick.";
+const NO_APP: &str = "Kick: sign-in isn't set up in this build. Add kick.client_id and kick.client_secret (or kick.auth_helper) to settings.json.";
+
+const BUILTIN_CLIENT_ID: Option<&str> = option_env!("RILL_KICK_CLIENT_ID");
+const BUILTIN_AUTH_HELPER: Option<&str> = option_env!("RILL_KICK_AUTH_HELPER");
+
+/// What a signed-in account can do on Kick. Moderation is offered on any channel; Kick refuses it
+/// (with a clear message) where the account isn't a moderator.
+const SIGNED_IN: Capabilities = Capabilities::of(&[
+    Action::Send,
+    Action::Delete,
+    Action::Timeout,
+    Action::Ban,
+    Action::Unban,
+]);
 
 /// The Kick connection.
 pub struct KickAdapter {
     channel: Option<String>,
+    exchange: Option<Exchange>,
 }
 
 impl KickAdapter {
     pub fn new(settings: &rill_os::settings::KickSettings) -> KickAdapter {
+        let given = |v: &Option<String>| v.clone().filter(|s| !s.trim().is_empty());
+        let client_id = given(&settings.client_id).or(BUILTIN_CLIENT_ID.map(str::to_string));
+        let exchange = client_id.and_then(|client_id| {
+            if let Some(secret) = given(&settings.client_secret) {
+                return Some(Exchange::Direct { client_id, secret });
+            }
+            given(&settings.auth_helper)
+                .or(BUILTIN_AUTH_HELPER.map(str::to_string))
+                .map(|url| Exchange::Helper { client_id, url })
+        });
         KickAdapter {
             channel: settings.channel.as_deref().and_then(clean_channel),
+            exchange,
         }
     }
 }
@@ -66,6 +97,8 @@ impl Adapter for KickAdapter {
 struct Channel {
     slug: String,
     chatroom_id: u64,
+    /// The owner's user ID: the `broadcaster_user_id` of Kick's official API.
+    broadcaster_id: Option<u64>,
     sub_badges: SubBadges,
     /// The IDs 7TV may know the channel by: the owner's user ID, then the channel ID.
     seven_tv_ids: Vec<String>,
@@ -87,6 +120,63 @@ struct Ctx {
     events: EventSink,
     requests: mpsc::Receiver<Request>,
     http: reqwest::Client,
+    shared: Shared,
+    /// How Kick sign-in trades codes for tokens; `None` when this build can't sign in.
+    exchange: Option<Exchange>,
+    /// Sends and moderation, handled one at a time off the chat loop.
+    work: mpsc::Sender<Request>,
+    /// Interruptions from background tasks, such as reading your own channel after sign-in.
+    wake: mpsc::Receiver<Interrupt>,
+    wake_tx: mpsc::Sender<Interrupt>,
+}
+
+/// State the chat loop shares with the sign-in and API tasks.
+#[derive(Clone, Default)]
+struct Shared(Arc<StdMutex<State>>);
+
+#[derive(Default)]
+struct State {
+    signed: Option<Signed>,
+    /// The chat connection's status, reported again whenever the account changes.
+    read: ConnectionStatus,
+    slug: Option<String>,
+    broadcaster: Option<u64>,
+    /// Recent chatters' user IDs by login, for commands that name a user.
+    logins: HashMap<String, u64>,
+}
+
+#[derive(Clone)]
+struct Signed {
+    api: Api,
+    account: Account,
+}
+
+/// How many chatters' IDs are kept for commands by name.
+const LOGINS_MAX: usize = 20_000;
+
+impl Shared {
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Reports the chat status with the current account and what it can do.
+    async fn report(&self, events: &EventSink, status: ConnectionStatus) {
+        let (account, caps) = {
+            let mut s = self.lock();
+            s.read = status.clone();
+            match &s.signed {
+                Some(signed) => (Some(signed.account.clone()), SIGNED_IN),
+                None => (None, Capabilities::NONE),
+            }
+        };
+        events.status(status, account, caps).await;
+    }
+
+    /// Reports the account change without a new chat status.
+    async fn report_account(&self, events: &EventSink) {
+        let status = self.lock().read.clone();
+        self.report(events, status).await;
+    }
 }
 
 async fn run(adapter: KickAdapter, io: AdapterIo) {
@@ -105,18 +195,29 @@ async fn run(adapter: KickAdapter, io: AdapterIo) {
             return;
         }
     };
+    let shared = Shared::default();
+    let (work, work_rx) = mpsc::channel(2_048);
+    tokio::spawn(worker(shared.clone(), events.clone(), work_rx));
+    let (wake_tx, wake) = mpsc::channel(4);
     let mut ctx = Ctx {
         client_id: random_client_id(),
         token_url: realtime::TOKEN_URL.into(),
         events,
         requests,
         http,
+        shared,
+        exchange: adapter.exchange,
+        work,
+        wake,
+        wake_tx,
     };
+    restore_sign_in(&ctx).await;
     let mut channel = adapter.channel;
     loop {
         let Some(slug) = channel.clone() else {
-            ctx.events
-                .status(ConnectionStatus::Disconnected, None, Capabilities::NONE)
+            ctx.shared.lock().slug = None;
+            ctx.shared
+                .report(&ctx.events, ConnectionStatus::Disconnected)
                 .await;
             match wait(&mut ctx, None).await {
                 Some(Interrupt::Switch(next)) => channel = next,
@@ -155,6 +256,202 @@ fn remember(channel: Option<&str>) {
     }
 }
 
+fn account(id: u64, name: &str) -> Account {
+    Account {
+        id: id.to_string(),
+        login: name.to_lowercase(),
+        display_name: name.to_string(),
+    }
+}
+
+/// Picks up a stored Kick sign-in at startup, checking it in the background.
+async fn restore_sign_in(ctx: &Ctx) {
+    let Some(exchange) = ctx.exchange.clone() else {
+        return;
+    };
+    let token = match auth::load_token() {
+        Ok(Some(t)) => t,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!(err = %e, "Kick sign-in not loaded");
+            return;
+        }
+    };
+    let api = Api::new(ctx.http.clone(), exchange, token);
+    let (events, shared) = (ctx.events.clone(), ctx.shared.clone());
+    tokio::spawn(async move {
+        match api.me().await {
+            Ok((id, name)) => {
+                tracing::info!("Kick signed in");
+                shared.lock().signed = Some(Signed {
+                    api,
+                    account: account(id, &name),
+                });
+                shared.report_account(&events).await;
+            }
+            Err(ApiError::Unauthorized) => {
+                let _ = auth::delete_token();
+                events
+                    .notice(Level::Warn, AuthError::Invalid.message())
+                    .await;
+            }
+            Err(e) => tracing::warn!(err = %e.message(), "Kick sign-in not checked"),
+        }
+    });
+}
+
+/// Runs a browser sign-in, then reports the account; reads your own channel if none is open.
+async fn sign_in(
+    http: reqwest::Client,
+    exchange: Exchange,
+    events: EventSink,
+    shared: Shared,
+    wake: mpsc::Sender<Interrupt>,
+    request: rill_core::RequestId,
+) {
+    let result: Result<(), String> = async {
+        let pending = auth::start(&exchange).await.map_err(|e| e.message())?;
+        events
+            .send(Event::SignIn {
+                platform: Platform::Kick,
+                prompt: SignInPrompt {
+                    url: pending.url.clone(),
+                    code: None,
+                    expires_at_ms: rill_core::now_ms() + 10 * 60_000,
+                },
+            })
+            .await;
+        let token = timeout(
+            Duration::from_secs(10 * 60),
+            auth::finish(&http, &exchange, auth::TOKEN_URL, pending),
+        )
+        .await
+        .map_err(|_| "Kick: sign-in timed out. Connect Kick again when you're ready.".to_string())?
+        .map_err(|e| e.message())?;
+        if let Err(e) = auth::save_token(&token) {
+            tracing::warn!(err = %e, "Kick token not saved");
+        }
+        let api = Api::new(http.clone(), exchange.clone(), token);
+        let (id, name) = api.me().await.map_err(|e| e.message())?;
+        let own_slug = api.own_slug().await.ok().flatten();
+        tracing::info!("Kick signed in");
+        let reading = {
+            let mut s = shared.lock();
+            s.signed = Some(Signed {
+                api,
+                account: account(id, &name),
+            });
+            s.slug.is_some()
+        };
+        shared.report_account(&events).await;
+        if !reading && let Some(slug) = own_slug {
+            let _ = wake.send(Interrupt::Switch(Some(slug))).await;
+        }
+        Ok(())
+    }
+    .await;
+    if result.is_err() {
+        // Clears the sign-in prompt.
+        shared.report_account(&events).await;
+    }
+    events.done(request, result.map(|_| None)).await;
+}
+
+/// Forgets the Kick account: revokes and deletes the stored sign-in.
+async fn sign_out(ctx: &Ctx) {
+    let signed = ctx.shared.lock().signed.take();
+    if let Some(signed) = signed {
+        auth::revoke(&ctx.http, &signed.api.token().await).await;
+    }
+    if let Err(e) = auth::delete_token() {
+        tracing::warn!(err = %e, "Kick token not deleted");
+    }
+}
+
+/// Carries out sends and moderation one at a time, so the chat loop never waits on them.
+async fn worker(shared: Shared, events: EventSink, mut requests: mpsc::Receiver<Request>) {
+    while let Some(req) = requests.recv().await {
+        let result = perform(&shared, &events, req.command).await;
+        if !events.done(req.id, result).await {
+            return;
+        }
+    }
+}
+
+async fn perform(
+    shared: &Shared,
+    events: &EventSink,
+    command: Command,
+) -> Result<Option<String>, String> {
+    if let Command::Poll { .. } = command {
+        return Err(
+            "Kick: polls can't be started through Kick's API. Start them on kick.com.".into(),
+        );
+    }
+    let (signed, broadcaster) = {
+        let s = shared.lock();
+        (s.signed.clone(), s.broadcaster)
+    };
+    let api = signed.ok_or(NOT_SIGNED_IN)?.api;
+    let broadcaster = broadcaster
+        .ok_or("Kick: Rill hasn't found this channel's owner yet. Try again in a moment.")?;
+    let user_id = |u: &UserRef| -> Result<u64, String> {
+        if let Some(id) = u.id.as_deref().and_then(|id| id.parse().ok()) {
+            return Ok(id);
+        }
+        let key = u.login.trim_start_matches('@').to_lowercase();
+        shared.lock().logins.get(&key).copied().ok_or_else(|| {
+            format!(
+                "Kick: \"{}\" hasn't chatted since Rill connected, so Rill can't find them. Click their message instead.",
+                u.login
+            )
+        })
+    };
+    let result = match command {
+        Command::Send { text, reply_to } => api
+            .send(broadcaster, &text, reply_to.as_deref())
+            .await
+            .map(Some),
+        Command::Delete { message_id } => api.delete(&message_id).await.map(|_| None),
+        Command::Timeout {
+            user,
+            seconds,
+            reason,
+        } => {
+            let id = user_id(&user)?;
+            api.ban(
+                broadcaster,
+                id,
+                Some(api::minutes(seconds)),
+                reason.as_deref(),
+            )
+            .await
+            .map(|_| None)
+        }
+        Command::Ban { user, reason } => {
+            let id = user_id(&user)?;
+            api.ban(broadcaster, id, None, reason.as_deref())
+                .await
+                .map(|_| None)
+        }
+        Command::Unban { user } => {
+            let id = user_id(&user)?;
+            api.unban(broadcaster, id).await.map(|_| None)
+        }
+        _ => Ok(None),
+    };
+    result.map_err(|e| {
+        if e == ApiError::Unauthorized {
+            shared.lock().signed = None;
+            let _ = auth::delete_token();
+            let events = events.clone();
+            let shared = shared.clone();
+            tokio::spawn(async move { shared.report_account(&events).await });
+        }
+        e.message()
+    })
+}
+
 /// Answers requests until `deadline` (or forever). Returns what interrupted it.
 async fn wait(ctx: &mut Ctx, deadline: Option<Instant>) -> Option<Interrupt> {
     loop {
@@ -166,6 +463,7 @@ async fn wait(ctx: &mut Ctx, deadline: Option<Instant>) -> Option<Interrupt> {
         };
         tokio::select! {
             _ = sleeper => return None,
+            Some(i) = ctx.wake.recv() => return Some(i),
             req = ctx.requests.recv() => {
                 let Some(req) = req else { return Some(Interrupt::Stop) };
                 if let Some(i) = answer(ctx, req).await {
@@ -197,20 +495,38 @@ async fn answer(ctx: &mut Ctx, req: Request) -> Option<Interrupt> {
             }
         },
         Command::SignOut => {
+            sign_out(ctx).await;
             ctx.events.done(req.id, Ok(None)).await;
             Some(Interrupt::Switch(None))
         }
         Command::SignIn => {
-            ctx.events
-                .done(
-                    req.id,
-                    Err("Kick: enter a channel name in Accounts to read its chat.".into()),
-                )
-                .await;
+            match ctx.exchange.clone() {
+                Some(exchange) => {
+                    tokio::spawn(sign_in(
+                        ctx.http.clone(),
+                        exchange,
+                        ctx.events.clone(),
+                        ctx.shared.clone(),
+                        ctx.wake_tx.clone(),
+                        req.id,
+                    ));
+                }
+                None => {
+                    ctx.events.done(req.id, Err(NO_APP.into())).await;
+                }
+            }
             None
         }
         _ => {
-            ctx.events.done(req.id, Err(READ_ONLY.into())).await;
+            let id = req.id;
+            if ctx.work.try_send(req).is_err() {
+                ctx.events
+                    .done(
+                        id,
+                        Err("Kick: too many requests waiting; try again in a moment.".into()),
+                    )
+                    .await;
+            }
             None
         }
     }
@@ -221,12 +537,19 @@ async fn follow(ctx: &mut Ctx, slug: &str) -> Interrupt {
     let mut backoff = Backoff::chat();
     // The channel's 7TV emotes, loaded once and kept current while Rill reads this channel.
     let mut emotes: Option<rill_emotes::Follow> = None;
-    ctx.events
-        .status(ConnectionStatus::Connecting, None, Capabilities::NONE)
+    {
+        let mut s = ctx.shared.lock();
+        s.slug = Some(slug.to_string());
+        s.broadcaster = None;
+        s.logins.clear();
+    }
+    ctx.shared
+        .report(&ctx.events, ConnectionStatus::Connecting)
         .await;
     loop {
         let result = match lookup(&ctx.http, slug).await {
             Ok(channel) => {
+                ctx.shared.lock().broadcaster = channel.broadcaster_id;
                 if emotes.is_none() {
                     let f = rill_emotes::follow(
                         ctx.http.clone(),
@@ -251,8 +574,8 @@ async fn follow(ctx: &mut Ctx, slug: &str) -> Interrupt {
                 let why = format!(
                     "Kick: there's no channel named \"{slug}\". Check the name in Accounts."
                 );
-                ctx.events
-                    .status(ConnectionStatus::Failed(why), None, Capabilities::NONE)
+                ctx.shared
+                    .report(&ctx.events, ConnectionStatus::Failed(why))
                     .await;
                 return match wait(ctx, None).await {
                     Some(i) => i,
@@ -266,20 +589,16 @@ async fn follow(ctx: &mut Ctx, slug: &str) -> Interrupt {
             Ok(None) => backoff.reset(),
             Err(why) if why.starts_with(REFUSED) => {
                 tracing::error!(err = %why, channel = slug, "Kick chat socket refused");
-                ctx.events
-                    .status(ConnectionStatus::Failed(why), None, Capabilities::NONE)
+                ctx.shared
+                    .report(&ctx.events, ConnectionStatus::Failed(why))
                     .await;
                 return wait(ctx, None).await.unwrap_or(Interrupt::Stop);
             }
             Err(why) => {
                 tracing::warn!(err = %why, channel = slug, "Kick chat connection lost");
                 let attempt = backoff.attempt() + 1;
-                ctx.events
-                    .status(
-                        ConnectionStatus::Reconnecting { attempt },
-                        None,
-                        Capabilities::NONE,
-                    )
+                ctx.shared
+                    .report(&ctx.events, ConnectionStatus::Reconnecting { attempt })
                     .await;
                 if attempt == 1 {
                     ctx.events.notice(Level::Warn, why).await;
@@ -344,6 +663,7 @@ async fn lookup(http: &reqwest::Client, slug: &str) -> Result<Channel, Lookup> {
     Ok(Channel {
         slug: slug.to_string(),
         chatroom_id,
+        broadcaster_id: v["user_id"].as_u64(),
         sub_badges,
         seven_tv_ids,
     })
@@ -469,15 +789,26 @@ async fn incoming(ws: &mut Socket, msg: Option<Result<Message, WsError>>) -> Inc
 /// Passes a Kick event on. False when Rill is shutting down.
 async fn deliver(ctx: &Ctx, channel: &Channel, event: &str, data: &Value) -> bool {
     match events::to_event(event, data, &channel.sub_badges) {
-        Some(e) => ctx.events.send(e).await,
+        Some(e) => {
+            if let Event::Message(m) = &e
+                && let Ok(id) = m.author.id.parse::<u64>()
+            {
+                let mut s = ctx.shared.lock();
+                if s.logins.len() >= LOGINS_MAX {
+                    s.logins.clear();
+                }
+                s.logins.insert(m.author.login.to_lowercase(), id);
+            }
+            ctx.events.send(e).await
+        }
         None => true,
     }
 }
 
 async fn connected(ctx: &Ctx, channel: &Channel, transport: &str) {
     tracing::info!(channel = %channel.slug, transport, "Kick chat connected");
-    ctx.events
-        .status(ConnectionStatus::Connected, None, Capabilities::NONE)
+    ctx.shared
+        .report(&ctx.events, ConnectionStatus::Connected)
         .await;
 }
 
@@ -537,6 +868,7 @@ async fn pusher_session(
                     break Err("Kick: the chat socket closed.".into());
                 }
             }
+            Some(i) = ctx.wake.recv() => break Ok(Some(i)),
             req = ctx.requests.recv() => {
                 let Some(req) = req else { break Ok(Some(Interrupt::Stop)) };
                 if let Some(i) = answer(ctx, req).await {
@@ -644,6 +976,7 @@ async fn centrifugo_session(
                     Err(e) => tracing::warn!(err = %e, "Kick chat token not renewed"),
                 }
             }
+            Some(i) = ctx.wake.recv() => break Ok(Some(i)),
             req = ctx.requests.recv() => {
                 let Some(req) = req else { break Ok(Some(Interrupt::Stop)) };
                 if let Some(i) = answer(ctx, req).await {
@@ -709,12 +1042,19 @@ mod sessions {
     fn ctx(token_url: &str) -> (Ctx, mpsc::Receiver<Event>, mpsc::Sender<Request>) {
         let (events, rx) = EventSink::channel(Platform::Kick, 100);
         let (tx, requests) = mpsc::channel(4);
+        let (work, _) = mpsc::channel(4);
+        let (wake_tx, wake) = mpsc::channel(4);
         let ctx = Ctx {
             client_id: "client-1".into(),
             token_url: token_url.into(),
             events,
             requests,
             http: reqwest::Client::new(),
+            shared: Shared::default(),
+            exchange: None,
+            work,
+            wake,
+            wake_tx,
         };
         (ctx, rx, tx)
     }
@@ -723,6 +1063,7 @@ mod sessions {
         Channel {
             slug: "someone".into(),
             chatroom_id: 42,
+            broadcaster_id: Some(7),
             sub_badges: Vec::new(),
             seven_tv_ids: Vec::new(),
         }
@@ -962,6 +1303,7 @@ mod live {
             let (_tx, requests) = mpsc::channel(4);
             let adapter = Box::new(KickAdapter {
                 channel: Some(channel.clone()),
+                exchange: None,
             });
             tokio::spawn(adapter.run(AdapterIo {
                 events: sink,
@@ -987,5 +1329,303 @@ mod live {
             eprintln!("{messages} messages from {channel} in 20 s");
             assert!(connected, "never connected to {channel}");
         });
+    }
+}
+
+/// Sign-in, sending and moderation against a local stand-in for Kick's official API.
+#[cfg(test)]
+mod official_api {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Mutex as StdMutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// A request the fake API saw: method, path, form or JSON body, bearer token.
+    #[derive(Debug, Clone)]
+    struct Seen {
+        method: String,
+        path: String,
+        body: String,
+        bearer: String,
+    }
+
+    type Log = Arc<StdMutex<Vec<Seen>>>;
+
+    /// A fake Kick API. The first /users call gets a 401 and the first ban a 429, to exercise
+    /// refresh and rate-limit waits.
+    async fn kick_server() -> (String, Log) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let log: Log = Arc::default();
+        let seen = log.clone();
+        let users = Arc::new(AtomicUsize::new(0));
+        let bans = Arc::new(AtomicUsize::new(0));
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = listener.accept().await.unwrap();
+                let (seen, users, bans) = (seen.clone(), users.clone(), bans.clone());
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0; 4096];
+                    let (head, body) = loop {
+                        let n = s.read(&mut chunk).await.unwrap();
+                        assert!(n > 0, "request ended early");
+                        buf.extend_from_slice(&chunk[..n]);
+                        let text = String::from_utf8_lossy(&buf).to_string();
+                        if let Some(end) = text.find("\r\n\r\n") {
+                            let len = text[..end]
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_ascii_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .map(|v| v.trim().parse::<usize>().unwrap())
+                                })
+                                .unwrap_or(0);
+                            if buf.len() >= end + 4 + len {
+                                break (text[..end].to_string(), text[end + 4..].to_string());
+                            }
+                        }
+                    };
+                    let mut first = head.lines().next().unwrap().split(' ');
+                    let method = first.next().unwrap().to_string();
+                    let path = first.next().unwrap().to_string();
+                    let bearer = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("authorization: Bearer "))
+                        .unwrap_or_default()
+                        .to_string();
+                    let (status, reply) = match (method.as_str(), path.as_str()) {
+                        ("POST", "/oauth/token") => (
+                            200,
+                            json!({"access_token": "fresh", "refresh_token": "r2", "expires_in": 3600, "token_type": "Bearer"}),
+                        ),
+                        ("GET", "/users") if users.fetch_add(1, Ordering::SeqCst) == 0 => {
+                            (401, json!({"message": "Unauthorized"}))
+                        }
+                        ("GET", "/users") => {
+                            (200, json!({"data": [{"user_id": 55, "name": "RillDev"}]}))
+                        }
+                        ("POST", "/chat") => {
+                            (200, json!({"data": {"is_sent": true, "message_id": "m-1"}}))
+                        }
+                        ("DELETE", p) if p.starts_with("/chat/") => (204, Value::Null),
+                        ("POST", "/moderation/bans")
+                            if bans.fetch_add(1, Ordering::SeqCst) == 0 =>
+                        {
+                            (429, json!({"message": "slow down"}))
+                        }
+                        ("POST" | "DELETE", "/moderation/bans") => (200, json!({"data": {}})),
+                        _ => (404, json!({"message": "no route"})),
+                    };
+                    seen.lock().unwrap().push(Seen {
+                        method,
+                        path,
+                        body,
+                        bearer,
+                    });
+                    let reply = if reply.is_null() {
+                        String::new()
+                    } else {
+                        reply.to_string()
+                    };
+                    let res = format!(
+                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nRetry-After: 1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    );
+                    s.write_all(res.as_bytes()).await.unwrap();
+                });
+            }
+        });
+        (format!("http://{addr}"), log)
+    }
+
+    fn exchange() -> Exchange {
+        Exchange::Direct {
+            client_id: "cid".into(),
+            secret: "shh".into(),
+        }
+    }
+
+    fn signed(base: &str) -> Shared {
+        let token = auth::Token {
+            access: "old".into(),
+            refresh: "r1".into(),
+            expires_at_ms: rill_core::now_ms() + 3_600_000,
+        };
+        let api = Api::new(reqwest::Client::new(), exchange(), token).local(base);
+        let shared = Shared::default();
+        {
+            let mut s = shared.lock();
+            s.signed = Some(Signed {
+                api,
+                account: account(55, "RillDev"),
+            });
+            s.broadcaster = Some(7);
+            s.logins.insert("viewer".into(), 99);
+        }
+        shared
+    }
+
+    fn user(id: Option<&str>, login: &str) -> UserRef {
+        UserRef {
+            id: id.map(str::to_string),
+            login: login.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn sends_and_moderates_with_refresh_and_rate_limit_waits() {
+        let (base, log) = kick_server().await;
+        let shared = signed(&base);
+        let (events, _rx) = EventSink::channel(Platform::Kick, 100);
+        let api = shared.lock().signed.clone().unwrap().api;
+        // The first call meets a 401: Rill refreshes once and retries.
+        assert_eq!(api.me().await.unwrap(), (55, "RillDev".to_string()));
+
+        let send = Command::Send {
+            text: "hello".into(),
+            reply_to: Some("parent".into()),
+        };
+        assert_eq!(
+            perform(&shared, &events, send).await,
+            Ok(Some("m-1".into()))
+        );
+        let delete = Command::Delete {
+            message_id: "m-9".into(),
+        };
+        assert_eq!(perform(&shared, &events, delete).await, Ok(None));
+        // By name, from a recent chatter; 90 s rounds up to 2 minutes; the 429 is waited out.
+        let timeout_cmd = Command::Timeout {
+            user: user(None, "@Viewer"),
+            seconds: 90,
+            reason: Some("x".repeat(150)),
+        };
+        assert_eq!(perform(&shared, &events, timeout_cmd).await, Ok(None));
+        let ban = Command::Ban {
+            user: user(Some("123"), "whoever"),
+            reason: None,
+        };
+        assert_eq!(perform(&shared, &events, ban).await, Ok(None));
+        let unban = Command::Unban {
+            user: user(Some("123"), "whoever"),
+        };
+        assert_eq!(perform(&shared, &events, unban).await, Ok(None));
+        let unknown = Command::Ban {
+            user: user(None, "stranger"),
+            reason: None,
+        };
+        let err = perform(&shared, &events, unknown).await.unwrap_err();
+        assert!(err.contains("hasn't chatted"), "{err}");
+        let poll = Command::Poll {
+            title: "q".into(),
+            choices: vec![],
+            seconds: 60,
+        };
+        assert!(
+            perform(&shared, &events, poll)
+                .await
+                .unwrap_err()
+                .contains("kick.com")
+        );
+
+        let log = log.lock().unwrap().clone();
+        let refresh = log.iter().find(|r| r.path == "/oauth/token").unwrap();
+        assert!(refresh.body.contains("grant_type=refresh_token"));
+        assert!(refresh.body.contains("client_secret=shh"));
+        assert!(
+            log.iter()
+                .filter(|r| r.path != "/oauth/token")
+                .skip(1)
+                .all(|r| r.bearer == "fresh")
+        );
+        let chat: Value =
+            serde_json::from_str(&log.iter().find(|r| r.path == "/chat").unwrap().body).unwrap();
+        assert_eq!(
+            chat,
+            json!({"type": "user", "broadcaster_user_id": 7, "content": "hello", "reply_to_message_id": "parent"})
+        );
+        assert!(
+            log.iter()
+                .any(|r| r.method == "DELETE" && r.path == "/chat/m-9")
+        );
+        let bans: Vec<Value> = log
+            .iter()
+            .filter(|r| r.method == "POST" && r.path == "/moderation/bans")
+            .map(|r| serde_json::from_str(&r.body).unwrap())
+            .collect();
+        assert_eq!(bans.len(), 3, "the rate-limited ban was sent again");
+        assert_eq!(bans[1]["user_id"], 99);
+        assert_eq!(bans[1]["duration"], 2);
+        assert_eq!(bans[1]["reason"].as_str().unwrap().len(), 100);
+        assert_eq!(bans[2], json!({"broadcaster_user_id": 7, "user_id": 123}));
+        let unban: Value = serde_json::from_str(
+            &log.iter()
+                .find(|r| r.method == "DELETE" && r.path == "/moderation/bans")
+                .unwrap()
+                .body,
+        )
+        .unwrap();
+        assert_eq!(unban, json!({"broadcaster_user_id": 7, "user_id": 123}));
+    }
+
+    #[tokio::test]
+    async fn refuses_without_a_sign_in() {
+        let (events, _rx) = EventSink::channel(Platform::Kick, 10);
+        let send = Command::Send {
+            text: "hi".into(),
+            reply_to: None,
+        };
+        let err = perform(&Shared::default(), &events, send)
+            .await
+            .unwrap_err();
+        assert!(err.contains("sign in to Kick"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn signs_in_through_the_fixed_redirect() {
+        let (base, log) = kick_server().await;
+        let pending = auth::start(&exchange()).await.unwrap();
+        let url = reqwest::Url::parse(&pending.url).unwrap();
+        let q: HashMap<String, String> = url.query_pairs().into_owned().collect();
+        assert_eq!(q["redirect_uri"], auth::REDIRECT_URI);
+        assert_eq!(q["code_challenge_method"], "S256");
+        assert!(q["scope"].contains("chat:write") && q["scope"].contains("moderation:ban"));
+        let state = q["state"].clone();
+        let browser = tokio::spawn(async move {
+            reqwest::get(format!(
+                "{}?code=the-code&state={state}",
+                auth::REDIRECT_URI
+            ))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+        });
+        let token = auth::finish(
+            &reqwest::Client::new(),
+            &exchange(),
+            &format!("{base}/oauth/token"),
+            pending,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            (token.access.as_str(), token.refresh.as_str()),
+            ("fresh", "r2")
+        );
+        assert!(browser.await.unwrap().contains("Signed in to Kick"));
+        let log = log.lock().unwrap().clone();
+        let form = &log.iter().find(|r| r.path == "/oauth/token").unwrap().body;
+        for part in [
+            "grant_type=authorization_code",
+            "code=the-code",
+            "code_verifier=",
+            "client_secret=shh",
+        ] {
+            assert!(form.contains(part), "{part} missing from {form}");
+        }
     }
 }

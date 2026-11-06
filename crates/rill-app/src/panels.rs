@@ -325,11 +325,28 @@ impl ChatView {
                             })),
                     )
             });
-            let line = if p == Platform::Kick && status == ConnectionStatus::Connected {
+            let line = if p == Platform::Kick
+                && status == ConnectionStatus::Connected
+                && account.is_none()
+            {
                 SharedString::from("Reading chat (read-only)")
             } else {
                 line
             };
+            // Kick reads without an account; signing in adds sending and moderation.
+            let kick_sign_in =
+                (p == Platform::Kick && set_up && account.is_none() && prompt.is_none()).then(
+                    || {
+                        Button::new("kick-signin")
+                            .xsmall()
+                            .primary()
+                            .label("Sign in")
+                            .tooltip("Sign in to send and moderate on Kick")
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                view.account(Platform::Kick, Command::SignIn, window, cx);
+                            }))
+                    },
+                );
             let button = if !set_up || read_only_kick {
                 None
             } else {
@@ -441,6 +458,7 @@ impl ChatView {
                                 .text_color(rgb(style::MUTED))
                                 .child(line),
                         )
+                        .children(kick_sign_in)
                         .children(button),
                 )
                 .children(error.map(|e| div().text_xs().text_color(rgb(style::ERROR)).child(e)))

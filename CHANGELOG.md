@@ -17,7 +17,8 @@ Rill's first release, in progress.
 - Accounts: connect Twitch with a device code, YouTube through the browser, and pick a Kick channel to read. Tokens are kept in the system's credential store.
 - Twitch: chat, deletions and clears over EventSub, sending and replies, moderation and polls, with automatic token refresh and reconnects.
 - YouTube: the live chat of your current stream, sending, deleting, timeouts, bans and unbans, with a warning before the daily API quota runs out.
-- Kick: read-only chat for any channel, without an account, over whichever chat socket Kick offers.
+- Kick: chat for any channel, without an account, over whichever chat socket Kick offers. Signing in through Kick's official API adds sending, replies, deleting messages, timeouts, bans and unbans; reading your own channel starts by itself after sign-in.
+- Connecting an account opens the sign-in page in the browser straight away; Accounts keeps Open page and Copy link for using another browser.
 - 7TV emotes: the channel's set on Twitch and Kick and 7TV's global set everywhere, animated, at their own sizes, with zero-width emotes drawn over the emote before them. Emotes the streamer adds, removes or renames update live.
 - Ctrl+F (Cmd+F on macOS) searches the feed: only messages whose text or author matches stay visible, with a count. Esc closes the search.
 - Keyboard use: F6 moves between the composer and the buttons, Tab and Shift+Tab move between buttons, Esc returns to the composer, and Esc then Tab leaves it.

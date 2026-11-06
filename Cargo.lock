@@ -5309,8 +5309,10 @@ dependencies = [
 name = "rill-kick"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "futures-util",
+ "getrandom 0.3.4",
  "reqwest",
  "rill-core",
  "rill-emotes",
@@ -5318,6 +5320,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tokio-tungstenite",
  "tracing",

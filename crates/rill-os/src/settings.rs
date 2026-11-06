@@ -41,6 +41,10 @@ pub struct KickSettings {
     pub channel: Option<String>,
     /// Overrides the built-in app client ID, for sending and moderation.
     pub client_id: Option<String>,
+    /// The app's client secret, for development: Rill then signs in to Kick directly.
+    pub client_secret: Option<String>,
+    /// The sign-in helper's address, which holds the client secret instead of Rill.
+    pub auth_helper: Option<String>,
 }
 
 /// Where the settings file lives.
