@@ -52,8 +52,8 @@ Rill needs an app registration on each platform. Until release builds carry them
 - **YouTube:** in Google Cloud, enable the YouTube Data API v3 and create an OAuth client of type
   **Desktop app**. Chat appears while you're live. Polling uses API quota (about 5 units per poll;
   the default daily quota is 10,000); raise `min_poll_ms` to stretch it.
-- **Kick:** read-only. Rill reads chat from Kick's unofficial socket, which Kick can change without
-  notice.
+- **Kick:** read-only, and needs no account. Rill reads chat from Kick's unofficial chat socket, as an
+  anonymous viewer would; Kick can change it without notice.
 
 Release builds can carry the IDs instead: set `RILL_TWITCH_CLIENT_ID`, `RILL_YOUTUBE_CLIENT_ID` and
 `RILL_YOUTUBE_CLIENT_SECRET` when building.
@@ -74,7 +74,7 @@ powershell -File scripts/soak.ps1 -Minutes 480   # long-stream memory check
 | `rill-sim` | Simulated chat traffic, for prototyping and benchmarks |
 | `rill-twitch` | Twitch: device-code sign-in, EventSub chat, Helix actions |
 | `rill-youtube` | YouTube: desktop sign-in with PKCE, live chat polling, moderation |
-| `rill-kick` | Kick: reads chat from Kick's Pusher socket |
+| `rill-kick` | Kick: asks Kick which chat socket to use (Centrifugo or Pusher) and reads chat from it |
 | `rill-os` | Data folders, `settings.json`, the OS credential store |
 | `rill-app` | The GPUI app; the only crate that depends on GPUI |
 

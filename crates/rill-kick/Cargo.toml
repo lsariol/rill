@@ -1,6 +1,6 @@
 [package]
 name = "rill-kick"
-description = "Rill's Kick adapter: reads chat from Kick's Pusher socket."
+description = "Rill's Kick adapter: reads chat from Kick's chat socket (Centrifugo or Pusher)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,7 +20,7 @@ chrono.workspace = true
 
 [dev-dependencies]
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros", "sync"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros", "sync", "net", "io-util"] }
 
 [lints]
 workspace = true

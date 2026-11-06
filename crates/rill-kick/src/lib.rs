@@ -1,6 +1,10 @@
-//! Rill's Kick adapter. Reads a channel's chat from Kick's (unofficial) Pusher socket; read-only.
+//! Rill's Kick adapter. Reads a channel's chat from Kick's unofficial socket (Centrifugo or Pusher,
+//! whichever Kick offers); read-only.
 
+pub mod centrifugo;
+pub mod events;
 pub mod pusher;
+pub mod realtime;
 
 use std::time::Duration;
 
@@ -13,9 +17,12 @@ use rill_core::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until, timeout};
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 
-use crate::pusher::{Frame, SubBadges};
+use crate::centrifugo::Reply;
+use crate::events::SubBadges;
+use crate::pusher::Frame;
+use crate::realtime::Transport;
 
 /// Prefix of errors where Kick's socket refused Rill outright; retrying won't help.
 const REFUSED: &str = "Kick: Kick's chat refused Rill; Kick may have changed it. Reading Kick chat needs a Rill update.";
@@ -58,12 +65,12 @@ impl Adapter for KickAdapter {
 /// What the channel page tells us.
 struct Channel {
     slug: String,
-    id: u64,
     chatroom_id: u64,
     sub_badges: SubBadges,
 }
 
 /// What interrupted a wait or a connection.
+#[derive(Debug)]
 enum Interrupt {
     Stop,
     /// Switch to this channel, or forget the channel when `None`.
@@ -73,6 +80,8 @@ enum Interrupt {
 struct Ctx {
     /// A random ID for this run, like an anonymous viewer's.
     client_id: String,
+    /// Where Centrifugo guest tokens come from; tests use a local server.
+    token_url: String,
     events: EventSink,
     requests: mpsc::Receiver<Request>,
     http: reqwest::Client,
@@ -96,6 +105,7 @@ async fn run(adapter: KickAdapter, io: AdapterIo) {
     };
     let mut ctx = Ctx {
         client_id: random_client_id(),
+        token_url: realtime::TOKEN_URL.into(),
         events,
         requests,
         http,
@@ -212,8 +222,11 @@ async fn follow(ctx: &mut Ctx, slug: &str) -> Interrupt {
         .await;
     loop {
         let result = match lookup(&ctx.http, slug).await {
-            Ok(channel) => match socket(&ctx.http, &ctx.client_id, channel.id).await {
-                Ok(url) => connection(ctx, &channel, &url).await,
+            Ok(channel) => match socket(&ctx.http, &ctx.client_id).await {
+                Ok(transport) => {
+                    tracing::debug!(transport = transport.name(), "Kick chat socket chosen");
+                    connection(ctx, &channel, &transport).await
+                }
                 Err(why) => Err(why),
             },
             Err(Lookup::Missing) => {
@@ -292,9 +305,6 @@ async fn lookup(http: &reqwest::Client, slug: &str) -> Result<Channel, Lookup> {
         .json()
         .await
         .map_err(|e| Lookup::Retry(format!("Kick: unexpected channel data ({e}).")))?;
-    let id = v["id"].as_u64().ok_or_else(|| {
-        Lookup::Retry("Kick: the channel data has no ID; Kick may have changed it.".into())
-    })?;
     let chatroom_id = v["chatroom"]["id"].as_u64().ok_or_else(|| {
         Lookup::Retry("Kick: the channel data has no chatroom; Kick may have changed it.".into())
     })?;
@@ -311,23 +321,23 @@ async fn lookup(http: &reqwest::Client, slug: &str) -> Result<Channel, Lookup> {
         .collect();
     Ok(Channel {
         slug: slug.to_string(),
-        id,
         chatroom_id,
         sub_badges,
     })
 }
 
-/// Asks Kick where this channel's chat socket is, as an anonymous viewer would.
-async fn socket(
+/// Posts JSON to web.kick.com. A 4xx other than 429 means Kick refused Rill's request outright.
+async fn post_json(
     http: &reqwest::Client,
-    client_id: &str,
-    channel_id: u64,
-) -> Result<String, String> {
+    url: &str,
+    body: &Value,
+    what: &str,
+) -> Result<Value, String> {
     let res = http
-        .post(pusher::connection_url(channel_id))
+        .post(url)
         .header("Accept", "application/json")
         .header("x-app-platform", "web")
-        .json(&pusher::connection_body(client_id))
+        .json(body)
         .send()
         .await
         .map_err(|e| {
@@ -335,53 +345,140 @@ async fn socket(
         })?;
     let status = res.status();
     if !status.is_success() {
-        let why = format!("Kick refused the chat settings request ({status})");
-        return Err(if status.is_client_error() {
-            format!("{REFUSED} ({why})")
-        } else {
-            format!("{why}. Rill will keep trying.")
-        });
+        let why = format!("Kick refused the {what} request ({status})");
+        return Err(
+            if status.is_client_error() && status != reqwest::StatusCode::TOO_MANY_REQUESTS {
+                format!("{REFUSED} ({why})")
+            } else {
+                format!("{why}. Rill will keep trying.")
+            },
+        );
     }
-    let v: Value = res
-        .json()
+    res.json()
         .await
-        .map_err(|e| format!("Kick: unexpected chat settings ({e})."))?;
-    pusher::socket_from_settings(&v).map_err(|why| format!("{REFUSED} ({why})"))
+        .map_err(|e| format!("Kick: unexpected {what} answer ({e})."))
+}
+
+/// Asks Kick which chat socket to use, as an anonymous viewer would.
+async fn socket(http: &reqwest::Client, client_id: &str) -> Result<Transport, String> {
+    let body = realtime::connection_body(client_id, &realtime::PROVIDERS);
+    let v = post_json(http, realtime::CONNECTION_URL, &body, "chat settings").await?;
+    realtime::transport(&v, &realtime::PROVIDERS).map_err(|why| format!("{REFUSED} ({why})"))
+}
+
+/// A guest token for Kick's Centrifugo socket.
+async fn guest_token(ctx: &Ctx) -> Result<String, String> {
+    let body = realtime::token_body(&ctx.client_id);
+    let v = post_json(&ctx.http, &ctx.token_url, &body, "chat token").await?;
+    realtime::token(&v).map_err(|why| format!("{REFUSED} ({why})"))
 }
 
 /// One socket connection. `Ok(Some)` when interrupted, `Ok(None)` after a long healthy run, `Err` when lost early.
 async fn connection(
     ctx: &mut Ctx,
     channel: &Channel,
-    url: &str,
+    transport: &Transport,
 ) -> Result<Option<Interrupt>, String> {
-    let (mut ws, _) = timeout(
+    let started = Instant::now();
+    let mut subscribed = false;
+    let end = match transport {
+        Transport::Pusher { url } => pusher_session(ctx, channel, url, &mut subscribed).await,
+        Transport::Centrifugo { url } => {
+            centrifugo_session(ctx, channel, url, &mut subscribed).await
+        }
+    };
+    match end {
+        Err(why) if subscribed && started.elapsed() > Duration::from_secs(60) => {
+            tracing::info!(err = %why, "Kick chat dropped after a healthy run");
+            Ok(None)
+        }
+        other => other,
+    }
+}
+
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Opens the socket. It sends no Origin header, which Kick's Centrifugo accepts from apps.
+async fn open(url: &str) -> Result<Socket, String> {
+    let (ws, _) = timeout(
         Duration::from_secs(15),
         tokio_tungstenite::connect_async(url),
     )
     .await
     .map_err(|_| "Kick: the chat socket didn't answer in 15 s.".to_string())?
     .map_err(|e| format!("Kick: can't reach the chat socket ({e})."))?;
-    let started = Instant::now();
+    Ok(ws)
+}
+
+/// What a socket message turned out to be, before protocol decoding.
+enum Incoming {
+    Text(String),
+    Skip,
+    Lost(String),
+}
+
+/// Answers transport pings and turns closes and errors into reasons.
+async fn incoming(ws: &mut Socket, msg: Option<Result<Message, WsError>>) -> Incoming {
+    match msg {
+        Some(Ok(Message::Text(t))) => Incoming::Text(t.to_string()),
+        Some(Ok(Message::Ping(p))) => {
+            let _ = ws.send(Message::Pong(p)).await;
+            Incoming::Skip
+        }
+        Some(Ok(Message::Close(frame))) => Incoming::Lost(match frame {
+            Some(f) if f.reason.is_empty() => {
+                format!("Kick closed the chat socket (code {}).", u16::from(f.code))
+            }
+            Some(f) => format!(
+                "Kick closed the chat socket (code {}: {}).",
+                u16::from(f.code),
+                f.reason
+            ),
+            None => "Kick closed the chat socket.".into(),
+        }),
+        None => Incoming::Lost("Kick closed the chat socket.".into()),
+        Some(Ok(_)) => Incoming::Skip,
+        Some(Err(e)) => Incoming::Lost(format!("Kick: chat socket error ({e}).")),
+    }
+}
+
+/// Passes a Kick event on. False when Rill is shutting down.
+async fn deliver(ctx: &Ctx, channel: &Channel, event: &str, data: &Value) -> bool {
+    match events::to_event(event, data, &channel.sub_badges) {
+        Some(e) => ctx.events.send(e).await,
+        None => true,
+    }
+}
+
+async fn connected(ctx: &Ctx, channel: &Channel, transport: &str) {
+    tracing::info!(channel = %channel.slug, transport, "Kick chat connected");
+    ctx.events
+        .status(ConnectionStatus::Connected, None, Capabilities::NONE)
+        .await;
+}
+
+/// Reads chat over Pusher: the client pings when the socket goes quiet.
+async fn pusher_session(
+    ctx: &mut Ctx,
+    channel: &Channel,
+    url: &str,
+    subscribed: &mut bool,
+) -> Result<Option<Interrupt>, String> {
+    let mut ws = open(url).await?;
     let mut activity = Duration::from_secs(120);
     let mut last = Instant::now();
     let mut pinged = false;
-    let mut subscribed = false;
     let end: Result<Option<Interrupt>, String> = loop {
         let quiet_until = last + activity;
         tokio::select! {
             msg = ws.next() => {
                 last = Instant::now();
                 pinged = false;
-                let text = match msg {
-                    Some(Ok(Message::Text(t))) => t,
-                    Some(Ok(Message::Ping(p))) => {
-                        let _ = ws.send(Message::Pong(p)).await;
-                        continue;
-                    }
-                    Some(Ok(Message::Close(_))) | None => break Err("Kick closed the chat socket.".into()),
-                    Some(Ok(_)) => continue,
-                    Some(Err(e)) => break Err(format!("Kick: chat socket error ({e}).")),
+                let text = match incoming(&mut ws, msg).await {
+                    Incoming::Text(t) => t,
+                    Incoming::Skip => continue,
+                    Incoming::Lost(why) => break Err(why),
                 };
                 match pusher::parse(&text) {
                     Ok(Frame::Connected { activity_timeout }) => {
@@ -391,19 +488,16 @@ async fn connection(
                         }
                     }
                     Ok(Frame::Subscribed) => {
-                        subscribed = true;
-                        tracing::info!(channel = %channel.slug, "Kick chat connected");
-                        ctx.events.status(ConnectionStatus::Connected, None, Capabilities::NONE).await;
+                        *subscribed = true;
+                        connected(ctx, channel, "pusher").await;
                     }
                     Ok(Frame::Ping) => {
                         let _ = ws.send(Message::text(pusher::pong())).await;
                     }
                     Ok(Frame::Pong) => {}
-                    Ok(Frame::Error(m)) => break Err(format!("{REFUSED} ({m})")),
+                    Ok(Frame::Error(m)) => break Err(format!("Kick: the chat socket reported an error ({m}).")),
                     Ok(Frame::Kick { event, data }) => {
-                        if let Some(e) = pusher::to_event(&event, &data, &channel.sub_badges)
-                            && !ctx.events.send(e).await
-                        {
+                        if !deliver(ctx, channel, &event, &data).await {
                             break Ok(Some(Interrupt::Stop));
                         }
                     }
@@ -429,13 +523,122 @@ async fn connection(
         }
     };
     let _ = ws.close(None).await;
-    match end {
-        Err(why) if subscribed && started.elapsed() > Duration::from_secs(60) => {
-            tracing::info!(err = %why, "Kick chat dropped after a healthy run");
-            Ok(None)
-        }
-        other => other,
+    end
+}
+
+/// Reads chat over Centrifugo: the server pings, and the guest token is renewed before it runs out.
+async fn centrifugo_session(
+    ctx: &mut Ctx,
+    channel: &Channel,
+    url: &str,
+    subscribed: &mut bool,
+) -> Result<Option<Interrupt>, String> {
+    let token = guest_token(ctx).await?;
+    let mut ws = open(url).await?;
+    let mut last_id = 1u32;
+    let mut next_id = || {
+        last_id += 1;
+        last_id
+    };
+    if ws
+        .send(Message::text(centrifugo::connect(1, &token)))
+        .await
+        .is_err()
+    {
+        let _ = ws.close(None).await;
+        return Err("Kick: the chat socket closed during the handshake.".into());
     }
+    // Until the handshake says otherwise; Kick's server pings every 25 s.
+    let mut quiet = Duration::from_secs(25) + PING_SLACK;
+    let mut last = Instant::now();
+    let mut refresh_at: Option<Instant> = None;
+    let end: Result<Option<Interrupt>, String> = 'session: loop {
+        let refresh_due = async {
+            match refresh_at {
+                Some(t) => sleep_until(t).await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            msg = ws.next() => {
+                last = Instant::now();
+                let text = match incoming(&mut ws, msg).await {
+                    Incoming::Text(t) => t,
+                    Incoming::Skip => continue,
+                    Incoming::Lost(why) => break Err(why),
+                };
+                for reply in centrifugo::parse(&text) {
+                    match reply {
+                        Ok(Reply::Ping) => {
+                            if ws.send(Message::text(centrifugo::PING)).await.is_err() {
+                                break 'session Err("Kick: the chat socket closed.".into());
+                            }
+                        }
+                        Ok(Reply::Connected { ping_secs, ttl_secs }) => {
+                            if let Some(p) = ping_secs {
+                                quiet = Duration::from_secs(p.clamp(5, 300)) + PING_SLACK;
+                            }
+                            refresh_at = ttl_secs.map(refresh_time);
+                            let sub = centrifugo::subscribe(next_id(), channel.chatroom_id);
+                            if ws.send(Message::text(sub)).await.is_err() {
+                                break 'session Err("Kick: couldn't subscribe to the chatroom.".into());
+                            }
+                        }
+                        Ok(Reply::Subscribed) => {
+                            *subscribed = true;
+                            connected(ctx, channel, "centrifugo").await;
+                        }
+                        Ok(Reply::Refreshed { ttl_secs }) => refresh_at = ttl_secs.map(refresh_time),
+                        Ok(Reply::Error { code, message }) => {
+                            break 'session Err(format!("Kick: the chat socket refused a request ({code}: {message})."));
+                        }
+                        Ok(Reply::Disconnect { code, reason }) => {
+                            break 'session Err(format!("Kick closed the chat socket (code {code}: {reason})."));
+                        }
+                        Ok(Reply::Unsubscribed { code }) => {
+                            break 'session Err(format!("Kick dropped the chatroom subscription (code {code})."));
+                        }
+                        Ok(Reply::Kick { event, data }) => {
+                            if !deliver(ctx, channel, &event, &data).await {
+                                break 'session Ok(Some(Interrupt::Stop));
+                            }
+                        }
+                        Ok(Reply::Other) => {}
+                        Err(e) => tracing::warn!(err = %e, len = text.len(), "Kick socket message skipped"),
+                    }
+                }
+            }
+            _ = sleep_until(last + quiet) => break Err("Kick: the chat socket went quiet.".into()),
+            _ = refresh_due => {
+                refresh_at = None;
+                // On failure the server disconnects when the token runs out, and the reconnect gets a new one.
+                match guest_token(ctx).await {
+                    Ok(token) => {
+                        if ws.send(Message::text(centrifugo::refresh(next_id(), &token))).await.is_err() {
+                            break Err("Kick: the chat socket closed.".into());
+                        }
+                    }
+                    Err(e) => tracing::warn!(err = %e, "Kick chat token not renewed"),
+                }
+            }
+            req = ctx.requests.recv() => {
+                let Some(req) = req else { break Ok(Some(Interrupt::Stop)) };
+                if let Some(i) = answer(ctx, req).await {
+                    break Ok(Some(i));
+                }
+            }
+        }
+    };
+    let _ = ws.close(None).await;
+    end
+}
+
+/// How long past the server's ping interval a silent socket counts as lost.
+const PING_SLACK: Duration = Duration::from_secs(15);
+
+/// When to renew a token that lasts `ttl_secs`: at three quarters of its life.
+fn refresh_time(ttl_secs: u64) -> Instant {
+    Instant::now() + Duration::from_secs(ttl_secs.max(4) * 3 / 4)
 }
 
 #[cfg(test)]
@@ -466,6 +669,255 @@ mod tests {
         );
         assert_eq!(clean_channel("not a name"), None);
         assert_eq!(clean_channel(""), None);
+    }
+}
+
+/// Both socket sessions against local stand-ins for Kick's servers.
+#[cfg(test)]
+mod sessions {
+    use super::*;
+    use rill_core::Event;
+    use serde_json::json;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+    use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+
+    fn ctx(token_url: &str) -> (Ctx, mpsc::Receiver<Event>, mpsc::Sender<Request>) {
+        let (events, rx) = EventSink::channel(Platform::Kick, 100);
+        let (tx, requests) = mpsc::channel(4);
+        let ctx = Ctx {
+            client_id: "client-1".into(),
+            token_url: token_url.into(),
+            events,
+            requests,
+            http: reqwest::Client::new(),
+        };
+        (ctx, rx, tx)
+    }
+
+    fn channel() -> Channel {
+        Channel {
+            slug: "someone".into(),
+            chatroom_id: 42,
+            sub_badges: Vec::new(),
+        }
+    }
+
+    /// Answers every HTTP request with a fresh token, `t1`, `t2`, … and checks the body.
+    async fn token_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for n in 1.. {
+                let (mut s, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0; 4096];
+                let mut got = 0;
+                while !String::from_utf8_lossy(&buf[..got]).contains("client-1") {
+                    let r = s.read(&mut buf[got..]).await.unwrap();
+                    assert!(r > 0, "token request had no client_id");
+                    got += r;
+                }
+                let body = json!({"data": {"token": format!("t{n}")}}).to_string();
+                let res = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                s.write_all(res.as_bytes()).await.unwrap();
+            }
+        });
+        format!("http://{addr}/token")
+    }
+
+    type Server = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+
+    /// A one-connection socket server; `script` plays Kick's side.
+    async fn socket_server<F, Fut>(script: F) -> String
+    where
+        F: FnOnce(Server) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (s, _) = listener.accept().await.unwrap();
+            script(tokio_tungstenite::accept_async(s).await.unwrap()).await;
+        });
+        format!("ws://{addr}")
+    }
+
+    async fn recv_json(ws: &mut Server) -> Value {
+        loop {
+            match ws.next().await.unwrap().unwrap() {
+                Message::Text(t) => return serde_json::from_str(&t).unwrap(),
+                Message::Ping(_) | Message::Pong(_) => continue,
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+    }
+
+    async fn send(ws: &mut Server, text: &str) {
+        ws.send(Message::text(text)).await.unwrap();
+    }
+
+    /// Collects what the session reported once it ends.
+    fn drain(rx: &mut mpsc::Receiver<Event>) -> (bool, Vec<String>) {
+        let (mut connected, mut messages) = (false, Vec::new());
+        while let Ok(e) = rx.try_recv() {
+            match e {
+                Event::Status { status, .. } => connected |= status == ConnectionStatus::Connected,
+                Event::Message(m) => messages.push(m.plain_text()),
+                _ => {}
+            }
+        }
+        (connected, messages)
+    }
+
+    const CHAT: &str = r##"{"push":{"channel":"chatrooms.42.v2","pub":{"data":{"event":"App\\Events\\ChatMessageSentEvent","data":"{\"id\":\"m1\",\"content\":\"hello [emote:1:KEKW]\",\"type\":\"message\",\"sender\":{\"id\":7,\"username\":\"Viewer\",\"slug\":\"viewer\",\"identity\":{\"color\":\"#ffffff\",\"badges\":[]}}}"}}}}"##;
+
+    #[tokio::test]
+    async fn centrifugo_connects_reads_answers_pings_and_renews_its_token() {
+        let token_url = token_server().await;
+        let url = socket_server(|mut ws| async move {
+            let c = recv_json(&mut ws).await;
+            assert_eq!(c["id"], 1);
+            assert_eq!(c["connect"], json!({"token": "t1", "name": "js"}));
+            send(
+                &mut ws,
+                r#"{"id":1,"connect":{"client":"c","version":"6","expires":true,"ttl":4,"ping":25,"pong":true}}"#,
+            )
+            .await;
+            let s = recv_json(&mut ws).await;
+            assert_eq!(s["subscribe"]["channel"], "chatrooms.42.v2");
+            let id = s["id"].as_u64().unwrap();
+            // A reply and a ping in one frame.
+            send(&mut ws, &format!("{{\"id\":{id},\"subscribe\":{{}}}}\n{{}}")).await;
+            assert_eq!(recv_json(&mut ws).await, json!({}));
+            send(&mut ws, CHAT).await;
+            let r = recv_json(&mut ws).await;
+            assert_eq!(r["refresh"]["token"], "t2");
+            send(
+                &mut ws,
+                &format!(r#"{{"id":{},"refresh":{{"expires":true,"ttl":2700}}}}"#, r["id"]),
+            )
+            .await;
+            send(&mut ws, r#"{"push":{"disconnect":{"code":3001,"reason":"shutdown"}}}"#).await;
+            let _ = ws.next().await;
+        })
+        .await;
+        let (mut ctx, mut rx, _tx) = ctx(&token_url);
+        let mut subscribed = false;
+        let end = timeout(
+            Duration::from_secs(10),
+            centrifugo_session(&mut ctx, &channel(), &url, &mut subscribed),
+        )
+        .await
+        .expect("session hung");
+        let err = end.expect_err("a server disconnect ends the session");
+        assert!(err.contains("3001") && err.contains("shutdown"), "{err}");
+        assert!(subscribed);
+        let (connected, messages) = drain(&mut rx);
+        assert!(connected);
+        assert_eq!(messages, ["hello KEKW"]);
+    }
+
+    #[tokio::test]
+    async fn centrifugo_reports_a_refused_subscription() {
+        let token_url = token_server().await;
+        let url = socket_server(|mut ws| async move {
+            recv_json(&mut ws).await;
+            send(&mut ws, r#"{"id":1,"connect":{"client":"c"}}"#).await;
+            let s = recv_json(&mut ws).await;
+            send(
+                &mut ws,
+                &format!(
+                    r#"{{"id":{},"error":{{"code":103,"message":"permission denied"}}}}"#,
+                    s["id"]
+                ),
+            )
+            .await;
+            let _ = ws.next().await;
+        })
+        .await;
+        let (mut ctx, mut rx, _tx) = ctx(&token_url);
+        let mut subscribed = false;
+        let err = centrifugo_session(&mut ctx, &channel(), &url, &mut subscribed)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("103") && err.contains("permission denied"),
+            "{err}"
+        );
+        assert!(!subscribed && !drain(&mut rx).0);
+    }
+
+    #[tokio::test]
+    async fn centrifugo_stops_when_asked_to_switch_channels() {
+        let token_url = token_server().await;
+        let url = socket_server(|mut ws| async move {
+            recv_json(&mut ws).await;
+            send(&mut ws, r#"{"id":1,"connect":{"client":"c"}}"#).await;
+            let s = recv_json(&mut ws).await;
+            send(
+                &mut ws,
+                &format!(r#"{{"id":{},"subscribe":{{}}}}"#, s["id"]),
+            )
+            .await;
+            let _ = ws.next().await;
+        })
+        .await;
+        let (mut ctx, mut rx, tx) = ctx(&token_url);
+        tokio::spawn(async move {
+            sleep_until(Instant::now() + Duration::from_millis(300)).await;
+            let command = Command::Join {
+                channel: "other".into(),
+            };
+            let id = rill_core::RequestId(1);
+            tx.send(Request { id, command }).await.unwrap();
+        });
+        let mut subscribed = false;
+        let end = centrifugo_session(&mut ctx, &channel(), &url, &mut subscribed).await;
+        assert!(matches!(end, Ok(Some(Interrupt::Switch(Some(c)))) if c == "other"));
+        assert!(drain(&mut rx).0);
+    }
+
+    #[tokio::test]
+    async fn pusher_subscribes_reads_and_reports_close_codes() {
+        let url = socket_server(|mut ws| async move {
+            send(
+                &mut ws,
+                r#"{"event":"pusher:connection_established","data":"{\"socket_id\":\"1.2\",\"activity_timeout\":120}"}"#,
+            )
+            .await;
+            let s = recv_json(&mut ws).await;
+            assert_eq!(s["event"], "pusher:subscribe");
+            assert_eq!(s["data"]["channel"], "chatrooms.42.v2");
+            send(
+                &mut ws,
+                r#"{"event":"pusher_internal:subscription_succeeded","data":"{}","channel":"chatrooms.42.v2"}"#,
+            )
+            .await;
+            send(&mut ws, r#"{"event":"pusher:ping","data":{}}"#).await;
+            assert_eq!(recv_json(&mut ws).await["event"], "pusher:pong");
+            let chat = r#"{"event":"App\\Events\\ChatMessageSentEvent","channel":"chatrooms.42.v2","data":"{\"id\":\"m1\",\"content\":\"hi\",\"sender\":{\"id\":7,\"username\":\"Viewer\"}}"}"#;
+            send(&mut ws, chat).await;
+            let frame = CloseFrame {
+                code: CloseCode::from(4001),
+                reason: "App key not in this cluster".into(),
+            };
+            ws.send(Message::Close(Some(frame))).await.unwrap();
+            let _ = ws.next().await;
+        })
+        .await;
+        let (mut ctx, mut rx, _tx) = ctx("http://127.0.0.1:9/unused");
+        let mut subscribed = false;
+        let err = pusher_session(&mut ctx, &channel(), &url, &mut subscribed)
+            .await
+            .unwrap_err();
+        assert!(err.contains("4001") && err.contains("cluster"), "{err}");
+        let (connected, messages) = drain(&mut rx);
+        assert!(connected && subscribed);
+        assert_eq!(messages, ["hi"]);
     }
 }
 
