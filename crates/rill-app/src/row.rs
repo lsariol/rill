@@ -78,13 +78,11 @@ impl ChatView {
                     .when(!compact && !m.author.badges.is_empty(), |d| {
                         d.child(badges(&m.author.badges))
                     })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .children(quote)
-                            .child(chat_body(m, entry.deleted)),
-                    )
+                    .child(div().flex_1().min_w_0().children(quote).child(chat_body(
+                        m,
+                        entry.deleted,
+                        self.show_deleted,
+                    )))
                     .cursor_pointer()
                     .on_click(cx.listener(move |view, _, window, cx| {
                         view.open_panel(Panel::User(card.clone()), window, cx);
@@ -182,7 +180,32 @@ fn badge_chip(b: &Badge) -> impl IntoElement {
 }
 
 /// The name and message text; images flow word by word, plain text wraps as one run.
-fn chat_body(m: &ChatMessage, deleted: bool) -> AnyElement {
+fn chat_body(m: &ChatMessage, deleted: bool, show_deleted: bool) -> AnyElement {
+    if deleted && show_deleted {
+        // The text stays readable for moderators, but clearly gone from the platform.
+        return div()
+            .flex()
+            .items_start()
+            .gap_1p5()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .opacity(0.45)
+                    .italic()
+                    .line_through()
+                    .child(chat_body(m, false, false)),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .pt(px(2.))
+                    .text_xs()
+                    .text_color(rgb(style::FAINT))
+                    .child("deleted"),
+            )
+            .into_any_element();
+    }
     let name_color = style::readable_name(m.author.color);
     let action = m.kind == MessageKind::Action;
     if deleted {
@@ -446,10 +469,30 @@ fn sent_row(entry: &Entry, s: &SentMessage, name: &str, compact: bool) -> impl I
             .with_highlights(highlights)
             .into_any_element()
     };
+    // One mark in the icon column, like received messages, so the text lines up with them.
+    let mark = match s.deliveries.as_slice() {
+        [one] => style::platform_icon(one.platform, ICON).into_any_element(),
+        _ => all_mark().into_any_element(),
+    };
     row_frame(entry.seq, false, compact)
-        .child(div().flex().flex_none().gap_1().pt(px(1.)).children(marks))
+        .child(div().pt(px(3.)).w(px(ICON)).flex_none().child(mark))
         .when(!compact, |d| d.child(time(entry.received_ms)))
         .child(div().flex_1().min_w_0().child(body).children(failures))
+        .child(div().flex().flex_none().gap_1().pt(px(1.)).children(marks))
+}
+
+/// A small rainbow square: sent to every platform.
+fn all_mark() -> impl IntoElement {
+    div()
+        .size(px(ICON))
+        .rounded_sm()
+        .overflow_hidden()
+        .flex()
+        .children(
+            style::RAINBOW
+                .iter()
+                .map(|c| div().flex_1().h_full().bg(rgb(*c))),
+        )
 }
 
 fn notice_row(entry: &Entry, n: &Notice, compact: bool) -> impl IntoElement {

@@ -231,6 +231,7 @@ fn main() -> ExitCode {
         Theme::change(ThemeMode::Dark, None, cx);
         composer::init(cx);
         focus::init(cx);
+        panels::init(cx);
         search::init(cx);
         navigate::init(cx);
 

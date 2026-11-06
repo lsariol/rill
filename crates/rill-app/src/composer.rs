@@ -41,7 +41,8 @@ actions!(
 
 const CONTEXT: &str = "Composer";
 const MAX_COMPLETIONS: usize = 6;
-const MAX_EMOTES: usize = 8;
+/// Emote rows shown at once; the rest scroll.
+const VISIBLE_EMOTES: usize = 8;
 
 /// A row in the popup above the composer.
 #[derive(Clone)]
@@ -51,7 +52,8 @@ pub(crate) enum Suggestion {
     Emote(Vec<Platform>, EmoteOption),
 }
 
-/// The `:name` being typed just before the cursor: its byte range and the name so far.
+/// The `:name` being typed just before the cursor: its byte range and the name so far, which is
+/// empty for a `:` alone.
 pub(crate) fn emote_token(text: &str, cursor: usize) -> Option<(Range<usize>, &str)> {
     let cursor = (0..=cursor.min(text.len()))
         .rev()
@@ -63,7 +65,7 @@ pub(crate) fn emote_token(text: &str, cursor: usize) -> Option<(Range<usize>, &s
         .find(|(_, c)| c.is_whitespace())
         .map_or(0, |(i, c)| i + c.len_utf8());
     let name = before[start..].strip_prefix(':')?;
-    (!name.is_empty() && !name.contains(':')).then_some((start..cursor, name))
+    (!name.contains(':')).then_some((start..cursor, name))
 }
 
 /// The text with `range` replaced by the emote and a space, and the cursor's new line and column.
@@ -75,6 +77,18 @@ pub(crate) fn insert_emote(text: &str, range: Range<usize>, name: &str) -> (Stri
     // Past the space that was already there.
     let cursor = Position::new(end.line, end.character + u32::from(gap.is_empty()));
     (format!("{head}{rest}"), cursor)
+}
+
+/// The first row to show so that `selected` is in view, moving `top` as little as possible.
+fn in_view(top: usize, selected: usize, total: usize) -> usize {
+    let top = if selected < top {
+        selected
+    } else if selected >= top + VISIBLE_EMOTES {
+        selected + 1 - VISIBLE_EMOTES
+    } else {
+        top
+    };
+    top.min(total.saturating_sub(VISIBLE_EMOTES))
 }
 
 /// The line and column (in characters) at the end of `head`.
@@ -161,7 +175,7 @@ impl ChatView {
         match emote_token(&text, state.cursor()) {
             Some((_, name)) => self
                 .session
-                .emote_choices(self.destination, name, MAX_EMOTES)
+                .emote_choices(self.destination, name, usize::MAX)
                 .into_iter()
                 .map(|(p, e)| Suggestion::Emote(p, e))
                 .collect(),
@@ -201,6 +215,7 @@ impl ChatView {
             state.set_cursor_position(cursor, window, cx);
         });
         self.completion_ix = 0;
+        self.completion_top = 0;
         cx.notify();
     }
 
@@ -320,8 +335,17 @@ impl ChatView {
         let n = self.completions(cx).len() as isize;
         if n > 0 {
             self.completion_ix = (self.completion_ix as isize + by).rem_euclid(n) as usize;
+            self.completion_top = in_view(self.completion_top, self.completion_ix, n as usize);
             cx.notify();
         }
+    }
+
+    /// Scrolls the list without moving the selection.
+    fn scroll_completions(&mut self, by: isize, cx: &mut Context<Self>) {
+        let n = self.completions(cx).len();
+        let max = n.saturating_sub(VISIBLE_EMOTES) as isize;
+        self.completion_top = (self.completion_top as isize + by).clamp(0, max) as usize;
+        cx.notify();
     }
 
     fn dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
@@ -344,11 +368,29 @@ impl ChatView {
     }
 
     fn page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
-        self.scroll_feed_pages(-1.0, cx);
+        if self.completions(cx).len() > VISIBLE_EMOTES {
+            self.page_completions(-1, cx);
+        } else {
+            self.scroll_feed_pages(-1.0, cx);
+        }
     }
 
     fn page_down(&mut self, _: &PageDown, _: &mut Window, cx: &mut Context<Self>) {
-        self.scroll_feed_pages(1.0, cx);
+        if self.completions(cx).len() > VISIBLE_EMOTES {
+            self.page_completions(1, cx);
+        } else {
+            self.scroll_feed_pages(1.0, cx);
+        }
+    }
+
+    /// PgUp and PgDn in a long list: a page at a time, stopping at the ends.
+    fn page_completions(&mut self, by: isize, cx: &mut Context<Self>) {
+        let n = self.completions(cx).len();
+        let page = VISIBLE_EMOTES as isize - 1;
+        self.completion_ix =
+            (self.completion_ix as isize + by * page).clamp(0, n as isize - 1) as usize;
+        self.completion_top = in_view(self.completion_top, self.completion_ix, n);
+        cx.notify();
     }
 
     /// Enter: accept a half-typed command, otherwise submit.
@@ -431,6 +473,8 @@ impl ChatView {
                     prompt,
                     choices,
                 };
+                self.target_ix = 0;
+                window.focus(&self.target_focus, cx);
                 true
             }
             Submitted::PollDialog(platform) => {
@@ -485,7 +529,22 @@ impl ChatView {
                     .child(format!("{typed}/{max}"))
             });
         let completions = self.completions(cx);
-        let selected = self.completion_ix.min(completions.len().saturating_sub(1));
+        let total = completions.len();
+        let selected = self.completion_ix.min(total.saturating_sub(1));
+        let top = self
+            .completion_top
+            .min(total.saturating_sub(VISIBLE_EMOTES));
+        let more = (total > VISIBLE_EMOTES).then(|| {
+            div()
+                .px_2()
+                .text_xs()
+                .text_color(rgb(style::FAINT))
+                .child(format!(
+                    "{}–{} of {total} · PgUp and PgDn page",
+                    top + 1,
+                    (top + VISIBLE_EMOTES).min(total)
+                ))
+        });
         let popup = (!completions.is_empty()).then(|| {
             div()
                 .flex()
@@ -496,58 +555,85 @@ impl ChatView {
                 .bg(rgb(style::PANEL))
                 .border_1()
                 .border_color(rgb(style::BORDER))
-                .children(completions.into_iter().enumerate().map(|(i, suggestion)| {
-                    let row = div()
-                        .id(("suggestion", i))
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_2()
-                        .py_0p5()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .when(i == selected, |d| d.bg(rgb(style::RAISED)))
-                        .hover(|s| s.bg(rgb(style::RAISED)));
-                    let row = match &suggestion {
-                        Suggestion::Command(spec) => {
-                            let kind = match spec.is_platform() {
-                                false => "Rill",
-                                true => "Platform",
-                            };
-                            row.child(div().flex_none().child(spec.usage))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_color(rgb(style::MUTED))
-                                        .child(spec.summary),
-                                )
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .text_xs()
-                                        .text_color(rgb(style::FAINT))
-                                        .child(kind),
-                                )
-                        }
-                        Suggestion::Emote(platforms, emote) => row
-                            .child(div().flex_none().w(px(36.)).flex().justify_center().child(
-                                row::emote_image(&emote.name, emote.url.as_deref(), emote.size),
-                            ))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .child(emote.name.clone()),
-                            )
-                            .children(platforms.iter().map(|p| style::platform_icon(*p, 12.))),
+                .id("suggestions")
+                .on_scroll_wheel(cx.listener(|view, e: &gpui::ScrollWheelEvent, window, cx| {
+                    let line = window.line_height();
+                    let dy = f32::from(e.delta.pixel_delta(line).y) / f32::from(line);
+                    let rows = if dy.abs() < 1. {
+                        dy.signum()
+                    } else {
+                        dy.round()
                     };
-                    row.on_click(cx.listener(move |view, _, window, cx| {
-                        view.accept_completion(&suggestion, window, cx);
-                    }))
+                    view.scroll_completions(-(rows as isize), cx);
                 }))
+                .children(
+                    completions
+                        .into_iter()
+                        .enumerate()
+                        .skip(top)
+                        .take(VISIBLE_EMOTES)
+                        .map(|(i, suggestion)| {
+                            let row = div()
+                                .id(("suggestion", i))
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_sm()
+                                .cursor_pointer()
+                                .when(i == selected, |d| d.bg(rgb(style::RAISED)))
+                                .hover(|s| s.bg(rgb(style::RAISED)));
+                            let row = match &suggestion {
+                                Suggestion::Command(spec) => {
+                                    let kind = match spec.is_platform() {
+                                        false => "Rill",
+                                        true => "Platform",
+                                    };
+                                    row.child(div().flex_none().child(spec.usage))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_color(rgb(style::MUTED))
+                                                .child(spec.summary),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_none()
+                                                .text_xs()
+                                                .text_color(rgb(style::FAINT))
+                                                .child(kind),
+                                        )
+                                }
+                                Suggestion::Emote(platforms, emote) => row
+                                    .child(
+                                        div().flex_none().w(px(36.)).flex().justify_center().child(
+                                            row::emote_image(
+                                                &emote.name,
+                                                emote.url.as_deref(),
+                                                emote.size,
+                                            ),
+                                        ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .child(emote.name.clone()),
+                                    )
+                                    .children(
+                                        platforms.iter().map(|p| style::platform_icon(*p, 12.)),
+                                    ),
+                            };
+                            row.on_click(cx.listener(move |view, _, window, cx| {
+                                view.accept_completion(&suggestion, window, cx);
+                            }))
+                        }),
+                )
+                .children(more)
         });
 
         div()
@@ -676,7 +762,12 @@ mod tests {
             emote_token("héllo :Ka", "héllo :Ka".len()),
             Some((7..10, "Ka"))
         );
-        assert_eq!(emote_token(":", 1), None, "a colon alone");
+        assert_eq!(
+            emote_token(":", 1),
+            Some((0..1, "")),
+            "a colon alone lists them all"
+        );
+        assert_eq!(emote_token("hi :", 4), Some((3..4, "")));
         assert_eq!(
             emote_token("at 12:30", 8),
             None,
@@ -715,6 +806,15 @@ mod tests {
         assert_eq!(tab_word("/ban", 4), None);
         assert_eq!(tab_word("hi @bo", 6), None);
         assert_eq!(tab_word("é s", "é s".len()), Some((3, "s")));
+    }
+
+    #[test]
+    fn the_list_scrolls_only_as_far_as_the_selection_needs() {
+        assert_eq!(in_view(0, 3, 100), 0);
+        assert_eq!(in_view(0, 8, 100), 1, "one past the bottom");
+        assert_eq!(in_view(10, 4, 100), 4, "above the top");
+        assert_eq!(in_view(0, 99, 100), 92);
+        assert_eq!(in_view(50, 2, 5), 0, "a short list never scrolls");
     }
 
     #[test]

@@ -2,13 +2,13 @@
 
 use chrono::TimeZone;
 use gpui::{
-    AnyElement, AppContext, Context, Entity, IntoElement, ParentElement, SharedString, Styled,
-    Window, div, prelude::FluentBuilder, px, rgb,
+    AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, KeyBinding,
+    ParentElement, SharedString, Styled, Window, actions, div, prelude::FluentBuilder, px, rgb,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState, Textarea, TextareaState};
 use gpui_component::switch::Switch;
-use gpui_component::{Disableable, Sizable, StyledExt as _};
+use gpui_component::{Disableable, Selectable, Sizable, StyledExt as _};
 use rill_core::command::format_duration;
 use rill_core::session::Batch;
 use rill_core::{Action, Author, Command, ConnectionStatus, Plan, Platform, UserRef, now_ms};
@@ -16,6 +16,26 @@ use rill_core::{Action, Author, Command, ConnectionStatus, Plan, Platform, UserR
 use crate::chat_view::ChatView;
 use crate::composer::Replying;
 use crate::style;
+
+actions!(target, [TargetNext, TargetPrev, TargetRun, TargetCancel]);
+
+const TARGET_CONTEXT: &str = "TargetPrompt";
+
+/// Keys for the "which platform?" prompt: Tab or the arrows pick, Enter or Space runs, Esc cancels.
+pub fn init(cx: &mut App) {
+    let prompt = Some(TARGET_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("tab", TargetNext, prompt),
+        KeyBinding::new("right", TargetNext, prompt),
+        KeyBinding::new("down", TargetNext, prompt),
+        KeyBinding::new("shift-tab", TargetPrev, prompt),
+        KeyBinding::new("left", TargetPrev, prompt),
+        KeyBinding::new("up", TargetPrev, prompt),
+        KeyBinding::new("enter", TargetRun, prompt),
+        KeyBinding::new("space", TargetRun, prompt),
+        KeyBinding::new("escape", TargetCancel, prompt),
+    ]);
+}
 
 /// Twitch's poll limits, the strictest of the platforms.
 const POLL_TITLE_MAX: usize = 60;
@@ -99,6 +119,38 @@ impl ChatView {
     }
 
     /// Runs a planned command on one platform and closes the panel.
+    fn move_target(&mut self, by: isize, cx: &mut Context<Self>) {
+        if let Panel::Target { choices, .. } = &self.panel
+            && !choices.is_empty()
+        {
+            let n = choices.len() as isize;
+            self.target_ix = (self.target_ix as isize + by).rem_euclid(n) as usize;
+            cx.notify();
+        }
+    }
+
+    fn on_target_next(&mut self, _: &TargetNext, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_target(1, cx);
+    }
+
+    fn on_target_prev(&mut self, _: &TargetPrev, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_target(-1, cx);
+    }
+
+    fn on_target_run(&mut self, _: &TargetRun, window: &mut Window, cx: &mut Context<Self>) {
+        if let Panel::Target { plan, choices, .. } = &self.panel
+            && let Some(p) = choices.get(self.target_ix).copied()
+        {
+            let plan = plan.clone();
+            self.run_plan(p, plan, window, cx);
+        }
+    }
+
+    fn on_target_cancel(&mut self, _: &TargetCancel, window: &mut Window, cx: &mut Context<Self>) {
+        self.panel = Panel::None;
+        self.focus_composer(window, cx);
+    }
+
     fn run_plan(
         &mut self,
         platform: Platform,
@@ -168,7 +220,11 @@ impl ChatView {
         self.run_plan(platform, plan, window, cx);
     }
 
-    pub(crate) fn render_panel(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let body: AnyElement = match &self.panel {
             Panel::None => return div().into_any_element(),
             Panel::User(card) => self.render_user_card(card.clone(), cx),
@@ -177,11 +233,14 @@ impl ChatView {
                 prompt,
                 choices,
             } => {
-                let buttons = choices.iter().map(|p| {
+                let focused = self.target_focus.contains_focused(window, cx);
+                let picked = self.target_ix;
+                let buttons = choices.iter().enumerate().map(|(i, p)| {
                     let (p, plan) = (*p, plan.clone());
                     Button::new(SharedString::from(format!("target-{p}")))
                         .small()
                         .outline()
+                        .selected(focused && i == picked)
                         .child(
                             div()
                                 .flex()
@@ -195,11 +254,23 @@ impl ChatView {
                         }))
                 });
                 div()
+                    .key_context(TARGET_CONTEXT)
+                    .track_focus(&self.target_focus)
+                    .on_action(cx.listener(Self::on_target_next))
+                    .on_action(cx.listener(Self::on_target_prev))
+                    .on_action(cx.listener(Self::on_target_run))
+                    .on_action(cx.listener(Self::on_target_cancel))
                     .flex()
                     .flex_col()
                     .gap_2()
                     .child(prompt.clone())
                     .child(div().flex().flex_wrap().gap_2().children(buttons))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(style::FAINT))
+                            .child("Tab or arrows pick · Enter runs · Esc cancels"),
+                    )
                     .into_any_element()
             }
             Panel::Poll(form) => self.render_poll(form, cx),
@@ -603,10 +674,43 @@ impl ChatView {
                     .flex_col()
                     .child(div().font_bold().text_sm().child("Platforms"))
                     .child(div().text_xs().text_color(rgb(style::FAINT)).child(
-                        "A platform you turn off disconnects and disappears from the chat, the header                          and Accounts. Its sign-in is kept for when you turn it back on.",
+                        "A platform you turn off disconnects and disappears from the chat, the header \
+                         and Accounts. Its sign-in is kept for when you turn it back on.",
                     )),
             )
             .children(rows)
+            .child(
+                div()
+                    .pt_2()
+                    .child(div().font_bold().text_sm().child("Chat")),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child("Show deleted messages")
+                            .child(div().text_xs().text_color(rgb(style::FAINT)).child(
+                                "Keep the text of deleted messages, faded and struck through, \
+                                 instead of \"message deleted\".",
+                            )),
+                    )
+                    .child(
+                        Switch::new("show-deleted")
+                            .small()
+                            .checked(self.show_deleted)
+                            .accessibility_label("Show deleted messages")
+                            .on_click(cx.listener(|view, on: &bool, _, cx| {
+                                view.set_show_deleted(*on, cx);
+                            })),
+                    ),
+            )
             .into_any_element()
     }
 

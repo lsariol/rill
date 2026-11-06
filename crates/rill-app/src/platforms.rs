@@ -28,6 +28,11 @@ impl Platforms {
             .collect()
     }
 
+    /// Whether settings changes are saved (not in simulated runs).
+    pub fn saves(&self) -> bool {
+        self.save
+    }
+
     pub fn is_on(&self, p: Platform) -> bool {
         !self.off.contains(&p)
     }

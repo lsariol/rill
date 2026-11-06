@@ -12,6 +12,8 @@ use crate::data_dir;
 pub struct Settings {
     /// Platforms turned off in Settings, by name ("rumble"): not connected and not shown.
     pub disabled_platforms: Vec<String>,
+    /// Deleted messages keep their text, faded and struck through, instead of "message deleted".
+    pub show_deleted_messages: bool,
     pub twitch: TwitchSettings,
     pub youtube: YouTubeSettings,
     pub kick: KickSettings,
@@ -101,5 +103,6 @@ mod tests {
         assert_eq!(s.kick.channel.as_deref(), Some("xqc"));
         assert!(s.twitch.client_id.is_none());
         assert!(s.disabled_platforms.is_empty());
+        assert!(!s.show_deleted_messages);
     }
 }
