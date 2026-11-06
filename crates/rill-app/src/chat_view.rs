@@ -439,8 +439,13 @@ impl ChatView {
                         .text_color(rgb(style::TEXT))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(style::BORDER)))
+                        // It floats over the messages: clicks stop here, scrolling still passes.
+                        .block_mouse_except_scroll()
                         .child(label)
-                        .on_click(cx.listener(|view, _, _, cx| view.jump_to_latest(cx))),
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            cx.stop_propagation();
+                            view.jump_to_latest(cx);
+                        })),
                 )
         });
         div()
