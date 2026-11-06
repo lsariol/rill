@@ -49,8 +49,104 @@ pub fn to_event(event: &str, data: &Value, sub_badges: &SubBadges) -> Option<Eve
             user_id: s(&data["user"]["id"]),
         }),
         "ChatroomClearEvent" => Some(Event::Cleared { platform }),
+        "SubscriptionEvent" | "ChannelSubscriptionEvent" => {
+            let months = data["months"].as_u64().unwrap_or(0);
+            let text = if months > 1 {
+                format!("subscribed for {months} months")
+            } else {
+                "subscribed".into()
+            };
+            happening(data, &s(&data["username"]), text)
+        }
+        "GiftedSubscriptionsEvent" => {
+            let n = data["gifted_usernames"].as_array().map_or(1, Vec::len);
+            let subs = if n == 1 {
+                "sub".to_string()
+            } else {
+                format!("{n} subs")
+            };
+            happening(data, &s(&data["gifter_username"]), format!("gifted {subs}"))
+        }
+        "StreamHostEvent" => {
+            let viewers = data["number_viewers"].as_u64().unwrap_or(0);
+            let mut text = format!("is hosting with {viewers} viewers");
+            if let Some(m) = data["optional_message"].as_str().filter(|m| !m.is_empty()) {
+                text.push_str(&format!(": {m}"));
+            }
+            happening(data, &s(&data["host_username"]), text)
+        }
+        "RewardRedeemedEvent" => {
+            let mut text = format!("redeemed {}", s(&data["reward_title"]));
+            if let Some(i) = data["user_input"].as_str().filter(|i| !i.is_empty()) {
+                text.push_str(&format!(": {i}"));
+            }
+            happening(data, &s(&data["username"]), text)
+        }
         _ => None,
     }
+}
+
+/// Kick events Rill knows and shows nothing for.
+const QUIET: &[&str] = &[
+    "LuckyUsersWhoGotGiftSubscriptionsEvent",
+    "PinnedMessageCreatedEvent",
+    "PinnedMessageDeletedEvent",
+    "UserUnbannedEvent",
+    "ChatroomUpdatedEvent",
+    "StreamerIsLive",
+    "StopStreamBroadcast",
+    "PollUpdateEvent",
+    "PollDeleteEvent",
+    "ChatMoveToSupportedChannelEvent",
+];
+
+/// Whether Rill knows this event, shown or not; unknown ones are worth a log line.
+pub fn is_known(event: &str) -> bool {
+    let name = event.strip_prefix("App\\Events\\").unwrap_or(event);
+    QUIET.contains(&name)
+        || matches!(
+            name,
+            "ChatMessageSentEvent"
+                | "ChatMessageEvent"
+                | "MessageDeletedEvent"
+                | "ChatMessageDeletedEvent"
+                | "UserBannedEvent"
+                | "ChatroomClearEvent"
+                | "SubscriptionEvent"
+                | "ChannelSubscriptionEvent"
+                | "GiftedSubscriptionsEvent"
+                | "StreamHostEvent"
+                | "RewardRedeemedEvent"
+        )
+}
+
+/// A sub, gift, host or redemption as an event line by `name`.
+fn happening(data: &Value, name: &str, text: String) -> Option<Event> {
+    if name.is_empty() {
+        return None;
+    }
+    // Kick sends no ID for these; one from their content keeps repeats recognisable.
+    let id = format!(
+        "kick-event-{:x}",
+        format!("{name}{text}{data}")
+            .bytes()
+            .fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b))
+                .wrapping_mul(0x0100_0000_01b3))
+    );
+    Some(Event::Message(ChatMessage {
+        platform: Platform::Kick,
+        id,
+        author: Author {
+            id: format!("name:{}", name.to_lowercase()),
+            login: name.to_lowercase(),
+            display_name: name.to_string(),
+            ..Author::default()
+        },
+        fragments: split_text(&text),
+        kind: MessageKind::Event,
+        sent_at_ms: rill_core::now_ms(),
+        reply_to: None,
+    }))
 }
 
 fn chat_message(d: &Value, sub_badges: &SubBadges) -> ChatMessage {
@@ -212,6 +308,55 @@ mod tests {
             })
         );
     }
+    #[test]
+    fn subs_gifts_hosts_and_redemptions_read_as_event_lines() {
+        let line = |event: &str, data: Value| match to_event(event, &data, &SubBadges::new()) {
+            Some(Event::Message(m)) => {
+                assert_eq!(m.kind, MessageKind::Event);
+                format!("{} {}", m.author.display_name, m.plain_text())
+            }
+            other => panic!("{event}: {other:?}"),
+        };
+        assert_eq!(
+            line(
+                "App\\Events\\SubscriptionEvent",
+                json!({"username": "Ann", "months": 3})
+            ),
+            "Ann subscribed for 3 months"
+        );
+        assert_eq!(
+            line(
+                "App\\Events\\GiftedSubscriptionsEvent",
+                json!({"gifter_username": "Bob", "gifted_usernames": ["a", "b", "c"]})
+            ),
+            "Bob gifted 3 subs"
+        );
+        assert_eq!(
+            line(
+                "App\\Events\\StreamHostEvent",
+                json!({"host_username": "Cat", "number_viewers": 42, "optional_message": "hi"})
+            ),
+            "Cat is hosting with 42 viewers: hi"
+        );
+        assert_eq!(
+            line(
+                "App\\Events\\RewardRedeemedEvent",
+                json!({"username": "Dee", "reward_title": "Hydrate", "user_input": ""})
+            ),
+            "Dee redeemed Hydrate"
+        );
+        assert!(
+            to_event(
+                "App\\Events\\SubscriptionEvent",
+                &json!({}),
+                &SubBadges::new()
+            )
+            .is_none()
+        );
+        assert!(is_known("App\\Events\\PinnedMessageCreatedEvent"));
+        assert!(!is_known("App\\Events\\SomethingNewEvent"));
+    }
+
     #[test]
     fn reads_both_event_names() {
         let msg = json!({"id": "m1", "content": "hi", "sender": {"id": 7, "username": "V"}});

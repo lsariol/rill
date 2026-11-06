@@ -19,12 +19,17 @@ pub enum Reply {
         ping_secs: Option<u64>,
         ttl_secs: Option<u64>,
     },
-    Subscribed,
+    /// A subscription went through: the request's ID.
+    Subscribed {
+        id: Option<u64>,
+    },
     /// A renewed token, and when it runs out.
     Refreshed {
         ttl_secs: Option<u64>,
     },
     Error {
+        /// The request it answers.
+        id: Option<u64>,
         code: u64,
         message: String,
     },
@@ -33,8 +38,9 @@ pub enum Reply {
         code: u64,
         reason: String,
     },
-    /// The server dropped the chatroom subscription.
+    /// The server dropped a subscription.
     Unsubscribed {
+        channel: String,
         code: u64,
     },
     Kick {
@@ -70,6 +76,7 @@ fn parse_line(line: &str) -> Result<Reply, String> {
         return Ok(match code(e) {
             ALREADY_SUBSCRIBED => Reply::Other,
             c => Reply::Error {
+                id: o.get("id").and_then(Value::as_u64),
                 code: c,
                 message: text(e, "message"),
             },
@@ -82,7 +89,9 @@ fn parse_line(line: &str) -> Result<Reply, String> {
         });
     }
     if o.contains_key("subscribe") {
-        return Ok(Reply::Subscribed);
+        return Ok(Reply::Subscribed {
+            id: o.get("id").and_then(Value::as_u64),
+        });
     }
     if let Some(r) = o.get("refresh") {
         return Ok(Reply::Refreshed { ttl_secs: ttl(r) });
@@ -104,7 +113,10 @@ fn parse_line(line: &str) -> Result<Reply, String> {
         });
     }
     if let Some(u) = push.get("unsubscribe") {
-        return Ok(Reply::Unsubscribed { code: code(u) });
+        return Ok(Reply::Unsubscribed {
+            channel: text(push, "channel"),
+            code: code(u),
+        });
     }
     Ok(Reply::Other)
 }
@@ -116,7 +128,12 @@ pub fn connect(id: u32, token: &str) -> String {
 
 /// Subscribes to a chatroom. Kick's chatrooms are public: no channel token.
 pub fn subscribe(id: u32, chatroom_id: u64) -> String {
-    json!({"id": id, "subscribe": {"channel": format!("chatrooms.{chatroom_id}.v2")}}).to_string()
+    subscribe_to(id, &format!("chatrooms.{chatroom_id}.v2"))
+}
+
+/// Subscribes to any public channel by name.
+pub fn subscribe_to(id: u32, channel: &str) -> String {
+    json!({"id": id, "subscribe": {"channel": channel}}).to_string()
 }
 
 /// Hands the server a fresh token before the old one runs out.
@@ -150,7 +167,7 @@ mod tests {
         );
         assert_eq!(
             parse(r#"{"id":2,"subscribe":{}}"#),
-            vec![Ok(Reply::Subscribed)]
+            vec![Ok(Reply::Subscribed { id: Some(2) })]
         );
         assert_eq!(
             parse(r#"{"id":3,"refresh":{"expires":true,"ttl":2700}}"#),
@@ -166,7 +183,7 @@ mod tests {
         let r = parse(frame);
         assert_eq!(r.len(), 3);
         assert_eq!(r[0], Ok(Reply::Ping));
-        assert_eq!(r[1], Ok(Reply::Subscribed));
+        assert!(matches!(r[1], Ok(Reply::Subscribed { .. })));
         assert!(r[2].is_err());
     }
 
@@ -185,6 +202,7 @@ mod tests {
         assert_eq!(
             parse(r#"{"id":2,"error":{"code":106,"message":"limit exceeded"}}"#),
             vec![Ok(Reply::Error {
+                id: Some(2),
                 code: 106,
                 message: "limit exceeded".into()
             })]
@@ -202,7 +220,10 @@ mod tests {
         );
         assert_eq!(
             parse(r#"{"push":{"channel":"chatrooms.42.v2","unsubscribe":{"code":2500}}}"#),
-            vec![Ok(Reply::Unsubscribed { code: 2500 })]
+            vec![Ok(Reply::Unsubscribed {
+                channel: "chatrooms.42.v2".into(),
+                code: 2500
+            })]
         );
     }
 

@@ -13,6 +13,7 @@ Rill's first release, in progress.
 - Slash commands with autocomplete: `/ban`, `/timeout`, `/unban`, `/poll`, `/clear` and `/help`. Platform commands with "All platforms" selected ask which platform to use. `//` sends a literal slash.
 - `/ad [length]` starts an ad break on Twitch, Kick and YouTube; every ad break, including automatic ones, gets a line when it starts (with its length) and when it ends.
 - Twitch channel-point redemptions, custom and built-in, show as event lines with what the viewer typed.
+- Kick subs, gifted subs, hosts and redemptions show as event lines, read from Kick's chat socket without an account.
 - `/set title` and `/set category` (also `/title` and `/category`): change the stream title on Twitch, Kick and YouTube and the category on Twitch and Kick at once, with one summary line.
 - `/purge`, Twitch chat modes (`/slow`, `/followers`, `/subscribers`, `/emoteonly`, `/uniquechat`), `/announce`, `/shoutout` and `/search`. A command that only one connected platform can run goes there without asking. A Twitch sign-in from before these commands says to reconnect, instead of looking expired.
 - `/nuke`, `/meganuke` and `/unnuke`: time out or ban everyone who recently said a phrase, on every platform or one, after a confirmation that shows the count per platform; undo the last one. Moderators, VIPs, the broadcaster and you are left out, and Twitch rate limits are waited out instead of failing.

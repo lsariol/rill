@@ -50,8 +50,12 @@ pub fn parse(text: &str) -> Result<Frame, String> {
 
 /// The frame that subscribes to a chatroom.
 pub fn subscribe(chatroom_id: u64) -> String {
-    json!({"event": "pusher:subscribe", "data": {"auth": "", "channel": format!("chatrooms.{chatroom_id}.v2")}})
-        .to_string()
+    subscribe_to(&format!("chatrooms.{chatroom_id}.v2"))
+}
+
+/// Subscribes to any public channel by name.
+pub fn subscribe_to(channel: &str) -> String {
+    json!({"event": "pusher:subscribe", "data": {"auth": "", "channel": channel}}).to_string()
 }
 
 pub fn ping() -> String {

@@ -48,7 +48,8 @@ folder; the benchmark scripts use `.dev\bench\data`.
 - **Ads:** whenever an ad break starts, whether from `/ad`, from the platform's dashboard or
   automatically, a line says so with its length, and another when it ends. Twitch reports every
   break; Kick's are checked every 30 seconds; YouTube only reports the ones started from Rill.
-- **Channel points:** Twitch redemptions show as event lines, such as "Foo redeemed Hydrate".
+- **Channel points:** Twitch and Kick redemptions show as event lines, such as "Foo redeemed
+  Hydrate". Kick subs, gifted subs and hosts do too, read from Kick's chat socket.
 - **Replies:** Reply on a user card (or R on a message picked with the keyboard) answers that
   message on its platform (Twitch and Kick); the composer quotes it until you send or press Esc.
   Replies in chat show the message they answer.

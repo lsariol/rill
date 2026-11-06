@@ -103,6 +103,8 @@ struct Channel {
     chatroom_id: u64,
     /// The owner's user ID: the `broadcaster_user_id` of Kick's official API.
     broadcaster_id: Option<u64>,
+    /// The channel's own ID, which names its event channels on the socket.
+    channel_id: Option<u64>,
     sub_badges: SubBadges,
     /// The IDs 7TV may know the channel by: the owner's user ID, then the channel ID.
     seven_tv_ids: Vec<String>,
@@ -149,6 +151,8 @@ struct State {
     logins: HashMap<String, u64>,
     /// Ad breaks already announced, by Kick's ID.
     ads_seen: std::collections::HashSet<String>,
+    /// Event names already logged as unknown.
+    unknown_events: std::collections::HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -743,6 +747,7 @@ async fn lookup(http: &reqwest::Client, slug: &str) -> Result<Channel, Lookup> {
         slug: slug.to_string(),
         chatroom_id,
         broadcaster_id: v["user_id"].as_u64(),
+        channel_id: v["id"].as_u64(),
         sub_badges,
         seven_tv_ids,
     })
@@ -867,6 +872,13 @@ async fn incoming(ws: &mut Socket, msg: Option<Result<Message, WsError>>) -> Inc
 
 /// Passes a Kick event on. False when Rill is shutting down.
 async fn deliver(ctx: &Ctx, channel: &Channel, event: &str, data: &Value) -> bool {
+    if !events::is_known(event) && ctx.shared.lock().unknown_events.insert(event.to_string()) {
+        let fields: Vec<&str> = data
+            .as_object()
+            .map(|o| o.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        tracing::info!(event, fields = %fields.join(","), "Kick event Rill doesn't show yet");
+    }
     match events::to_event(event, data, &channel.sub_badges) {
         Some(e) => {
             if let Event::Message(m) = &e
@@ -882,6 +894,17 @@ async fn deliver(ctx: &Ctx, channel: &Channel, event: &str, data: &Value) -> boo
         }
         None => true,
     }
+}
+
+/// Channels besides the chatroom that carry subs, gifts, hosts and redemptions, as Kick's own
+/// website follows them. A refusal on one of these never ends the chat connection.
+fn event_channels(channel: &Channel) -> Vec<String> {
+    let mut out = vec![format!("chatroom_{}", channel.chatroom_id)];
+    if let Some(id) = channel.channel_id {
+        out.push(format!("channel.{id}"));
+        out.push(format!("channel_{id}"));
+    }
+    out
 }
 
 async fn connected(ctx: &Ctx, channel: &Channel, transport: &str) {
@@ -919,7 +942,11 @@ async fn pusher_session(
                         if ws.send(Message::text(pusher::subscribe(channel.chatroom_id))).await.is_err() {
                             break Err("Kick: couldn't subscribe to the chatroom.".into());
                         }
+                        for name in event_channels(channel) {
+                            let _ = ws.send(Message::text(pusher::subscribe_to(&name))).await;
+                        }
                     }
+                    Ok(Frame::Subscribed) if *subscribed => {}
                     Ok(Frame::Subscribed) => {
                         *subscribed = true;
                         connected(ctx, channel, "pusher").await;
@@ -986,6 +1013,8 @@ async fn centrifugo_session(
     let mut quiet = Duration::from_secs(25) + PING_SLACK;
     let mut last = Instant::now();
     let mut refresh_at: Option<Instant> = None;
+    // The event channels' subscribe requests, whose errors don't matter.
+    let mut extra_subs: Vec<u64> = Vec::new();
     let end: Result<Option<Interrupt>, String> = 'session: loop {
         let refresh_due = async {
             match refresh_at {
@@ -1017,19 +1046,31 @@ async fn centrifugo_session(
                             if ws.send(Message::text(sub)).await.is_err() {
                                 break 'session Err("Kick: couldn't subscribe to the chatroom.".into());
                             }
+                            for name in event_channels(channel) {
+                                let id = next_id();
+                                extra_subs.push(u64::from(id));
+                                let _ = ws.send(Message::text(centrifugo::subscribe_to(id, &name))).await;
+                            }
                         }
-                        Ok(Reply::Subscribed) => {
+                        Ok(Reply::Subscribed { id }) if id.is_some_and(|id| extra_subs.contains(&id)) => {}
+                        Ok(Reply::Subscribed { .. }) => {
                             *subscribed = true;
                             connected(ctx, channel, "centrifugo").await;
                         }
                         Ok(Reply::Refreshed { ttl_secs }) => refresh_at = ttl_secs.map(refresh_time),
-                        Ok(Reply::Error { code, message }) => {
+                        Ok(Reply::Error { id: Some(id), code, message }) if extra_subs.contains(&id) => {
+                            tracing::debug!(code, err = %message, "Kick event channel not followed");
+                        }
+                        Ok(Reply::Error { code, message, .. }) => {
                             break 'session Err(format!("Kick: the chat socket refused a request ({code}: {message})."));
                         }
                         Ok(Reply::Disconnect { code, reason }) => {
                             break 'session Err(format!("Kick closed the chat socket (code {code}: {reason})."));
                         }
-                        Ok(Reply::Unsubscribed { code }) => {
+                        Ok(Reply::Unsubscribed { channel: name, code }) if !name.starts_with("chatrooms.") => {
+                            tracing::debug!(code, channel = %name, "Kick event channel dropped");
+                        }
+                        Ok(Reply::Unsubscribed { code, .. }) => {
                             break 'session Err(format!("Kick dropped the chatroom subscription (code {code})."));
                         }
                         Ok(Reply::Kick { event, data }) => {
@@ -1143,6 +1184,7 @@ mod sessions {
             slug: "someone".into(),
             chatroom_id: 42,
             broadcaster_id: Some(7),
+            channel_id: Some(8),
             sub_badges: Vec::new(),
             seven_tv_ids: Vec::new(),
         }
@@ -1190,10 +1232,21 @@ mod sessions {
         format!("ws://{addr}")
     }
 
+    /// The next message, skipping subscriptions to the event channels (tested on their own).
     async fn recv_json(ws: &mut Server) -> Value {
         loop {
             match ws.next().await.unwrap().unwrap() {
-                Message::Text(t) => return serde_json::from_str(&t).unwrap(),
+                Message::Text(t) => {
+                    let v: Value = serde_json::from_str(&t).unwrap();
+                    let channel = v["subscribe"]["channel"]
+                        .as_str()
+                        .or(v["data"]["channel"].as_str())
+                        .unwrap_or_default();
+                    if !channel.is_empty() && !channel.starts_with("chatrooms.") {
+                        continue;
+                    }
+                    return v;
+                }
                 Message::Ping(_) | Message::Pong(_) => continue,
                 other => panic!("unexpected {other:?}"),
             }
@@ -1296,6 +1349,62 @@ mod sessions {
     }
 
     #[tokio::test]
+    async fn refused_event_channels_leave_the_chat_running() {
+        let token_url = token_server().await;
+        let url = socket_server(|mut ws| async move {
+            ws.next().await;
+            send(&mut ws, r#"{"id":1,"connect":{"client":"c"}}"#).await;
+            // The chatroom subscribes fine; each event channel is refused.
+            let mut extras = 0;
+            while extras < 3 {
+                let Some(Ok(Message::Text(t))) = ws.next().await else {
+                    panic!("closed")
+                };
+                let v: Value = serde_json::from_str(&t).unwrap();
+                let id = v["id"].clone();
+                if v["subscribe"]["channel"] == "chatrooms.42.v2" {
+                    send(&mut ws, &format!(r#"{{"id":{id},"subscribe":{{}}}}"#)).await;
+                } else {
+                    extras += 1;
+                    send(
+                        &mut ws,
+                        &format!(
+                            r#"{{"id":{id},"error":{{"code":103,"message":"permission denied"}}}}"#
+                        ),
+                    )
+                    .await;
+                }
+            }
+            send(&mut ws, CHAT).await;
+            send(
+                &mut ws,
+                r#"{"push":{"channel":"channel.8","unsubscribe":{"code":2500}}}"#,
+            )
+            .await;
+            send(&mut ws, CHAT).await;
+            send(
+                &mut ws,
+                r#"{"push":{"disconnect":{"code":3001,"reason":"shutdown"}}}"#,
+            )
+            .await;
+            while let Some(Ok(_)) = ws.next().await {}
+        })
+        .await;
+        let (mut ctx, mut rx, _tx) = ctx(&token_url);
+        let mut subscribed = false;
+        let end = timeout(
+            Duration::from_secs(10),
+            centrifugo_session(&mut ctx, &channel(), &url, &mut subscribed),
+        )
+        .await
+        .expect("session hung");
+        assert!(matches!(&end, Err(why) if why.contains("3001")), "{end:?}");
+        let (connected, messages) = drain(&mut rx);
+        assert!(connected);
+        assert_eq!(messages.len(), 2, "chat kept flowing: {messages:?}");
+    }
+
+    #[tokio::test]
     async fn centrifugo_stops_when_asked_to_switch_channels() {
         let token_url = token_server().await;
         let url = socket_server(|mut ws| async move {
@@ -1307,7 +1416,8 @@ mod sessions {
                 &format!(r#"{{"id":{},"subscribe":{{}}}}"#, s["id"]),
             )
             .await;
-            let _ = ws.next().await;
+            // Listen (to the event-channel subscriptions, too) until Rill hangs up.
+            while let Some(Ok(_)) = ws.next().await {}
         })
         .await;
         let (mut ctx, mut rx, tx) = ctx(&token_url);
