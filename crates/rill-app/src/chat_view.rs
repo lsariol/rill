@@ -9,6 +9,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{InputEvent, TextareaState};
+use gpui_component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_component::{Selectable, Sizable};
 use rill_core::{
     ConnectionStatus, Destination, Event, Filter, Hub, Outgoing, Platform, Session, now_ms,
@@ -154,8 +155,20 @@ impl ChatView {
         cx.notify();
     }
 
+    /// Picks up following changes the scroll handler doesn't see, such as scrollbar drags.
+    fn refresh_following(&mut self) {
+        let following = self.list.is_following_tail();
+        if following != self.following {
+            self.following = following;
+            if following {
+                self.unseen = 0;
+            }
+        }
+    }
+
     /// Brings the list in line with the feed's changes.
     pub(crate) fn sync_list(&mut self) {
+        self.refresh_following();
         let changes = self.session.feed.take_changes();
         if changes.reset {
             self.list.reset(self.session.feed.visible_len());
@@ -196,7 +209,6 @@ impl ChatView {
         self.sync_list();
     }
 
-    /// Jumps to the newest message and follows again.
     /// Whether the feed is following new messages.
     pub(crate) fn is_following(&self) -> bool {
         self.following
@@ -215,6 +227,7 @@ impl ChatView {
         cx.notify();
     }
 
+    /// Jumps to the newest message and follows again.
     pub(crate) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
         self.list.set_follow_mode(gpui::FollowMode::Tail);
         self.following = true;
@@ -374,6 +387,7 @@ impl ChatView {
     }
 
     fn render_feed(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        self.refresh_following();
         let jump = (!self.following).then(|| {
             let label: SharedString = if self.unseen > 0 {
                 format!("↓ {} new messages", self.unseen).into()
@@ -416,6 +430,8 @@ impl ChatView {
                 )
                 .size_full(),
             )
+            // Always shown, so older messages are one drag away.
+            .child(Scrollbar::vertical(&self.list).mode(ScrollbarMode::Always))
             .children(jump)
     }
 }

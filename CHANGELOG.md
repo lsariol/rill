@@ -6,7 +6,7 @@ Rill's first release, in progress.
 
 ### Added
 - One chronological chat feed for Twitch, YouTube and Kick. Each message shows its platform's icon, the time, badges, the name in the user's color, and emote images. Mentions of you are highlighted.
-- The feed keeps the newest 5,000 lines and only draws what's on screen. Scrolling up pauses it, with a "new messages" button to jump back.
+- The feed keeps the newest 5,000 lines and only draws what's on screen. A scrollbar on the right drags back through older messages. Scrolling up pauses the feed, with a "new messages" button to jump back.
 - Header filters: hide or show each platform, show only mentions, and a compact mode that also turns on by itself in narrow windows.
 - The composer's outline shows where a message goes: a rainbow for every platform, or the platform's own color, with a text label. Tab and Shift+Tab switch the destination without losing what's typed. Enter sends; Shift+Enter starts a new line.
 - Sending to all platforms shows a ✓ or ✗ for each one, with the reason when a platform refuses.
