@@ -12,7 +12,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{InputEvent, TextareaState};
-use gpui_component::scroll::{Scrollbar, ScrollbarMode};
+use gpui_component::scroll::Scrollbar;
 use gpui_component::{Selectable, Sizable};
 use rill_core::{
     ConnectionStatus, Destination, Event, Filter, Health, Hub, Outgoing, Platform, Session, now_ms,
@@ -27,6 +27,10 @@ use crate::platforms::Platforms;
 use crate::style;
 
 /// Feed entries kept in memory.
+/// Highlighted lines' middles, in pixels from the top of the history, and whether each is a
+/// mention (otherwise an event).
+type MarkLines = Rc<Vec<(f32, bool)>>;
+
 /// The history choices in Settings: chat lines, a short note, and Rill's memory use with that
 /// history full (measured under simulated chat, so long messages use somewhat more).
 pub const HISTORY_CHOICES: [(usize, &str, u32); 5] = [
@@ -79,6 +83,15 @@ pub struct ChatView {
     /// Set by Esc in the composer: the next Tab leaves it instead of switching the destination.
     pub(crate) tab_leaves: bool,
     pub(crate) panel: Panel,
+    /// Rows added while paused need estimated heights (see `refresh_row_hints`).
+    rows_need_hints: bool,
+    rows_hinted: Instant,
+    /// The height given to rows not drawn yet.
+    hint_height: f32,
+    /// Heights of rows that have been drawn, by feed seq.
+    row_heights: std::collections::HashMap<u64, f32>,
+    /// Highlighted lines' offsets and the history's height, with when they were worked out.
+    mark_cache: Option<(Instant, MarkLines, f32)>,
     /// The panel's scroll position, for long panels like Settings.
     pub(crate) panel_scroll: gpui::ScrollHandle,
     /// Where the open user card's name was clicked (window y), to float the card beside it.
@@ -191,6 +204,11 @@ impl ChatView {
             composer_error: None,
             tab_leaves: false,
             panel: Panel::None,
+            rows_need_hints: false,
+            rows_hinted: Instant::now(),
+            hint_height: 27.,
+            row_heights: Default::default(),
+            mark_cache: None,
             panel_scroll: gpui::ScrollHandle::new(),
             card_at: None,
             feed_bounds: Rc::default(),
@@ -266,7 +284,10 @@ impl ChatView {
         self.refresh_following();
         let changes = self.session.feed.take_changes();
         if changes.reset {
-            self.list.reset(self.session.feed.visible_len());
+            let estimate = self.row_height_estimate();
+            self.hint_height = f32::from(estimate);
+            self.list
+                .reset_with_uniform_height(self.session.feed.visible_len(), estimate);
             return;
         }
         if changes.evicted > 0 {
@@ -277,12 +298,40 @@ impl ChatView {
             self.list.splice(n..n, changes.appended);
             if !self.following {
                 self.unseen += changes.appended;
+                // Lines added below while paused aren't drawn yet, so they have no height.
+                self.rows_need_hints = true;
             }
         }
         for seq in changes.updated {
             if let Some(ix) = self.session.feed.visible_index(seq) {
                 self.list.remeasure_items(ix..ix + 1);
             }
+        }
+    }
+
+    /// The average height of the rows on screen, to stand in for rows not drawn yet.
+    fn row_height_estimate(&self) -> Pixels {
+        let top = self.list.logical_scroll_top().item_ix;
+        let heights: Vec<f32> = (top..top + 40)
+            .filter_map(|ix| self.list.bounds_for_item(ix))
+            .map(|b| f32::from(b.size.height))
+            .collect();
+        if heights.is_empty() {
+            px(if self.is_compact() { 21. } else { 27. })
+        } else {
+            px(heights.iter().sum::<f32>() / heights.len() as f32)
+        }
+    }
+
+    /// Gives rows not drawn yet an estimated height, so the scroll bar spans the whole history
+    /// (and its marks line up). At most once a second: it touches every row.
+    fn refresh_row_hints(&mut self) {
+        if self.rows_need_hints && self.rows_hinted.elapsed() >= Duration::from_secs(1) {
+            let estimate = self.row_height_estimate();
+            self.hint_height = f32::from(estimate);
+            let _ = self.list.clone().with_uniform_item_height(estimate);
+            self.rows_need_hints = false;
+            self.rows_hinted = Instant::now();
         }
     }
 
@@ -415,7 +464,7 @@ impl ChatView {
 
     /// Marks along the scroll bar where highlighted lines are, so a sub or mention that scrolled
     /// off while you were away is easy to find.
-    fn render_marks(&self) -> Option<AnyElement> {
+    fn render_marks(&mut self) -> Option<AnyElement> {
         let h = &self.highlights;
         if !h.scrollbar_marks || !(h.mentions || h.events) {
             return None;
@@ -424,28 +473,62 @@ impl ChatView {
         if total == 0 {
             return None;
         }
-        // One mark per slot, so a busy stretch doesn't draw thousands; mentions win a slot.
-        const SLOTS: usize = 300;
-        let mut slots: Vec<Option<(usize, bool)>> = vec![None; SLOTS];
-        for m in self.session.feed.marks() {
-            if !(if m.mention { h.mentions } else { h.events }) {
-                continue;
-            }
-            let slot = (m.ix * SLOTS / total).min(SLOTS - 1);
-            match slots[slot] {
-                Some((_, true)) => {}
-                _ => slots[slot] = Some((m.ix, m.mention)),
-            }
-        }
+        let (show_mentions, show_events) = (h.mentions, h.events);
         let mention = style::parse_hex(&h.mention_color).unwrap_or(style::MENTION_BAR);
         let event = style::parse_hex(&h.event_color).unwrap_or(0xa970ff);
+        let (lines, measured) = self.mark_offsets();
         // A line's share of the track, between 1 and 3 px: thin with a long history.
         let track = f32::from(self.feed_bounds.get().size.height);
         let tall = (track / total as f32).clamp(1., 3.);
-        let marks = slots.into_iter().flatten().map(|(ix, is_mention)| {
+        // The scroll bar's own numbers, so marks agree with its thumb.
+        let viewport = f32::from(self.list.viewport_bounds().size.height);
+        let max_scroll = f32::from(self.list.max_offset_for_scrollbar().y);
+        let content = max_scroll + viewport;
+        let thumb = if content > 0. {
+            (viewport / content * track).max(48.).min(track)
+        } else {
+            track
+        };
+        // Where the thumb is when the line is mid-screen (or as near as the ends allow), plus
+        // where the line then sits on screen, mapped into the thumb: the mark is level with the
+        // line whenever it's in view.
+        let place = |y: f32| -> f32 {
+            let y = if measured > 0. {
+                y / measured * content
+            } else {
+                0.
+            };
+            if max_scroll <= 0. || viewport <= 0. {
+                return if content > 0. {
+                    y / content * track
+                } else {
+                    0.
+                };
+            }
+            let offset = (y - viewport / 2.).clamp(0., max_scroll);
+            let on_screen = (y - offset).clamp(0., viewport);
+            offset / max_scroll * (track - thumb) + on_screen / viewport * thumb
+        };
+        // One mark per pixel row, so a busy stretch doesn't draw thousands; mentions win.
+        let mut rows: Vec<(i32, bool)> = Vec::new();
+        for &(y, is_mention) in lines.iter() {
+            if !(if is_mention {
+                show_mentions
+            } else {
+                show_events
+            }) {
+                continue;
+            }
+            let at = place(y).round() as i32;
+            match rows.last_mut() {
+                Some((last, m)) if (*last - at).abs() < 2 => *m |= is_mention,
+                _ => rows.push((at, is_mention)),
+            }
+        }
+        let marks = rows.into_iter().map(|(at, is_mention)| {
             div()
                 .absolute()
-                .top(gpui::relative(ix as f32 / total as f32))
+                .top(px(at as f32 - tall / 2.))
                 .left_0()
                 .w_full()
                 .h(px(tall))
@@ -463,6 +546,56 @@ impl ChatView {
                 .children(marks)
                 .into_any_element(),
         )
+    }
+
+    /// Remembers the height of every row the list has measured from the top of the view down,
+    /// so marks can be placed by real heights rather than by counting lines.
+    fn record_row_heights(&mut self) {
+        let top = self.list.logical_scroll_top().item_ix;
+        let end = (top + 120).min(self.session.feed.visible_len());
+        for ix in top..end {
+            if let (Some(b), Some(e)) =
+                (self.list.bounds_for_item(ix), self.session.feed.visible(ix))
+            {
+                self.row_heights.insert(e.seq, f32::from(b.size.height));
+            }
+        }
+        // Forget rows that have left the feed.
+        if self.row_heights.len() > self.session.feed.capacity() + 1_000
+            && let Some(first) = self.session.feed.entries().next().map(|e| e.seq)
+        {
+            self.row_heights.retain(|seq, _| *seq >= first);
+        }
+    }
+
+    /// Each highlighted line's middle, in pixels from the top of the history (real heights where
+    /// known, the estimate elsewhere), and the history's whole height. Recomputed a few times a
+    /// second at most: it walks every line.
+    fn mark_offsets(&mut self) -> (MarkLines, f32) {
+        if let Some((at, lines, height)) = &self.mark_cache
+            && at.elapsed() < Duration::from_millis(300)
+        {
+            return (lines.clone(), *height);
+        }
+        let marks = self.session.feed.marks();
+        let mut next = marks.iter().peekable();
+        let mut lines = Vec::with_capacity(marks.len());
+        let mut y = 0.;
+        for ix in 0..self.session.feed.visible_len() {
+            let h = self
+                .session
+                .feed
+                .visible(ix)
+                .and_then(|e| self.row_heights.get(&e.seq).copied())
+                .unwrap_or(self.hint_height);
+            while let Some(m) = next.next_if(|m| m.ix == ix) {
+                lines.push((y + h / 2., m.mention));
+            }
+            y += h;
+        }
+        let lines = Rc::new(lines);
+        self.mark_cache = Some((Instant::now(), lines.clone(), y));
+        (lines, y)
     }
 
     /// Turns link previews on or off, and saves the choice.
@@ -747,6 +880,8 @@ impl ChatView {
 
     fn render_feed(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh_following();
+        self.refresh_row_hints();
+        self.record_row_heights();
         let jump = (!self.following).then(|| {
             let label: SharedString = if self.unseen > 0 {
                 format!("↓ {} new messages", self.unseen).into()
@@ -802,10 +937,7 @@ impl ChatView {
                 )
                 .size_full(),
             )
-            // Out of the way while following live chat; once scrolled up, older messages are a drag away.
-            .when(!self.following, |d| {
-                d.child(Scrollbar::vertical(&self.list).mode(ScrollbarMode::Always))
-            })
+            .child(style::scrollbar(Scrollbar::vertical(&self.list)))
             // Drawn over the scroll bar, which still takes the mouse.
             .children(self.render_marks())
             .children(jump)

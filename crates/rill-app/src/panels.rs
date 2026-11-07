@@ -587,20 +587,16 @@ impl ChatView {
         // A tall panel (Settings) scrolls, with a scroll bar, rather than pushing the chat off
         // the window. It grows with its content up to 70% of the window.
         let max = window.viewport_size().height * 0.7;
-        let content = div()
-            .p_3()
-            .flex()
-            .items_start()
-            .gap_2()
-            .child(div().flex_1().min_w_0().child(body))
-            .child(
-                Button::new("close-panel")
-                    .xsmall()
-                    .ghost()
-                    .label("✕")
-                    .tooltip("Close (Esc)")
-                    .on_click(cx.listener(|view, _, window, cx| view.close_panel(window, cx))),
-            );
+        // Room on the right for the close button, which stays in the corner while this scrolls.
+        let content = div().p_3().pr(px(44.)).child(body);
+        let close = div().absolute().top_2().right(px(20.)).child(
+            Button::new("close-panel")
+                .xsmall()
+                .ghost()
+                .label("✕")
+                .tooltip("Close (Esc)")
+                .on_click(cx.listener(|view, _, window, cx| view.close_panel(window, cx))),
+        );
         div()
             .relative()
             .mx_3()
@@ -617,10 +613,10 @@ impl ChatView {
                     .track_scroll(&self.panel_scroll)
                     .child(content),
             )
-            .child(
-                gpui_component::scroll::Scrollbar::vertical(&self.panel_scroll)
-                    .mode(gpui_component::scroll::ScrollbarMode::Always),
-            )
+            .child(style::scrollbar(
+                gpui_component::scroll::Scrollbar::vertical(&self.panel_scroll),
+            ))
+            .child(close)
             .into_any_element()
     }
 
@@ -1131,7 +1127,7 @@ impl ChatView {
             .child(row(
                 "marks",
                 "Marks on the scroll bar",
-                "Shows where highlighted lines are along the right edge; click one to go there.",
+                "Thin marks along the scroll bar show where highlighted lines are, so a sub you missed is easy to scroll back to.",
                 h.scrollbar_marks,
                 None,
                 cx,
