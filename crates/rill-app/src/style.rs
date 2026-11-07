@@ -56,6 +56,16 @@ pub fn level_color(level: Level) -> Rgba {
     })
 }
 
+/// A scroll bar that's always there, thin, and wider under the pointer.
+pub fn scrollbar(bar: gpui_component::scroll::Scrollbar) -> gpui_component::scroll::Scrollbar {
+    bar.mode(gpui_component::scroll::ScrollbarMode::Always)
+        .styles(|s| {
+            s.thumb(|t| t.width(px(6.)).inset(px(5.)))
+                .thumb_hover(|t| t.width(px(12.)).inset(px(2.)))
+                .thumb_active(|t| t.width(px(12.)).inset(px(2.)))
+        })
+}
+
 /// Highlight colors to choose from in Settings.
 pub const HIGHLIGHT_COLORS: [u32; 8] = [
     0xf23f43, 0xf0883e, 0xf0b232, 0x23a55a, 0x1abc9c, 0x4da6ff, 0xa970ff, 0xe05bb5,

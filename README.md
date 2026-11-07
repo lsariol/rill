@@ -112,8 +112,8 @@ folder; the benchmark scripts use `.dev\bench\data`.
   chat. `--history <n>` overrides the setting for one run.
 - **Search:** Ctrl+F (Cmd+F on macOS) shows only the messages whose text or author name contains
   what you type, with a count of matches. Esc closes it.
-- **Scrolling:** scroll up (or press PgUp) to pause the feed; a scrollbar appears for dragging
-  back through older messages, and a button jumps back to live chat.
+- **Scrolling:** scroll up (or press PgUp) to pause the feed, or drag the scrollbar on the right,
+  which widens under the pointer; a button jumps back to live chat.
 - **Highlights:** messages that mention you get a red bar and tint, and events (subscriptions,
   gifted subs, raids, Rants, redemptions and ad breaks) a purple one. Thin marks along the right
   edge show where they are in the history, so a sub that scrolled away while you were gone is
