@@ -39,13 +39,16 @@ jobs:
           }
           "VERSION=$version" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
+      - name: Tools
+        shell: pwsh
+        run: |
+          cargo install --locked cargo-deny --version 0.20.2
+          cargo install --locked cargo-about --version 0.9.3 --features cli
+          dotnet tool install -g vpk --version 1.3.39-g8d2844f
+
       - name: Checks
         shell: pwsh
         run: powershell -File scripts/check.ps1
-
-      - name: Packaging tool
-        shell: pwsh
-        run: dotnet tool install -g vpk --version 1.3.39-g8d2844f
 
       - name: Build and package
         shell: pwsh
