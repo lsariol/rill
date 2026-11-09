@@ -13,7 +13,7 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{InputEvent, TextareaState};
 use gpui_component::scroll::Scrollbar;
-use gpui_component::{Selectable, Sizable};
+use gpui_component::{Disableable, Selectable, Sizable};
 use rill_core::{
     ConnectionStatus, Destination, Event, Filter, Health, Hub, Outgoing, Platform, Session, now_ms,
 };
@@ -142,6 +142,12 @@ pub struct ChatView {
     pub(crate) overlay_error: Option<String>,
     /// The newest feed entry the overlay has been given.
     overlay_seq: u64,
+    /// The problem recorded last time Rill ran, offered for sending in a banner.
+    pub(crate) last_crash: Option<String>,
+    /// Sending a report, and which kind it is (the banner's or Settings').
+    pub(crate) report_sending: crate::crash::Sending,
+    pub(crate) report_kind: crate::crash::Kind,
+    report_task: Option<Task<()>>,
     /// The hex box for each highlight color in Settings, by key (see `color_keys`).
     pub(crate) color_inputs: Vec<(&'static str, Entity<gpui_component::input::InputState>)>,
     /// A failure to keep known chatters was shown once already.
@@ -328,6 +334,10 @@ impl ChatView {
             overlay: None,
             overlay_error: None,
             overlay_seq: 0,
+            last_crash: crate::crash::last(),
+            report_sending: Default::default(),
+            report_kind: crate::crash::Kind::Logs,
+            report_task: None,
             known_error_shown: false,
             previews: Default::default(),
             hover: None,
@@ -960,6 +970,183 @@ impl ChatView {
             }
         }
         self.overlay_seq = latest;
+    }
+
+    /// Sends a report to the Rill team: the recorded problem with the log, or just the log.
+    pub(crate) fn send_report(&mut self, kind: crate::crash::Kind, cx: &mut Context<Self>) {
+        use crate::crash::{Kind, Sending};
+        if self.report_sending == Sending::Busy {
+            return;
+        }
+        let crash = self.last_crash.as_deref().filter(|_| kind == Kind::Crash);
+        let body = crate::crash::report(kind, crash);
+        let client = cx.http_client();
+        self.report_sending = Sending::Busy;
+        self.report_kind = kind;
+        cx.notify();
+        self.report_task = Some(cx.spawn(async move |view, cx| {
+            let result = crate::crash::send(client, body).await;
+            let _ = view.update(cx, |view, cx| {
+                view.report_sending = match result {
+                    Ok(id) => {
+                        if kind == Kind::Crash {
+                            crate::crash::forget();
+                            view.last_crash = None;
+                        }
+                        Sending::Sent(id)
+                    }
+                    Err(e) => Sending::Failed(e),
+                };
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Puts the recorded problem away without sending it.
+    pub(crate) fn dismiss_crash(&mut self, cx: &mut Context<Self>) {
+        crate::crash::forget();
+        self.last_crash = None;
+        if self.report_kind == crate::crash::Kind::Crash {
+            self.report_sending = Default::default();
+        }
+        cx.notify();
+    }
+
+    /// After a problem: what happened, and buttons to send a report, see the logs or dismiss.
+    fn render_crash_banner(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use crate::crash::{Kind, Sending};
+        let ours = self.report_kind == Kind::Crash;
+        let sent = match &self.report_sending {
+            Sending::Sent(id) if ours => Some(id.clone()),
+            _ => None,
+        };
+        if self.last_crash.is_none() && sent.is_none() {
+            return None;
+        }
+        let busy = ours && self.report_sending == Sending::Busy;
+        let failed = match &self.report_sending {
+            Sending::Failed(e) if ours => Some(e.clone()),
+            _ => None,
+        };
+        let text = match &sent {
+            Some(id) => format!(
+                "Report sent, ID {id}. Thanks! To tell us more, email rill@mobasity.com with this ID."
+            ),
+            None => {
+                "Rill had a problem the last time it ran. Sending a report helps us fix it: it \
+                     holds what went wrong and Rill's recent log, never chat messages or passwords."
+                    .to_string()
+            }
+        };
+        let buttons = div().flex().flex_wrap().gap_1().map(|d| match &sent {
+            Some(id) => {
+                let id = id.clone();
+                d.child(
+                    Button::new("crash-copy-id")
+                        .xsmall()
+                        .outline()
+                        .label("Copy ID")
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(id.clone()));
+                        }),
+                )
+                .child(
+                    Button::new("crash-close")
+                        .xsmall()
+                        .ghost()
+                        .label("Close")
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.report_sending = Default::default();
+                            cx.notify();
+                        })),
+                )
+            }
+            None => d
+                .child(
+                    Button::new("crash-send")
+                        .xsmall()
+                        .primary()
+                        .label(if busy { "Sending…" } else { "Send report" })
+                        .disabled(busy)
+                        .on_click(cx.listener(|view, _, _, cx| view.send_report(Kind::Crash, cx))),
+                )
+                .child(
+                    Button::new("crash-logs")
+                        .xsmall()
+                        .outline()
+                        .label("Open logs folder")
+                        .on_click(|_, _, cx| cx.open_with_system(&rill_os::log_dir())),
+                )
+                .child(
+                    Button::new("crash-dismiss")
+                        .xsmall()
+                        .ghost()
+                        .label("Don't send")
+                        .on_click(cx.listener(|view, _, _, cx| view.dismiss_crash(cx))),
+                ),
+        });
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .px_3()
+                .py_2()
+                .border_b_1()
+                .border_color(rgb(style::BORDER))
+                .bg(rgb(style::PANEL))
+                .text_sm()
+                .child(text)
+                .children(failed.map(|e| div().text_xs().text_color(rgb(style::ERROR)).child(e)))
+                .child(buttons)
+                .into_any_element(),
+        )
+    }
+
+    /// A first-run welcome, while every platform has said it isn't signed in.
+    fn render_welcome(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let on = self.platforms.on();
+        // Wait for each platform's first word, so a signed-in start doesn't flash this.
+        let nobody = !on.is_empty()
+            && on.iter().all(|&p| {
+                self.session.link(p).is_some() && self.session.health(p).0 == Health::SignedOut
+            });
+        if !nobody || matches!(self.panel, Panel::Accounts) {
+            return None;
+        }
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .px_3()
+                .py_3()
+                .border_b_1()
+                .border_color(rgb(style::BORDER))
+                .bg(rgb(style::PANEL))
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child("Welcome to Rill"),
+                )
+                .child(div().text_sm().text_color(rgb(style::MUTED)).child(
+                    "Connect your accounts and your chats arrive here, in one feed. Twitch, \
+                     YouTube and Kick sign in through your browser; Rumble takes a link from your \
+                     Rumble account. Kick can also read any channel without signing in.",
+                ))
+                .child(
+                    div().flex().gap_1().pt_1().child(
+                        Button::new("welcome-accounts")
+                            .small()
+                            .primary()
+                            .label("Connect accounts")
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                view.open_panel(Panel::Accounts, window, cx);
+                            })),
+                    ),
+                )
+                .into_any_element(),
+        )
     }
 
     /// Deletes the saved list of who has chatted, and forgets it.
@@ -1723,6 +1910,8 @@ impl Render for ChatView {
             .text_color(rgb(style::TEXT))
             .text_sm()
             .child(self.render_header(cx))
+            .children(self.render_crash_banner(cx))
+            .children(self.render_welcome(cx))
             .children(self.render_search(cx))
             .child(self.render_feed(cx))
             .child(self.render_panel(window, cx))

@@ -5,6 +5,7 @@ mod assets;
 mod chat_text;
 mod chat_view;
 mod composer;
+mod crash;
 mod focus;
 mod image_cache;
 mod navigate;
@@ -194,6 +195,7 @@ fn main() -> ExitCode {
         }
     };
     let _log = init_logging();
+    crash::install_hook();
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "Rill starting");
 
     if rustls::crypto::aws_lc_rs::default_provider()

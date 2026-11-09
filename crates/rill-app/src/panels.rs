@@ -1044,6 +1044,7 @@ impl ChatView {
             .child(self.render_highlight_settings(cx))
             .child(self.render_overlay_settings(cx))
             .child(self.render_updates(cx))
+            .child(self.render_about(cx))
             .into_any_element()
     }
 
@@ -1559,6 +1560,94 @@ impl ChatView {
                                 .on_click(cx.listener(|view, _, _, cx| view.restart_to_update(cx))),
                         )
                     }),
+            )
+            .into_any_element()
+    }
+
+    /// About: the version and maker, links to the website, and sending logs to the Rill team.
+    fn render_about(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::crash::{Kind, Sending};
+        let link = |id: &'static str, label: &'static str, path: &'static str| {
+            Button::new(id)
+                .xsmall()
+                .ghost()
+                .label(label)
+                .on_click(move |_, _, cx| cx.open_url(&format!("{}{path}", rill_core::WEBSITE)))
+        };
+        let licences = crate::crash::licences();
+        let ours = self.report_kind == Kind::Logs;
+        let busy = ours && self.report_sending == Sending::Busy;
+        let status = match &self.report_sending {
+            Sending::Sent(id) if ours => Some((
+                format!("Sent, ID {id}. Email rill@mobasity.com with this ID and what went wrong."),
+                style::MUTED,
+            )),
+            Sending::Failed(e) if ours => Some((e.clone(), style::ERROR)),
+            _ => None,
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().pt_2().font_bold().text_sm().child("About"))
+            .child(format!(
+                "Rill {}, made by Mobasity. Free and open source under the MIT license.",
+                env!("CARGO_PKG_VERSION")
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(link("about-site", "Website", "/"))
+                    .child(link("about-support", "Support", "/support"))
+                    .child(link("about-privacy", "Privacy", "/privacy"))
+                    .when_some(licences, |d, path| {
+                        d.child(
+                            Button::new("about-licences")
+                                .xsmall()
+                                .ghost()
+                                .label("Open-source licenses")
+                                .on_click(move |_, _, cx| cx.open_with_system(&path)),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child("Send logs to the Rill team")
+                    .child(div().text_xs().text_color(rgb(style::FAINT)).child(
+                        "If something isn't working, send Rill's recent log: what it did, never \
+                         chat messages or passwords. You'll get an ID to mention when you email \
+                         rill@mobasity.com.",
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .child(
+                        Button::new("about-send-logs")
+                            .xsmall()
+                            .outline()
+                            .label(if busy { "Sending…" } else { "Send logs" })
+                            .disabled(busy)
+                            .on_click(
+                                cx.listener(|view, _, _, cx| view.send_report(Kind::Logs, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("about-open-logs")
+                            .xsmall()
+                            .ghost()
+                            .label("Open logs folder")
+                            .on_click(|_, _, cx| cx.open_with_system(&rill_os::log_dir())),
+                    ),
+            )
+            .children(
+                status.map(|(text, color)| div().text_xs().text_color(rgb(color)).child(text)),
             )
             .into_any_element()
     }

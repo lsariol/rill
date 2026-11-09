@@ -1,7 +1,8 @@
 # Builds Rill's Windows installer and update packages with Velopack.
 # Run on Windows: powershell -File scripts/package.ps1 [-Version 0.1.0] [-Out <dir>] [-NoBuild]
 #   [-AzureSignFile <metadata.json>]
-# Needs vpk (dotnet tool install -g vpk). Writes Setup.exe, a portable zip and the update feed
+# Needs vpk (dotnet tool install -g vpk) and cargo-about (cargo install --locked cargo-about
+# --features cli). Writes Setup.exe, a portable zip and the update feed
 # (releases.win.json and the .nupkg files) to -Out, .dev/releases by default; packaging several
 # versions into the same folder gives a feed that updates from one to the next.
 # Release builds carry the app IDs from the environment at build time (see README).
@@ -41,6 +42,14 @@ Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item "target\release\rill.exe" $stage
 
+# The open-source license notices go beside rill.exe; Settings, About opens them.
+if (-not (Get-Command cargo-about -ErrorAction SilentlyContinue)) {
+    Write-Host "$fail cargo-about not found. Install it with: cargo install --locked cargo-about --features cli" -ForegroundColor Red
+    exit 1
+}
+cargo about generate -c about.toml scripts/licenses.hbs -o (Join-Path $stage "third-party-licenses.html")
+if ($LASTEXITCODE -ne 0) { Write-Host "$fail The license notices couldn't be generated. See cargo-about's messages above." -ForegroundColor Red; exit 1 }
+
 $args = @(
     "pack",
     "--packId", "Rill",
@@ -50,6 +59,7 @@ $args = @(
     "--packTitle", "Rill",
     "--packAuthors", "Mobasity",
     "--icon", "crates\rill-app\assets\app\rill.ico",
+    "--splashImage", "crates\rill-app\assets\app\splash.png",
     "--shortcuts", "StartMenuRoot,Desktop",
     "--outputDir", $Out,
     "--yes"
