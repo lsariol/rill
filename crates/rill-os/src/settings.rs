@@ -77,7 +77,8 @@ pub struct Highlights {
     pub event_color: String,
     /// Marks on the scroll bar where highlighted lines are.
     pub scrollbar_marks: bool,
-    /// A user's first message in the channel (once Rill has watched it a week).
+    /// A user's first message in the channel (once Rill has watched it a week). Off by default:
+    /// it keeps a list of everyone who chats in `known-chatters.txt`.
     pub first_chatters: bool,
     pub first_chatter_color: String,
     /// Colors for each kind of event (`subscription`, `gift`, `raid`, `money`, `redemption`,
@@ -95,7 +96,7 @@ impl Default for Highlights {
             events: true,
             event_color: "#a970ff".into(),
             scrollbar_marks: true,
-            first_chatters: true,
+            first_chatters: false,
             first_chatter_color: "#23a55a".into(),
             event_colors: Default::default(),
             events_off: Vec::new(),

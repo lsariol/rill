@@ -37,11 +37,12 @@ pub fn credential_service() -> &'static str {
     }
 }
 
+/// `%AppData%`: the installer owns `%LocalAppData%\Rill`, and replaces or removes what's in it.
 #[cfg(windows)]
 fn platform_data_dir() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
+    std::env::var_os("APPDATA")
         .map(PathBuf::from)
-        .unwrap_or_else(|| home().join("AppData").join("Local"))
+        .unwrap_or_else(|| home().join("AppData").join("Roaming"))
 }
 
 #[cfg(target_os = "macos")]

@@ -52,6 +52,15 @@ fn thousands(n: usize) -> String {
     out
 }
 
+/// A file size as KB or MB.
+fn file_size(bytes: u64) -> String {
+    if bytes < 1024 * 1024 {
+        format!("{} KB", bytes.div_ceil(1024))
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
 /// Twitch's poll limits, the strictest of the platforms.
 const POLL_TITLE_MAX: usize = 60;
 const POLL_CHOICE_MAX: usize = 25;
@@ -1059,16 +1068,7 @@ impl ChatView {
                 cx,
             ),
         ];
-        if let Some(note) = self.first_chatters_note() {
-            rows.push(
-                div()
-                    .pl_2()
-                    .text_xs()
-                    .text_color(rgb(style::MUTED))
-                    .child(note)
-                    .into_any_element(),
-            );
-        }
+        rows.push(self.render_first_chatters_note(cx));
         rows.push(self.highlight_row(
             "events",
             "Events",
@@ -1178,6 +1178,64 @@ impl ChatView {
             .into_any_element()
     }
 
+    /// What turning on first-time chatters costs, how far along it is, and, while it's off, a
+    /// way to delete the list kept from before.
+    fn render_first_chatters_note(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.highlight_on("first");
+        let mut lines: Vec<String> = Vec::new();
+        let mut saved = None;
+        if on {
+            lines.push(format!(
+                "Rill keeps a list of everyone who chats in your channels, on this computer only. \
+                 It knows {} people so far.",
+                thousands(self.session.known_count())
+            ));
+            lines.extend(self.first_chatters_note());
+        } else {
+            lines.push(
+                "No platform tells apps who is chatting for the first time, so Rill keeps its own \
+                 list of everyone who chats in your channels, on this computer only. It uses \
+                 about 80 bytes of memory per person: under 1 MB for a small channel, a few MB \
+                 for most, about 40 MB for one with half a million different chatters. Nothing \
+                 is marked for the first week, while Rill learns who has chatted before."
+                    .into(),
+            );
+            if self.platforms.saves() {
+                saved = rill_os::known::size().filter(|&n| n > 0);
+            }
+        }
+        div()
+            .pl_2()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .text_xs()
+            .text_color(rgb(style::MUTED))
+            .children(lines.into_iter().map(|l| div().child(l)))
+            .when_some(saved, |d, bytes| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().flex_1().child(format!(
+                            "The list from before is still saved ({}).",
+                            file_size(bytes)
+                        )))
+                        .child(
+                            Button::new("delete-known")
+                                .xsmall()
+                                .outline()
+                                .label("Delete it")
+                                .on_click(cx.listener(|view, _, _, cx| {
+                                    view.delete_known_chatters(cx);
+                                })),
+                        ),
+                )
+            })
+            .into_any_element()
+    }
+
     /// While Rill is still learning who has chatted, when first-time chatters start being marked.
     fn first_chatters_note(&self) -> Option<String> {
         let now = now_ms();
@@ -1189,7 +1247,8 @@ impl ChatView {
             .collect();
         if starts.is_empty() {
             return Some(
-                "Rill learns who has chatted from your chat; it starts when chat arrives.".into(),
+                "Learning starts when chat arrives; first-time chatters are marked a week later."
+                    .into(),
             );
         }
         let latest = *starts.iter().max()?;
