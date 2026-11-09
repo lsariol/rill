@@ -17,7 +17,7 @@ cargo run -p rill-app -- --help  # all options
 
 A debug run keeps everything it writes (settings, window placement, logs) in the repository's
 `.dev/` folder, and tokens go to Windows Credential Manager under `rill-dev`. Release builds use
-`%LOCALAPPDATA%\Rill` and `rill`. Set `RILL_DATA_DIR` to keep settings and logs in another
+`%APPDATA%\Rill` and `rill`. Set `RILL_DATA_DIR` to keep settings and logs in another
 folder; the benchmark scripts use `.dev\bench\data`.
 
 ## Using it
@@ -120,9 +120,11 @@ folder; the benchmark scripts use `.dev\bench\data`.
   breaks) each get a colored bar and tint. Settings → Highlights turns each on or off and picks
   its color from the swatches or any hex code (`#ff00aa`). Thin marks along the scrollbar show
   where highlighted lines are, so a sub that scrolled away while you were gone is easy to find.
-  First-time chatters: no platform says when someone chats for the first time, so Rill keeps a
-  list of who has chatted in your channels (`known-chatters.txt` beside `settings.json`) and
-  starts marking first-timers once it has watched a platform's chat for a week.
+  First-time chatters are off until you turn them on: no platform says when someone chats for
+  the first time, so Rill keeps a list of who has chatted in your channels
+  (`known-chatters.txt` beside `settings.json`, about 80 bytes of memory per person) and starts
+  marking first-timers once it has watched a platform's chat for a week. Turned off, the list
+  leaves memory, and Settings offers to delete the saved file.
 - **Text size:** Settings → Text size makes chat, emotes, badges and the rest of the window
   90 % to 150 % of normal (`text_size`); Ctrl+= and Ctrl+- change it from anywhere, and Ctrl+0
   puts it back.
@@ -184,11 +186,12 @@ To build the installer, install the .NET 8 SDK and Velopack's packaging tool
 powershell -File scripts/package.ps1 -Version 0.1.0
 ```
 
-It writes `Mobasity.Rill-win-Setup.exe`, a portable zip, and the update feed
-(`releases.win.json` and the packages) to `.dev\releases`. Packaging several versions into the
-same folder makes a feed that updates from one to the next. Setup installs to
-`%LocalAppData%\Mobasity.Rill`; settings and sign-ins stay in `%LocalAppData%\Rill` and survive
-an uninstall. To try an update without a server, point an installed Rill at the folder:
+It writes `Rill-win-Setup.exe`, a portable zip, and the update feed (`releases.win.json` and
+the packages) to `.dev\releases`. Packaging several versions into the same folder makes a feed
+that updates from one to the next. Setup installs to `%LocalAppData%\Rill`, without asking for
+administrator rights, and adds Rill to the Start menu, the desktop and Windows' list of installed
+apps. Settings stay in `%AppData%\Rill` and sign-ins in Windows Credential Manager, so both
+survive an uninstall. To try an update without a server, point an installed Rill at the folder:
 `$env:RILL_UPDATE_SOURCE = "<path to .dev\releases>"` before starting it.
 
 ## Checks and measurements

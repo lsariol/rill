@@ -224,25 +224,20 @@ impl ChatView {
             .unwrap_or(rill_core::feed::DEFAULT_CAPACITY)
             .clamp(100, 1_000_000);
         let mut session = Session::new(history);
-        // Who has chatted before. Simulated chat learns for a minute, then marks new names.
-        if platforms.saves() {
-            match rill_os::known::load() {
-                Ok(k) => {
-                    let p = |name: &str| Platform::from_name(name);
-                    session.load_known(
-                        k.since.into_iter().filter_map(|(n, t)| Some((p(&n)?, t))),
-                        k.ids.into_iter().filter_map(|(n, id)| Some((p(&n)?, id))),
-                    );
-                }
-                Err(e) => session.notice(None, rill_core::Level::Warn, &e, now_ms()),
-            }
-        } else if simulated {
-            session.set_learning(60_000);
-        }
         let highlights = saved
             .as_ref()
             .map(|s| s.highlights.clone())
             .unwrap_or_default();
+        // Who has chatted before, only while first-time chatters are on. Simulated chat learns
+        // for a minute, then marks new names.
+        session.set_first_chatters(highlights.first_chatters);
+        if platforms.saves() {
+            if highlights.first_chatters {
+                load_known_chatters(&mut session);
+            }
+        } else if simulated {
+            session.set_learning(60_000);
+        }
         let text_size = saved
             .as_ref()
             .map_or(100, |s| s.text_size)
@@ -607,8 +602,20 @@ impl ChatView {
         }
     }
 
-    /// Turns a highlight row on or off, and saves it.
+    /// Turns a highlight row on or off, and saves it. First-time chatters also start or stop
+    /// keeping the list of who has chatted; off, the list leaves memory but stays on disk.
     pub(crate) fn set_highlight_on(&mut self, key: &'static str, on: bool, cx: &mut Context<Self>) {
+        if key == "first" {
+            if on {
+                if self.platforms.saves() {
+                    load_known_chatters(&mut self.session);
+                }
+            } else {
+                self.keep_known_chatters();
+                self.session.forget_known();
+            }
+            self.session.set_first_chatters(on);
+        }
         self.set_highlights(
             move |h| match key {
                 "mention" => h.mentions = on,
@@ -695,6 +702,20 @@ impl ChatView {
             self.session
                 .notice(None, rill_core::Level::Error, &e, now_ms());
         }
+    }
+
+    /// Deletes the saved list of who has chatted, and forgets it.
+    pub(crate) fn delete_known_chatters(&mut self, cx: &mut Context<Self>) {
+        self.session.take_known_changes();
+        self.session.forget_known();
+        if self.platforms.saves()
+            && let Err(e) = rill_os::known::delete()
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+        }
+        cx.notify();
     }
 
     /// Marks along the scroll bar where highlighted lines are, so a sub or mention that scrolled
@@ -1304,6 +1325,20 @@ impl ChatView {
             })
             .children(self.render_card(cx))
             .children(self.render_hover())
+    }
+}
+
+/// Reads the saved list of who has chatted into the session; a failure is a notice in chat.
+fn load_known_chatters(session: &mut Session) {
+    match rill_os::known::load() {
+        Ok(k) => {
+            let p = |name: &str| Platform::from_name(name);
+            session.load_known(
+                k.since.into_iter().filter_map(|(n, t)| Some((p(&n)?, t))),
+                k.ids.into_iter().filter_map(|(n, id)| Some((p(&n)?, id))),
+            );
+        }
+        Err(e) => session.notice(None, rill_core::Level::Warn, &e, now_ms()),
     }
 }
 

@@ -43,7 +43,7 @@ Copy-Item "target\release\rill.exe" $stage
 
 $args = @(
     "pack",
-    "--packId", "Mobasity.Rill",
+    "--packId", "Rill",
     "--packVersion", $Version,
     "--packDir", $stage,
     "--mainExe", "rill.exe",

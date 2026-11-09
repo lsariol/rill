@@ -54,6 +54,22 @@ fn parse(text: &str) -> Known {
     known
 }
 
+/// The file's size in bytes, or `None` when there's no file.
+pub fn size() -> Option<u64> {
+    std::fs::metadata(path()).ok().map(|m| m.len())
+}
+
+/// Deletes the file; a missing one is already deleted.
+pub fn delete() -> Result<(), String> {
+    match std::fs::remove_file(path()) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!(
+            "Known chatters: can't delete {} ({e}). Close anything that has it open and try again.",
+            path().display()
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Adds lines to the end of the file, creating it if needed.
 pub fn append(known: &Known) -> Result<(), String> {
     if known.since.is_empty() && known.ids.is_empty() {

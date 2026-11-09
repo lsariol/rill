@@ -130,9 +130,11 @@ pub struct Session {
 }
 
 /// Who has chatted before, kept across runs by the app. A platform's first-time highlights wait
-/// until Rill has watched it for `learn_ms`, so day one doesn't mark everyone.
+/// until Rill has watched it for `learn_ms`, so day one doesn't mark everyone. Nothing is noted
+/// unless `tracking` is on.
 #[derive(Debug)]
 struct Known {
+    tracking: bool,
     ids: std::collections::HashSet<(Platform, String)>,
     since: HashMap<Platform, i64>,
     learn_ms: i64,
@@ -143,6 +145,7 @@ struct Known {
 impl Default for Known {
     fn default() -> Self {
         Known {
+            tracking: false,
             ids: Default::default(),
             since: HashMap::new(),
             learn_ms: LEARN_MS,
@@ -695,6 +698,25 @@ impl Session {
         self.known.ids.extend(ids);
     }
 
+    /// Turns first-time chatter tracking on or off. Off, nothing is noted and nothing is marked.
+    pub fn set_first_chatters(&mut self, on: bool) {
+        self.known.tracking = on;
+    }
+
+    /// Forgets everyone who has chatted, freeing the memory; tracking stays as it was.
+    pub fn forget_known(&mut self) {
+        let k = &mut self.known;
+        k.ids = Default::default();
+        k.since.clear();
+        k.new_ids.clear();
+        k.new_since.clear();
+    }
+
+    /// How many people Rill knows have chatted, across platforms.
+    pub fn known_count(&self) -> usize {
+        self.known.ids.len()
+    }
+
     /// Sets how long a platform is watched before first-time chatters are marked (0 marks
     /// every new name at once, for simulated chat).
     pub fn set_learning(&mut self, ms: i64) {
@@ -719,7 +741,7 @@ impl Session {
 
     /// Notes the author; true when they're new and the platform has been watched long enough.
     fn first_message(&mut self, platform: Platform, user_id: &str, now_ms: i64) -> bool {
-        if user_id.is_empty() {
+        if user_id.is_empty() || !self.known.tracking {
             return false;
         }
         let k = &mut self.known;
@@ -975,6 +997,11 @@ mod tests {
         let mut s = Session::new(100);
         connect(&mut s, Platform::Twitch, ALL_CAPS);
         let first = |s: &Session| s.feed.entries().last().map(|e| e.first);
+        // Off by default: nothing is noted.
+        s.apply(msg(Platform::Twitch, "0", "zed", "hey"), 0);
+        assert_eq!(s.take_known_changes(), KnownChanges::default());
+        assert_eq!(s.first_chatters_from(Platform::Twitch), None);
+        s.set_first_chatters(true);
         // Day one: everyone is new to Rill, so nobody is marked yet.
         s.apply(msg(Platform::Twitch, "1", "alice", "hi"), 0);
         assert_eq!(first(&s), Some(false));
@@ -991,6 +1018,7 @@ mod tests {
         assert_eq!(first(&s), Some(false), "only the first message");
         // What was kept before counts.
         let mut t = Session::new(100);
+        t.set_first_chatters(true);
         connect(&mut t, Platform::Twitch, ALL_CAPS);
         t.load_known(
             [(Platform::Twitch, 0)],
@@ -999,6 +1027,11 @@ mod tests {
         t.apply(msg(Platform::Twitch, "5", "carol", "back"), later);
         assert_eq!(first(&t), Some(false));
         assert_eq!(t.first_chatters_from(Platform::Twitch), Some(LEARN_MS));
+        assert_eq!(t.known_count(), 1);
+        // Forgetting starts over.
+        t.forget_known();
+        assert_eq!(t.known_count(), 0);
+        assert_eq!(t.first_chatters_from(Platform::Twitch), None);
     }
 
     #[test]
