@@ -46,4 +46,6 @@ Rill's first release, in progress.
 - Rill reopens at the size and place it was closed (kept in `window.json` beside `settings.json`), unless that spot is no longer on a screen.
 - An app icon (a chat bubble with three streams in the platforms' colors) for the window, the taskbar and Explorer.
 - A Windows installer: Rill installs to `%LocalAppData%\Rill` without administrator rights, with Start menu and desktop shortcuts and an entry in Windows' installed apps; settings are kept in `%AppData%\Rill`. Updates: an installed Rill checks for a new version when it starts and every six hours, downloads it in the background and installs it on the next start, or at once with Update in the header. Settings turns the checks off. Built with `scripts/package.ps1`.
+- An OBS overlay: Settings → OBS overlay serves your chat as a page on this computer for an OBS Browser source, with its own text size, fading, badges and icons, dark backing, hiding of commands and bots, and highlights separate from Rill's (all off at first). It runs only while turned on and Rill is open.
+- Sign-ins to Kick and YouTube end on a page on rill.mobasity.com.
 - `--sim` shows simulated chat, with options for rate, bursts, emotes, failures and dropped connections.

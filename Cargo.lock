@@ -5564,6 +5564,7 @@ dependencies = [
  "rill-core",
  "rill-kick",
  "rill-os",
+ "rill-overlay",
  "rill-rumble",
  "rill-sim",
  "rill-twitch",
@@ -5627,6 +5628,19 @@ dependencies = [
  "keyring",
  "serde",
  "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "rill-overlay"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "rill-core",
+ "rill-os",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
  "tracing",
 ]
 

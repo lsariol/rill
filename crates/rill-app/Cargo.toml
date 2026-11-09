@@ -18,6 +18,7 @@ rill-twitch.workspace = true
 rill-kick.workspace = true
 rill-rumble.workspace = true
 rill-youtube.workspace = true
+rill-overlay.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 gpui.workspace = true
 gpui_platform.workspace = true

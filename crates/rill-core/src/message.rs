@@ -49,6 +49,25 @@ pub struct Badge {
     pub image_url: Option<String>,
 }
 
+/// The largest size the image's service has, for hover cards and the overlay; other images as they are.
+pub fn bigger_image(url: &str) -> String {
+    let swap = |from: &str, to: &str| url.strip_suffix(from).map(|base| format!("{base}{to}"));
+    if url.contains("static-cdn.jtvnw.net/emoticons/") {
+        swap("/1.0", "/3.0").or_else(|| swap("/2.0", "/3.0"))
+    } else if url.contains("static-cdn.jtvnw.net/badges/") {
+        swap("/2", "/3").or_else(|| swap("/1", "/3"))
+    } else if url.contains("7tv.app") {
+        swap("/1x.webp", "/3x.webp").or_else(|| swap("/1x.avif", "/3x.avif"))
+    } else if url.contains("betterttv.net") {
+        swap("/1x.webp", "/3x.webp").or_else(|| swap("/1x", "/3x"))
+    } else if url.contains("frankerfacez.com/emote/") {
+        swap("/1", "/4")
+    } else {
+        None
+    }
+    .unwrap_or_else(|| url.to_string())
+}
+
 /// How long someone has subscribed, in words: "8 months", "1 year", "2 years, 3 months".
 pub fn tenure(months: u64) -> String {
     let plural = |n: u64, one: &str| {

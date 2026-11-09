@@ -40,6 +40,7 @@ Options:
   --flaky             Drop and restore connections now and then
   --fail <0-1>        Share of sends and actions that fail (default 0.05)
   --history <n>       Keep this many chat lines (default: the Settings choice, 5,000)
+  --overlay <port>    Serve the OBS overlay on this port for this run, whatever Settings say
   --exit-after <s>    Quit after this many seconds (for benchmarks)
   --stats <file>      Write counters to this file on quit (with --exit-after)
   --firehose <url>    Load test: real chat from a public firehose (catquery's jsonBasic
@@ -59,6 +60,7 @@ struct Options {
     stats: Option<std::path::PathBuf>,
     /// Chat lines to keep, overriding Settings.
     history: Option<usize>,
+    overlay: Option<u16>,
 }
 
 fn parse_args() -> Result<Options, String> {
@@ -95,6 +97,12 @@ fn parse_args() -> Result<Options, String> {
             }
             "--stats" => o.stats = Some(value("--stats")?.into()),
             "--history" => o.history = Some(number(&value("--history")?, "--history")? as usize),
+            "--overlay" => {
+                let port = value("--overlay")?;
+                o.overlay = Some(port.parse::<u16>().ok().filter(|p| *p > 0).ok_or_else(|| {
+                    format!("--overlay needs a port from 1 to 65535, not \"{port}\".")
+                })?);
+            }
             other => return Err(format!("Unknown option \"{other}\".\n\n{USAGE}")),
         }
     }
@@ -235,6 +243,7 @@ fn main() -> ExitCode {
 
     let exit_after = options.exit_after;
     let history = options.history;
+    let overlay = options.overlay;
     // Simulated chat (not the firehose) marks first-time chatters after a minute, to show them.
     let simulated = options.sim && options.firehose.is_none();
     let stats_path = options.stats.clone();
@@ -279,7 +288,11 @@ fn main() -> ExitCode {
                     platforms,
                     events,
                     startup_errors,
-                    chat_view::ViewOptions { history, simulated },
+                    chat_view::ViewOptions {
+                        history,
+                        simulated,
+                        overlay,
+                    },
                     window,
                     cx,
                 )
