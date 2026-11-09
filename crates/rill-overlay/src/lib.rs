@@ -333,7 +333,16 @@ async fn handle(
     let host_ok = [format!("127.0.0.1:{port}"), format!("localhost:{port}")]
         .iter()
         .any(|h| request.host.eq_ignore_ascii_case(h));
-    if request.path == "/ws" && request.upgrade && host_ok {
+    // Only the overlay's own page may listen: another site open in a browser can't.
+    let origin_ok = request.origin.as_deref().is_none_or(|o| {
+        [
+            format!("http://127.0.0.1:{port}"),
+            format!("http://localhost:{port}"),
+        ]
+        .iter()
+        .any(|ok| o.eq_ignore_ascii_case(ok))
+    });
+    if request.path == "/ws" && request.upgrade && host_ok && origin_ok {
         websocket(sock, rx, shared, stop).await;
         return;
     }
@@ -393,6 +402,8 @@ async fn peek_head(sock: &TcpStream) -> Option<String> {
 struct Request {
     path: String,
     host: String,
+    /// The page that opened the connection, when a browser says.
+    origin: Option<String>,
     upgrade: bool,
 }
 
@@ -405,12 +416,15 @@ impl Request {
             .unwrap_or("");
         let path = target.split('?').next().unwrap_or("").to_string();
         let mut host = String::new();
+        let mut origin = None;
         let mut upgrade = false;
         for line in lines {
             if let Some((name, value)) = line.split_once(':') {
                 let value = value.trim();
                 if name.eq_ignore_ascii_case("host") {
                     host = value.to_string();
+                } else if name.eq_ignore_ascii_case("origin") {
+                    origin = Some(value.to_string());
                 } else if name.eq_ignore_ascii_case("upgrade") {
                     upgrade = value.eq_ignore_ascii_case("websocket");
                 }
@@ -419,6 +433,7 @@ impl Request {
         Request {
             path,
             host,
+            origin,
             upgrade,
         }
     }
@@ -591,6 +606,20 @@ mod tests {
         overlay.delete(&[1]);
         let deleted = ws.next().await.unwrap().unwrap().into_text().unwrap();
         assert!(deleted.contains(r#""ids":[1]"#));
+
+        // Another site's page can't listen in.
+        let mut sock = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        sock.write_all(
+            format!(
+                "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: https://evil.example\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+        let mut reply = String::new();
+        sock.read_to_string(&mut reply).await.unwrap();
+        assert!(!reply.starts_with("HTTP/1.1 101"), "{reply}");
 
         // Another name for the address is refused.
         let mut sock = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
