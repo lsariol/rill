@@ -14,6 +14,7 @@ mod preview;
 mod row;
 mod search;
 mod style;
+mod updates;
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -166,6 +167,8 @@ fn real_platforms() -> (Platforms, Vec<String>) {
 }
 
 fn main() -> ExitCode {
+    // Velopack's install and update steps run first, and may end the process.
+    updates::hooks();
     let options = match parse_args() {
         Ok(o) => o,
         Err(msg) => {

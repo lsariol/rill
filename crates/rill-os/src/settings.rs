@@ -21,6 +21,8 @@ pub struct Settings {
     pub highlights: Highlights,
     /// Text and emote size, in percent of normal (90 to 150).
     pub text_size: u32,
+    /// Check for new versions now and then, download them, and install on the next start.
+    pub auto_update: bool,
     pub twitch: TwitchSettings,
     pub youtube: YouTubeSettings,
     pub kick: KickSettings,
@@ -35,6 +37,7 @@ impl Default for Settings {
             message_history: 5_000,
             highlights: Highlights::default(),
             text_size: 100,
+            auto_update: true,
             twitch: TwitchSettings::default(),
             youtube: YouTubeSettings::default(),
             kick: KickSettings::default(),
