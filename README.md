@@ -3,24 +3,10 @@
 A fast native desktop chat client for multistreamers: Twitch, YouTube, Kick and Rumble chat in one
 chronological feed, with one composer that sends to every platform or just one.
 
-Rust, [GPUI](https://gpui.rs) and Tokio. Windows first; macOS and Linux later from the same code.
+Rill is written in Rust with [GPUI](https://gpui.rs) and Tokio. It runs on Windows today; Linux is
+next, from the same code.
 
-## Run it
-
-On Windows, in PowerShell, from the repository folder:
-
-```powershell
-cargo run -p rill-app            # connect to the real platforms
-cargo run -p rill-app -- --sim   # simulated chat, no accounts needed
-cargo run -p rill-app -- --help  # all options
-```
-
-A debug run keeps everything it writes (settings, window placement, logs) in the repository's
-`.dev/` folder, and tokens go to Windows Credential Manager under `rill-dev`. Release builds use
-`%APPDATA%\Rill` and `rill`. Set `RILL_DATA_DIR` to keep settings and logs in another
-folder; the benchmark scripts use `.dev\bench\data`.
-
-## Using it
+## What it does
 
 - **Composer:** Enter sends, Shift+Enter starts a new line. Tab and Shift+Tab switch the
   destination: all platforms (rainbow outline) or one platform (its color); the label above says
@@ -133,7 +119,47 @@ folder; the benchmark scripts use `.dev\bench\data`.
   buttons, and Enter or Space presses one. In the composer, press Esc (with nothing to close),
   then Tab, to leave it. Esc anywhere else closes an open card and returns to the composer.
 
-## Platform setup
+## Requirements
+
+- To use Rill: Windows 10 or 11.
+- To build it: [Rust](https://rustup.rs) (stable) with the MSVC toolchain, which needs Visual
+  Studio's C++ build tools.
+- To build the installer: the .NET 8 SDK and Velopack's packaging tool (`dotnet tool install -g
+  vpk`).
+
+## Getting started
+
+Download the installer from [rill.mobasity.com](https://rill.mobasity.com) and run it. It installs
+to `%LocalAppData%\Rill` without asking for administrator rights, and adds Rill to the Start menu,
+the desktop and Windows' list of installed apps. Then open **Accounts** in Rill and connect your
+platforms.
+
+To run it from source instead, in PowerShell from the repository folder:
+
+```powershell
+cargo run -p rill-app            # connect to the real platforms
+cargo run -p rill-app -- --sim   # simulated chat, no accounts needed
+cargo run -p rill-app -- --help  # all options
+```
+
+## Configuration
+
+Settings are chosen in Rill's Settings panel and saved in `settings.json`. An installed Rill keeps
+it, with its logs, in `%AppData%\Rill`, and sign-ins in Windows Credential Manager under `rill`, so
+both survive an uninstall. A debug run keeps everything it writes (settings, window placement,
+logs) in the repository's `.dev/` folder instead, with sign-ins under `rill-dev`. Set
+`RILL_DATA_DIR` to keep settings and logs in another folder; the benchmark scripts use
+`.dev\bench\data`.
+
+### Updates
+
+Rill installs and updates itself with [Velopack](https://velopack.io). An installed Rill checks
+`https://rill.mobasity.com/updates` when it starts and every six hours, downloads a new version
+in the background, and installs it the next time it starts; **Update** in the header installs it
+right away. Settings → Updates turns the checks off (`auto_update`). A copy run from source
+doesn't update.
+
+### Platform setup
 
 Twitch, YouTube and Kick each need an app registration. Until release builds carry them, put them
 in `settings.json` (in `.dev/` for debug runs):
@@ -168,33 +194,13 @@ in `settings.json` (in `.dev/` for debug runs):
   so its chat arrives up to 10 seconds late. Rants, new followers and new subscribers show as
   event lines.
 
-Release builds can carry the IDs instead: set `RILL_TWITCH_CLIENT_ID`, `RILL_YOUTUBE_CLIENT_ID` and
-`RILL_YOUTUBE_CLIENT_SECRET` when building.
+Release builds can carry the IDs instead: set `RILL_TWITCH_CLIENT_ID`, `RILL_YOUTUBE_CLIENT_ID`,
+`RILL_YOUTUBE_CLIENT_SECRET`, `RILL_KICK_CLIENT_ID` and `RILL_KICK_AUTH_HELPER` (the
+token-exchange service's address) when building.
 
-## Installer and updates
+## Development
 
-Rill installs and updates itself with [Velopack](https://velopack.io). An installed Rill checks
-`https://rill.mobasity.com/updates` when it starts and every six hours, downloads a new version
-in the background, and installs it the next time it starts; **Update** in the header installs it
-right away. Settings → Updates turns the checks off (`auto_update`). A copy run from source
-doesn't update.
-
-To build the installer, install the .NET 8 SDK and Velopack's packaging tool
-(`dotnet tool install -g vpk`), then in PowerShell from the repository folder:
-
-```powershell
-powershell -File scripts/package.ps1 -Version 0.1.0
-```
-
-It writes `Rill-win-Setup.exe`, a portable zip, and the update feed (`releases.win.json` and
-the packages) to `.dev\releases`. Packaging several versions into the same folder makes a feed
-that updates from one to the next. Setup installs to `%LocalAppData%\Rill`, without asking for
-administrator rights, and adds Rill to the Start menu, the desktop and Windows' list of installed
-apps. Settings stay in `%AppData%\Rill` and sign-ins in Windows Credential Manager, so both
-survive an uninstall. To try an update without a server, point an installed Rill at the folder:
-`$env:RILL_UPDATE_SOURCE = "<path to .dev\releases>"` before starting it.
-
-## Checks and measurements
+### Checks and measurements
 
 ```powershell
 powershell -File scripts/check.ps1   # rustfmt, Clippy, tests, cargo-deny
@@ -207,14 +213,29 @@ catquery's `jsonBasic` format, about 1,400 messages a second) and spreads it acr
 platforms; `scripts/soak.ps1 -Firehose <url>` does the same for a long run. It's read-only, and
 nothing it receives is saved. Badge images, channels' own subscriber badges included, come from
 ivr.fi's public copy of Twitch's badge lists, since the firehose has no Twitch sign-in; each
-channel's set is looked up the first time it's seen, two a second at most. The firehose allows one connection per address, so to run several
-tests at once, start the relay, which keeps one upstream connection and serves every test:
+channel's set is looked up the first time it's seen, two a second at most. The firehose allows
+one connection per address, so to run several tests at once, start the relay, which keeps one
+upstream connection and serves every test:
 
 ```powershell
 cargo run --release -p rill-sim --bin firehose-relay   # then each test uses --firehose ws://127.0.0.1:9300
 ```
 
-## Layout
+### Installer
+
+With the .NET 8 SDK and `vpk` installed (see Requirements), in PowerShell from the repository
+folder:
+
+```powershell
+powershell -File scripts/package.ps1 -Version 0.1.0
+```
+
+It writes `Rill-win-Setup.exe`, a portable zip, and the update feed (`releases.win.json` and
+the packages) to `.dev\releases`. Packaging several versions into the same folder makes a feed
+that updates from one to the next. To try an update without a server, point an installed Rill
+at the folder: `$env:RILL_UPDATE_SOURCE = "<path to .dev\releases>"` before starting it.
+
+### Layout
 
 | Crate | What it does |
 |---|---|
@@ -230,4 +251,4 @@ cargo run --release -p rill-sim --bin firehose-relay   # then each test uses --f
 
 ## License
 
-MIT
+Rill is released under the MIT license. See [LICENSE](LICENSE).
