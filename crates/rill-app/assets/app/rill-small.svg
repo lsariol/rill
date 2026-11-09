@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="35 75 365 365" role="img" aria-label="Rill">
+  <!-- Rill's logo for small sizes (16 to 24 px): the chat dots left out. -->
+  <defs>
+    <linearGradient id="rainbow" x1="0.10" y1="0" x2="0.92" y2="0.95">
+      <stop offset="0" stop-color="#c88aff"/>
+      <stop offset="0.22" stop-color="#8237ff"/>
+      <stop offset="0.42" stop-color="#ed37c5"/>
+      <stop offset="0.58" stop-color="#ff4780"/>
+      <stop offset="0.72" stop-color="#ff793d"/>
+      <stop offset="0.85" stop-color="#ffde3d"/>
+      <stop offset="1" stop-color="#52f34a"/>
+    </linearGradient>
+    <linearGradient id="cool" x1="0%" y1="100%" x2="53%" y2="22%">
+      <stop offset="0" stop-color="#00ebef" stop-opacity="1"/>
+      <stop offset="0.22" stop-color="#00b9ff" stop-opacity="1"/>
+      <stop offset="0.43" stop-color="#3752ff" stop-opacity="0.9"/>
+      <stop offset="0.65" stop-color="#7839ff" stop-opacity="0"/>
+    </linearGradient>
+    <path id="mark" fill-rule="evenodd" d="
+      M 155,112 C 122,112 104,132 98,164 L 60,365 C 56,389 67,402 93,402 L 123,402
+      C 147,402 156,390 160,369 L 166,344 C 169,332 175,326 190,326 L 195,326
+      C 207,326 213,332 222,345 L 247,385 C 254,396 265,402 280,402 L 331,402
+      C 347,402 352,393 344,380 L 298,311 C 342,303 372,269 372,218
+      C 372,156 333,112 271,112 Z
+      M 200,166 C 171,166 158,184 154,211 L 140,288 C 137,301 143,298 149,292
+      L 174,273 C 183,266 190,264 202,264 L 261,264 C 292,264 312,244 312,215
+      C 312,187 292,166 263,166 Z"/>
+    <path id="bubble" d="
+      M 200,166 C 171,166 158,184 154,211 L 140,288 C 137,301 143,298 149,292
+      L 174,273 C 183,266 190,264 202,264 L 261,264 C 292,264 312,244 312,215
+      C 312,187 292,166 263,166 Z"/>
+  </defs>
+  <use href="#bubble" fill="#1a1426"/>
+  <use href="#mark" fill="url(#rainbow)"/>
+  <use href="#mark" fill="url(#cool)"/>
+</svg>
