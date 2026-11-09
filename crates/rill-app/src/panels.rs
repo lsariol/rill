@@ -1413,8 +1413,8 @@ impl ChatView {
             lines.extend(self.first_chatters_note());
         } else {
             lines.push(
-                "No platform tells apps who is chatting for the first time, so Rill keeps its own \
-                 list of everyone who chats in your channels, on this computer only. It uses \
+                "The platforms don't tell apps like Rill who is chatting for the first time, so \
+                 Rill keeps its own list of everyone who chats in your channels, on this computer only. It uses \
                  about 80 bytes of memory per person: under 1 MB for a small channel, a few MB \
                  for most, about 40 MB for one with half a million different chatters. Nothing \
                  is marked for the first week, while Rill learns who has chatted before."

@@ -106,8 +106,8 @@ next, from the same code.
   breaks) each get a colored bar and tint. Settings → Highlights turns each on or off and picks
   its color from the swatches or any hex code (`#ff00aa`). Thin marks along the scrollbar show
   where highlighted lines are, so a sub that scrolled away while you were gone is easy to find.
-  First-time chatters are off until you turn them on: no platform says when someone chats for
-  the first time, so Rill keeps a list of who has chatted in your channels
+  First-time chatters are off until you turn them on: the platforms don't tell apps when
+  someone chats for the first time, so Rill keeps a list of who has chatted in your channels
   (`known-chatters.txt` beside `settings.json`, about 80 bytes of memory per person) and starts
   marking first-timers once it has watched a platform's chat for a week. Turned off, the list
   leaves memory, and Settings offers to delete the saved file.
