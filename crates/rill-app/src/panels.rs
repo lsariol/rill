@@ -1042,6 +1042,7 @@ impl ChatView {
             .child(self.render_text_size(cx))
             .child(self.render_history_choice(cx))
             .child(self.render_highlight_settings(cx))
+            .child(self.render_overlay_settings(cx))
             .child(self.render_updates(cx))
             .into_any_element()
     }
@@ -1111,7 +1112,8 @@ impl ChatView {
     ) -> AnyElement {
         let on = self.highlight_on(key);
         let current = self.color_of(key);
-        let is_kind = rill_core::EventKind::ALL.iter().any(|k| k.key() == key);
+        let bare = key.strip_prefix("o.").unwrap_or(key);
+        let is_kind = rill_core::EventKind::ALL.iter().any(|k| k.key() == bare);
         let colors = if colored {
             let swatches: Vec<_> = style::HIGHLIGHT_COLORS
                 .iter()
@@ -1173,6 +1175,224 @@ impl ChatView {
                     .accessibility_label(title)
                     .on_click(cx.listener(move |view, on: &bool, _, cx| {
                         view.set_highlight_on(key, *on, cx);
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// The OBS overlay: on or off, its link, how to add it to OBS, its look, and its highlights.
+    fn render_overlay_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        use rill_os::settings::Overlay;
+        let o = &self.overlay_settings;
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().pt_2().font_bold().text_sm().child("OBS overlay"))
+            .child(self.overlay_switch(
+                "overlay-on",
+                "Show chat on stream",
+                "Rill shows your chat as a page OBS can add as a Browser source. Only this \
+                 computer can open it, and it runs only while this is on and Rill is open.",
+                o.enabled,
+                |o, on| o.enabled = on,
+                cx,
+            ));
+        if !o.enabled {
+            return col.into_any_element();
+        }
+        let faint = |text: String| div().text_xs().text_color(rgb(style::FAINT)).child(text);
+        if let Some(e) = &self.overlay_error {
+            col = col.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(style::ERROR))
+                    .child(e.clone()),
+            );
+        } else if let Some(overlay) = &self.overlay {
+            let url = overlay.url();
+            col = col.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .font_family("monospace")
+                            .child(url.clone()),
+                    )
+                    .child(
+                        Button::new("overlay-copy")
+                            .xsmall()
+                            .outline()
+                            .label("Copy link")
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
+                            }),
+                    ),
+            );
+        }
+        col = col.child(faint(
+            "In OBS, add a Browser source (Sources, +, Browser), paste the link, and set its \
+             width and height, such as 400 by 600. Chat sits at the bottom and older lines move \
+             up. For a look of your own, add CSS in the source's Custom CSS box."
+                .into(),
+        ));
+        let choices = |label: &'static str,
+                       id: &'static str,
+                       options: &[(u32, &'static str)],
+                       current: u32,
+                       set: fn(&mut Overlay, u32),
+                       cx: &mut Context<Self>| {
+            let buttons: Vec<_> = options
+                .iter()
+                .map(|&(value, text)| {
+                    let b = Button::new((id, value as usize)).xsmall().label(text);
+                    let b = if value == current {
+                        b.primary()
+                    } else {
+                        b.outline()
+                    };
+                    b.on_click(cx.listener(move |view, _, _, cx| {
+                        view.set_overlay(move |o| set(o, value), cx);
+                    }))
+                })
+                .collect();
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(label)
+                .child(div().flex().flex_wrap().gap_1().children(buttons))
+        };
+        col = col
+            .child(choices(
+                "Text size",
+                "overlay-font",
+                &[(14, "14"), (18, "18"), (22, "22"), (28, "28"), (36, "36")],
+                u32::from(o.font_size),
+                |o, v| o.font_size = v as u16,
+                cx,
+            ))
+            .child(choices(
+                "Lines fade away",
+                "overlay-fade",
+                &[
+                    (0, "Never"),
+                    (30, "After 30 s"),
+                    (60, "After 1 min"),
+                    (120, "After 2 min"),
+                ],
+                o.fade_seconds,
+                |o, v| o.fade_seconds = v,
+                cx,
+            ))
+            .child(self.overlay_switch(
+                "overlay-badges",
+                "Badges",
+                "",
+                o.badges,
+                |o, on| o.badges = on,
+                cx,
+            ))
+            .child(self.overlay_switch(
+                "overlay-icons",
+                "Platform icons",
+                "",
+                o.platform_icons,
+                |o, on| o.platform_icons = on,
+                cx,
+            ))
+            .child(self.overlay_switch(
+                "overlay-commands",
+                "Hide commands",
+                "Messages that start with !, such as !uptime.",
+                o.hide_commands,
+                |o, on| o.hide_commands = on,
+                cx,
+            ))
+            .child(self.overlay_switch(
+                "overlay-bots",
+                "Hide bots",
+                "Nightbot, StreamElements, Streamlabs, Moobot, Fossabot, Botrix and other \
+                 well-known bots.",
+                o.hide_bots,
+                |o, on| o.hide_bots = on,
+                cx,
+            ))
+            .child(self.overlay_switch(
+                "overlay-background",
+                "Dark backing",
+                "A dark box behind each line, for busy scenes. Off, lines have a shadow instead.",
+                o.background,
+                |o, on| o.background = on,
+                cx,
+            ))
+            .child(div().pt_1().child("Overlay highlights"))
+            .child(faint(
+                "Separate from Rill's own, and all off to start: your stream shows plain chat \
+                 unless you turn these on."
+                    .into(),
+            ))
+            .child(self.highlight_row("o.mention", "Mentions of you", "", true, false, cx))
+            .child(self.highlight_row(
+                "o.first",
+                "First-time chatters",
+                if self.highlights.first_chatters {
+                    ""
+                } else {
+                    "Needs First-time chatters turned on under Highlights above."
+                },
+                true,
+                false,
+                cx,
+            ))
+            .child(self.highlight_row("o.events", "Events", "", false, false, cx));
+        let events_on = self.highlight_on("o.events");
+        for kind in rill_core::EventKind::ALL {
+            if let Some(key) = crate::chat_view::overlay_key(kind) {
+                col = col.child(self.highlight_row(key, kind.label(), "", true, !events_on, cx));
+            }
+        }
+        col.into_any_element()
+    }
+
+    /// One on-or-off overlay setting.
+    fn overlay_switch(
+        &self,
+        id: &'static str,
+        title: &'static str,
+        what: &'static str,
+        on: bool,
+        set: fn(&mut rill_os::settings::Overlay, bool),
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(title)
+                    .when(!what.is_empty(), |d| {
+                        d.child(div().text_xs().text_color(rgb(style::FAINT)).child(what))
+                    }),
+            )
+            .child(
+                Switch::new(id)
+                    .small()
+                    .checked(on)
+                    .accessibility_label(title)
+                    .on_click(cx.listener(move |view, on: &bool, _, cx| {
+                        let on = *on;
+                        view.set_overlay(move |o| set(o, on), cx);
                     })),
             )
             .into_any_element()

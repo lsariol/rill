@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rill chat overlay</title>
+<style>
+/* Change the look with Custom CSS in the OBS source's properties: .line, .name, .text,
+   .badge, .icon, .emote, .mention, and .hl for highlighted lines (their color is --hl). */
+:root { --font: 18px; --backing: rgba(18, 18, 22, 0.72); }
+html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+body { font: 600 var(--font)/1.45 "Segoe UI", system-ui, -apple-system, sans-serif; color: #fff; }
+#feed { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.line { padding: 3px 8px; border-radius: 6px; overflow-wrap: anywhere; transition: opacity 0.6s;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.6); }
+body.backing .line { background: var(--backing); text-shadow: none; }
+.line.hl { background: color-mix(in srgb, var(--hl) 30%, transparent); box-shadow: inset 3px 0 var(--hl); }
+body.backing .line.hl { background: color-mix(in srgb, var(--hl) 30%, var(--backing)); }
+.line.gone { opacity: 0; }
+.icon, .badge { height: 1em; vertical-align: -0.12em; margin-right: 0.3em; }
+body.no-icons .icon, body.no-badges .badge { display: none; }
+.name { font-weight: 700; }
+.action .text, .event .text { font-style: italic; }
+.mention { font-weight: 700; }
+.emote { vertical-align: middle; margin: -0.3em 0.05em; max-height: 3em; }
+.stack { display: inline-grid; vertical-align: middle; }
+.stack > .emote { grid-area: 1 / 1; margin: -0.3em auto; }
+</style>
+</head>
+<body>
+<div id="feed"></div>
+<script>
+"use strict";
+const feed = document.getElementById("feed");
+const MAX_LINES = 100;
+const NAME_COLOR = "#9b9bff";
+let config = { font: 18, fade: 0, badges: true, icons: true, background: false, hl: {} };
+
+function applyConfig() {
+  document.documentElement.style.setProperty("--font", config.font + "px");
+  document.body.classList.toggle("backing", !!config.background);
+  document.body.classList.toggle("no-badges", !config.badges);
+  document.body.classList.toggle("no-icons", !config.icons);
+  for (const line of feed.children) paint(line);
+}
+
+// A line takes the color of its first highlight that's turned on.
+function paint(line) {
+  const kinds = (line.dataset.kinds || "").split(" ").filter(Boolean);
+  const color = kinds.map((k) => config.hl[k]).find(Boolean);
+  line.classList.toggle("hl", !!color);
+  if (color) line.style.setProperty("--hl", color);
+  else line.style.removeProperty("--hl");
+}
+
+function image(src, cls, alt) {
+  const img = document.createElement("img");
+  img.className = cls;
+  img.alt = alt || "";
+  img.referrerPolicy = "no-referrer";
+  if (/^https:\/\//.test(src) || src.startsWith("/icons/")) img.src = src;
+  return img;
+}
+
+// Chat is untrusted: everything goes in as text or image addresses, never as HTML.
+function add(m) {
+  const line = document.createElement("div");
+  line.className = "line" + (m.a ? " action" : "") + (m.ev ? " event" : "");
+  line.id = "l" + m.id;
+  line.dataset.kinds = (m.kinds || []).join(" ");
+  for (const p of m.p || []) line.append(image("/icons/" + p + ".svg", "icon", p));
+  for (const b of m.badges || []) {
+    const img = image(b.u, "badge", b.t);
+    img.title = b.t;
+    line.append(img);
+  }
+  if (m.name) {
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = m.name;
+    name.style.color = m.color || NAME_COLOR;
+    line.append(name, document.createTextNode(m.a || m.ev ? " " : ": "));
+  }
+  const text = document.createElement("span");
+  text.className = "text";
+  if (m.a) text.style.color = m.color || NAME_COLOR;
+  let base = null;
+  for (const part of m.parts || []) {
+    if (part.e) {
+      const emote = image(part.e, "emote", part.n);
+      emote.title = part.n;
+      emote.style.height = (1.6 * (part.h || 28) / 28).toFixed(2) + "em";
+      if (part.o && base) {
+        // A zero-width emote sits on top of the one before it.
+        let stack = base.parentElement;
+        if (!stack.classList.contains("stack")) {
+          stack = document.createElement("span");
+          stack.className = "stack";
+          base.replaceWith(stack);
+          stack.append(base);
+        }
+        stack.append(emote);
+      } else {
+        text.append(emote);
+        base = emote;
+      }
+    } else {
+      const span = document.createElement("span");
+      if (part.m) span.className = "mention";
+      span.textContent = part.x;
+      text.append(span);
+      base = null;
+    }
+  }
+  line.append(text);
+  paint(line);
+  feed.append(line);
+  while (feed.children.length > MAX_LINES) feed.firstElementChild.remove();
+  if (config.fade > 0) {
+    setTimeout(() => {
+      line.classList.add("gone");
+      setTimeout(() => line.remove(), 700);
+    }, config.fade * 1000);
+  }
+}
+
+function connect() {
+  const ws = new WebSocket("ws://" + location.host + "/ws");
+  // Rill sends its settings and recent lines first, so start from empty.
+  ws.onopen = () => feed.replaceChildren();
+  ws.onmessage = (event) => {
+    let m;
+    try { m = JSON.parse(event.data); } catch { return; }
+    if (m.t === "config") { config = m; applyConfig(); }
+    else if (m.t === "line") add(m);
+    else if (m.t === "delete") for (const id of m.ids) document.getElementById("l" + id)?.remove();
+    else if (m.t === "clear") feed.replaceChildren();
+  };
+  // While Rill is closed or the overlay is off, keep trying quietly.
+  ws.onclose = () => setTimeout(connect, 2000);
+}
+connect();
+</script>
+</body>
+</html>

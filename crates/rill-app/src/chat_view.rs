@@ -34,6 +34,8 @@ pub struct ViewOptions {
     pub history: Option<usize>,
     /// Simulated chat: first-time chatters are marked after a minute instead of a week.
     pub simulated: bool,
+    /// Serve the overlay on this port for this run (`--overlay`).
+    pub overlay: Option<u16>,
 }
 
 /// Highlighted lines' middles, in pixels from the top of the history, and their colors.
@@ -44,7 +46,30 @@ type MarkLines = Rc<Vec<(f32, u32)>>;
 pub(crate) fn color_keys() -> Vec<&'static str> {
     let mut keys = vec!["mention", "first"];
     keys.extend(rill_core::EventKind::ALL.iter().map(|k| k.key()));
+    keys.extend(["o.mention", "o.first"]);
+    keys.extend(
+        rill_core::EventKind::ALL
+            .into_iter()
+            .filter_map(overlay_key),
+    );
     keys
+}
+
+/// The overlay's highlight row for a kind of event (`o.` and its key). Ad breaks aren't chat
+/// lines, so the overlay doesn't show them.
+pub(crate) fn overlay_key(kind: rill_core::EventKind) -> Option<&'static str> {
+    use rill_core::EventKind::*;
+    Some(match kind {
+        Subscription => "o.subscription",
+        Gift => "o.gift",
+        Raid => "o.raid",
+        Money => "o.money",
+        Redemption => "o.redemption",
+        Follow => "o.follow",
+        Announcement => "o.announcement",
+        Other => "o.other",
+        AdBreak => return None,
+    })
 }
 
 /// Where updating stands.
@@ -110,6 +135,13 @@ pub struct ChatView {
     pub(crate) auto_update: bool,
     pub(crate) update: UpdateStatus,
     update_task: Option<Task<()>>,
+    /// The OBS overlay's settings, and its server while it runs.
+    pub(crate) overlay_settings: rill_os::settings::Overlay,
+    pub(crate) overlay: Option<rill_overlay::Overlay>,
+    /// Why the overlay couldn't start, shown in Settings.
+    pub(crate) overlay_error: Option<String>,
+    /// The newest feed entry the overlay has been given.
+    overlay_seq: u64,
     /// The hex box for each highlight color in Settings, by key (see `color_keys`).
     pub(crate) color_inputs: Vec<(&'static str, Entity<gpui_component::input::InputState>)>,
     /// A failure to keep known chatters was shown once already.
@@ -218,7 +250,11 @@ impl ChatView {
 
         let pump = cx.spawn(async move |this, cx| pump_events(this, events, cx).await);
 
-        let ViewOptions { history, simulated } = options;
+        let ViewOptions {
+            history,
+            simulated,
+            overlay,
+        } = options;
         let history = history
             .or(saved.as_ref().map(|s| s.message_history))
             .unwrap_or(rill_core::feed::DEFAULT_CAPACITY)
@@ -244,6 +280,14 @@ impl ChatView {
             .clamp(TEXT_SIZES[0], TEXT_SIZES[TEXT_SIZES.len() - 1]);
         crate::row::set_scale(text_size);
         let auto_update = saved.as_ref().is_none_or(|s| s.auto_update);
+        let mut overlay_settings: rill_os::settings::Overlay = saved
+            .as_ref()
+            .map(|s| s.overlay.clone())
+            .unwrap_or_default();
+        if let Some(port) = overlay {
+            overlay_settings.enabled = true;
+            overlay_settings.port = port;
+        }
         let mut color_subscriptions = Vec::new();
         let color_inputs: Vec<_> = color_keys()
             .into_iter()
@@ -280,6 +324,10 @@ impl ChatView {
             update: UpdateStatus::Idle,
             update_task: None,
             color_inputs,
+            overlay_settings,
+            overlay: None,
+            overlay_error: None,
+            overlay_seq: 0,
             known_error_shown: false,
             previews: Default::default(),
             hover: None,
@@ -334,6 +382,7 @@ impl ChatView {
             input.update(cx, |s, cx| s.set_value(hex, window, cx));
         }
         view.sync_list();
+        view.apply_overlay();
         view
     }
 
@@ -379,6 +428,7 @@ impl ChatView {
     pub(crate) fn sync_list(&mut self) {
         self.refresh_following();
         let changes = self.session.feed.take_changes();
+        self.feed_overlay(&changes);
         if changes.reset {
             let estimate = self.row_height_estimate();
             self.hint_height = f32::from(estimate);
@@ -574,6 +624,21 @@ impl ChatView {
 
     /// A highlight's color: the one chosen in Settings, else Rill's.
     pub(crate) fn color_of(&self, key: &str) -> u32 {
+        if let Some(k) = key.strip_prefix("o.") {
+            let h = &self.overlay_settings.highlights;
+            let (chosen, default) = match k {
+                "mention" => (Some(&h.mention_color), style::MENTION_BAR),
+                "first" => (Some(&h.first_chatter_color), style::FIRST_CHATTER),
+                k => {
+                    let kind = rill_core::EventKind::ALL
+                        .into_iter()
+                        .find(|e| e.key() == k)
+                        .unwrap_or_default();
+                    (h.event_colors.get(k), style::event_default(kind))
+                }
+            };
+            return chosen.and_then(|c| style::parse_hex(c)).unwrap_or(default);
+        }
         let h = &self.highlights;
         let (chosen, default) = match key {
             "mention" => (Some(&h.mention_color), style::MENTION_BAR),
@@ -592,6 +657,15 @@ impl ChatView {
     /// Whether a highlight row is on: `mention`, `first`, `events` (all events), `marks`, or a
     /// kind of event.
     pub(crate) fn highlight_on(&self, key: &str) -> bool {
+        if let Some(k) = key.strip_prefix("o.") {
+            let h = &self.overlay_settings.highlights;
+            return match k {
+                "mention" => h.mentions,
+                "first" => h.first_chatters,
+                "events" => h.events,
+                k => !h.events_off.iter().any(|o| o == k),
+            };
+        }
         let h = &self.highlights;
         match key {
             "mention" => h.mentions,
@@ -605,6 +679,26 @@ impl ChatView {
     /// Turns a highlight row on or off, and saves it. First-time chatters also start or stop
     /// keeping the list of who has chatted; off, the list leaves memory but stays on disk.
     pub(crate) fn set_highlight_on(&mut self, key: &'static str, on: bool, cx: &mut Context<Self>) {
+        if let Some(k) = key.strip_prefix("o.") {
+            self.set_overlay(
+                move |o| {
+                    let h = &mut o.highlights;
+                    match k {
+                        "mention" => h.mentions = on,
+                        "first" => h.first_chatters = on,
+                        "events" => h.events = on,
+                        k => {
+                            h.events_off.retain(|x| x != k);
+                            if !on {
+                                h.events_off.push(k.to_string());
+                            }
+                        }
+                    }
+                },
+                cx,
+            );
+            return;
+        }
         if key == "first" {
             if on {
                 if self.platforms.saves() {
@@ -643,6 +737,25 @@ impl ChatView {
     ) {
         let hex = style::to_hex(color);
         let saved = hex.clone();
+        if let Some(k) = key.strip_prefix("o.") {
+            self.set_overlay(
+                move |o| {
+                    let h = &mut o.highlights;
+                    match k {
+                        "mention" => h.mention_color = saved.clone(),
+                        "first" => h.first_chatter_color = saved.clone(),
+                        k => {
+                            h.event_colors.insert(k.to_string(), saved.clone());
+                        }
+                    }
+                },
+                cx,
+            );
+            if let Some((_, input)) = self.color_inputs.iter().find(|(k, _)| *k == key) {
+                input.update(cx, |s, cx| s.set_value(hex, window, cx));
+            }
+            return;
+        }
         self.set_highlights(
             move |h| match key {
                 "mention" => h.mention_color = saved.clone(),
@@ -702,6 +815,151 @@ impl ChatView {
             self.session
                 .notice(None, rill_core::Level::Error, &e, now_ms());
         }
+    }
+
+    /// Changes the overlay's settings, saves them, and starts, stops or updates the overlay.
+    pub(crate) fn set_overlay(
+        &mut self,
+        change: impl Fn(&mut rill_os::settings::Overlay),
+        cx: &mut Context<Self>,
+    ) {
+        change(&mut self.overlay_settings);
+        if self.platforms.saves()
+            && let Err(e) = rill_os::settings::update(|s| change(&mut s.overlay))
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+        }
+        self.apply_overlay();
+        cx.notify();
+    }
+
+    /// Runs the overlay while it's turned on, on its port, with its current settings.
+    pub(crate) fn apply_overlay(&mut self) {
+        let settings = &self.overlay_settings;
+        if !settings.enabled {
+            self.overlay = None;
+            self.overlay_error = None;
+            return;
+        }
+        let config = rill_overlay::config(settings, &self.overlay_highlights());
+        if let Some(o) = &self.overlay
+            && o.port() == settings.port
+        {
+            o.set_config(config);
+            return;
+        }
+        // Let go of the old port before taking a new one.
+        self.overlay = None;
+        match rill_overlay::Overlay::start(settings.port, config) {
+            Ok(o) => {
+                self.overlay_error = None;
+                self.overlay = Some(o);
+                self.seed_overlay();
+            }
+            Err(e) => {
+                self.session
+                    .notice(None, rill_core::Level::Error, &e, now_ms());
+                self.overlay_error = Some(e);
+                self.sync_list();
+            }
+        }
+    }
+
+    /// The overlay's highlights that are on, by kind, with their colors.
+    fn overlay_highlights(&self) -> Vec<(String, String)> {
+        let h = &self.overlay_settings.highlights;
+        let mut out = Vec::new();
+        if h.mentions {
+            out.push(("mention".into(), style::to_hex(self.color_of("o.mention"))));
+        }
+        if h.first_chatters {
+            out.push(("first".into(), style::to_hex(self.color_of("o.first"))));
+        }
+        if h.events {
+            for kind in rill_core::EventKind::ALL {
+                if let Some(key) = overlay_key(kind)
+                    && self.highlight_on(key)
+                {
+                    out.push((kind.key().into(), style::to_hex(self.color_of(key))));
+                }
+            }
+        }
+        out
+    }
+
+    /// Who the user is on a platform, for their own messages on the overlay.
+    fn own_name(&self, platform: Platform) -> Option<String> {
+        self.session
+            .link(platform)?
+            .account
+            .as_ref()
+            .map(|a| a.display_name.clone())
+    }
+
+    /// Starts a newly opened overlay with the last lines of chat.
+    fn seed_overlay(&mut self) {
+        const SEED: usize = 30;
+        let Some(overlay) = &self.overlay else {
+            return;
+        };
+        let mut lines: Vec<(u64, String)> = self
+            .session
+            .feed
+            .entries()
+            .rev()
+            .filter(|e| !e.deleted)
+            .filter_map(|e| {
+                let json = rill_overlay::line(e, &self.overlay_settings, |p| self.own_name(p))?;
+                Some((e.seq, json))
+            })
+            .take(SEED)
+            .collect();
+        lines.reverse();
+        for (seq, json) in lines {
+            overlay.line(seq, json);
+        }
+    }
+
+    /// Gives the overlay the feed's new lines and takes away deleted ones.
+    fn feed_overlay(&mut self, changes: &rill_core::feed::Changes) {
+        let latest = self
+            .session
+            .feed
+            .entries()
+            .next_back()
+            .map_or(self.overlay_seq, |e| e.seq);
+        if let Some(overlay) = &self.overlay {
+            if changes.reset && self.session.feed.is_empty() {
+                overlay.clear();
+            }
+            let mut new: Vec<&rill_core::Entry> = self
+                .session
+                .feed
+                .entries()
+                .rev()
+                .take_while(|e| e.seq > self.overlay_seq)
+                .collect();
+            new.reverse();
+            for e in new.into_iter().filter(|e| !e.deleted) {
+                if let Some(json) =
+                    rill_overlay::line(e, &self.overlay_settings, |p| self.own_name(p))
+                {
+                    overlay.line(e.seq, json);
+                }
+            }
+            let deleted: Vec<u64> = changes
+                .updated
+                .iter()
+                .copied()
+                .filter(|&seq| self.session.feed.get(seq).is_some_and(|e| e.deleted))
+                .collect();
+            if !deleted.is_empty() {
+                overlay.delete(&deleted);
+            }
+        }
+        self.overlay_seq = latest;
     }
 
     /// Deletes the saved list of who has chatted, and forgets it.

@@ -1,0 +1,23 @@
+[package]
+name = "rill-overlay"
+description = "Rill's chat overlay: a page on 127.0.0.1 that OBS shows as a Browser source."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rill-core.workspace = true
+rill-os.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync", "net", "io-util"] }
+tokio-tungstenite = "0.30"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync", "net", "io-util"] }
+tokio-tungstenite = "0.30"
+
+[lints]
+workspace = true

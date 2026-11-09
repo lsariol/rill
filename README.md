@@ -114,6 +114,17 @@ next, from the same code.
 - **Text size:** Settings → Text size makes chat, emotes, badges and the rest of the window
   90 % to 150 % of normal (`text_size`); Ctrl+= and Ctrl+- change it from anywhere, and Ctrl+0
   puts it back.
+- **OBS overlay:** Settings → OBS overlay shows your chat on stream. Turned on, Rill serves a
+  page at `http://127.0.0.1:47832/` (Copy link is beside it); in OBS, add a Browser source with
+  that address and a size such as 400 by 600. Lines sit at the bottom and move up, with
+  emotes, badges and platform icons. Settings picks the text size, whether lines fade after a
+  while, badges and icons, a dark backing, and hiding commands (`!uptime`) and well-known bots.
+  The overlay's highlights are its own, separate from Rill's and all off at first, so the stream
+  shows plain chat until you choose otherwise. Deleted messages leave the overlay too. Only this
+  computer can open the page, and it runs only while the setting is on and Rill is open; the
+  source's Custom CSS box in OBS changes the look further (`.line`, `.name`, `.text`, `.badge`,
+  `.icon`, `.emote`, and `.hl` for highlighted lines). The port is `overlay.port` in
+  `settings.json`, and `--overlay <port>` turns it on for one run.
 - **Keyboard:** F6 moves between the composer and the messages. In the messages, Up and Down (or
   Home and End) pick one, and Enter or Space opens its user card. Tab and Shift+Tab move between
   buttons, and Enter or Space presses one. In the composer, press Esc (with nothing to close),
@@ -247,6 +258,7 @@ at the folder: `$env:RILL_UPDATE_SOURCE = "<path to .dev\releases>"` before star
 | `rill-rumble` | Rumble: polls the Live Stream API for live chat and Rants (read-only) |
 | `rill-emotes` | 7TV, BetterTTV and FrankerFaceZ emotes; follows 7TV set changes over its event socket |
 | `rill-os` | Data folders, `settings.json`, the OS credential store |
+| `rill-overlay` | The OBS overlay: a small server on 127.0.0.1 and the page it serves |
 | `rill-app` | The GPUI app; the only crate that depends on GPUI |
 
 ## License

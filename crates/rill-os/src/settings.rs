@@ -23,6 +23,8 @@ pub struct Settings {
     pub text_size: u32,
     /// Check for new versions now and then, download them, and install on the next start.
     pub auto_update: bool,
+    /// The chat overlay for OBS.
+    pub overlay: Overlay,
     pub twitch: TwitchSettings,
     pub youtube: YouTubeSettings,
     pub kick: KickSettings,
@@ -38,6 +40,7 @@ impl Default for Settings {
             highlights: Highlights::default(),
             text_size: 100,
             auto_update: true,
+            overlay: Overlay::default(),
             twitch: TwitchSettings::default(),
             youtube: YouTubeSettings::default(),
             kick: KickSettings::default(),
@@ -98,6 +101,76 @@ impl Default for Highlights {
             scrollbar_marks: true,
             first_chatters: false,
             first_chatter_color: "#23a55a".into(),
+            event_colors: Default::default(),
+            events_off: Vec::new(),
+        }
+    }
+}
+
+/// The chat overlay: a page on this computer that OBS shows as a Browser source.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Overlay {
+    /// Serve the overlay while Rill is open. Off by default.
+    pub enabled: bool,
+    /// The port on 127.0.0.1.
+    pub port: u16,
+    /// Text size in pixels.
+    pub font_size: u16,
+    /// Seconds before a line fades away; 0 keeps every line.
+    pub fade_seconds: u32,
+    pub badges: bool,
+    pub platform_icons: bool,
+    /// Leave out messages that start with `!`.
+    pub hide_commands: bool,
+    /// Leave out well-known chat bots.
+    pub hide_bots: bool,
+    /// A dark backing behind the lines instead of none.
+    pub background: bool,
+    /// Highlights, separate from the app's own: all off by default.
+    pub highlights: OverlayHighlights,
+}
+
+impl Default for Overlay {
+    fn default() -> Self {
+        Overlay {
+            enabled: false,
+            port: 47832,
+            font_size: 18,
+            fade_seconds: 0,
+            badges: true,
+            platform_icons: true,
+            hide_commands: false,
+            hide_bots: false,
+            background: false,
+            highlights: OverlayHighlights::default(),
+        }
+    }
+}
+
+/// The overlay's highlights, each with its color as `#rrggbb`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OverlayHighlights {
+    pub mentions: bool,
+    pub mention_color: String,
+    pub first_chatters: bool,
+    pub first_chatter_color: String,
+    /// Events, each kind on unless listed in `events_off`.
+    pub events: bool,
+    /// Colors by kind of event (`subscription`, `gift`, ...); missing ones use Rill's.
+    pub event_colors: std::collections::BTreeMap<String, String>,
+    pub events_off: Vec<String>,
+}
+
+impl Default for OverlayHighlights {
+    fn default() -> Self {
+        OverlayHighlights {
+            mentions: false,
+            mention_color: "#f23f43".into(),
+            first_chatters: false,
+            first_chatter_color: "#23a55a".into(),
+            events: false,
             event_colors: Default::default(),
             events_off: Vec::new(),
         }
@@ -173,5 +246,7 @@ mod tests {
         assert!(s.link_previews, "previews are on unless turned off");
         assert_eq!(s.message_history, 5_000);
         assert!(s.highlights.mentions && s.highlights.events && s.highlights.scrollbar_marks);
+        assert!(!s.overlay.enabled, "the overlay is off unless turned on");
+        assert!(!s.overlay.highlights.mentions && !s.overlay.highlights.events);
     }
 }
