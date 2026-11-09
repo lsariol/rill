@@ -186,7 +186,7 @@ in `settings.json` (in `.dev/` for debug runs):
 ```json
 {
   "twitch": { "client_id": "…", "channel": null },
-  "youtube": { "client_id": "…", "client_secret": "…", "min_poll_ms": 5000 },
+  "youtube": { "client_id": "…", "client_secret": "…" },
   "kick": { "channel": "somechannel", "client_id": "…", "client_secret": "…" }
 }
 ```
@@ -195,10 +195,11 @@ in `settings.json` (in `.dev/` for debug runs):
   OAuth redirect URL `http://localhost` (unused; sign-in uses a device code). `channel` reads
   another channel instead of your own.
 - **YouTube:** in Google Cloud, enable the YouTube Data API v3 and create an OAuth client of type
-  **Desktop app**. Chat appears while you're live. Rill reads it over YouTube's streaming chat
-  (gRPC), which costs 5 quota units each time it connects rather than every few seconds; if the
-  stream isn't available it polls instead (5 units a poll, the default daily quota being 10,000),
-  and `min_poll_ms` stretches that. Sending, deleting and bans use the Data API either way.
+  **Desktop app**. Chat appears while you're live. Rill reads it only over YouTube's streaming chat
+  (gRPC), which costs 5 quota units each time it connects rather than every few seconds; it never
+  falls back to polling, which would use up the daily quota (10,000 units by default) far faster.
+  If the stream fails, Rill retries less and less often and says so. Sending, deleting and bans
+  use the Data API (50 units each).
 - **Kick:** reading needs no account: Rill reads chat from Kick's unofficial chat socket, as an
   anonymous viewer would, and Kick can change it without notice. Sending and moderating use Kick's
   official API: at kick.com, under Settings → Developer, create an app with the redirect URL
@@ -276,7 +277,7 @@ find these files through `https://rill.mobasity.com/updates`, which points at th
 | `rill-core` | Messages, the feed, slash commands, the session and the adapter hub. No UI or OS code. |
 | `rill-sim` | Simulated chat traffic, and a firehose of real chat, for prototyping and load tests |
 | `rill-twitch` | Twitch: device-code sign-in, EventSub chat, Helix actions |
-| `rill-youtube` | YouTube: desktop sign-in with PKCE, live chat over the gRPC stream (or polling), moderation |
+| `rill-youtube` | YouTube: desktop sign-in with PKCE, live chat over the gRPC stream, moderation |
 | `rill-kick` | Kick: reads chat from Kick's chat socket (Centrifugo or Pusher); signs in, sends and moderates through the official API |
 | `rill-rumble` | Rumble: polls the Live Stream API for live chat and Rants (read-only) |
 | `rill-emotes` | 7TV, BetterTTV and FrankerFaceZ emotes; follows 7TV set changes over its event socket |

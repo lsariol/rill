@@ -13,7 +13,8 @@ pub const API: &str = "https://www.googleapis.com/youtube/v3";
 
 /// Approximate quota units per call, from Google's quota table. Default daily quota: 10,000.
 pub mod cost {
-    pub const LIST_MESSAGES: u64 = 5;
+    /// Opening the chat stream: one `liveChatMessages.streamList` call.
+    pub const OPEN_STREAM: u64 = 5;
     pub const LIST_BROADCASTS: u64 = 1;
     pub const WRITE: u64 = 50;
 }
@@ -276,26 +277,6 @@ impl Api {
         )
         .await
         .map(|_| ())
-    }
-
-    /// One page of chat messages after `page_token`.
-    pub async fn messages(&self, chat: &str, page_token: Option<&str>) -> Result<Value, ApiError> {
-        let mut q = vec![
-            ("liveChatId", chat),
-            ("part", "snippet,authorDetails"),
-            ("maxResults", "2000"),
-        ];
-        if let Some(t) = page_token {
-            q.push(("pageToken", t));
-        }
-        self.call(
-            Method::GET,
-            "/liveChat/messages",
-            &q,
-            None,
-            cost::LIST_MESSAGES,
-        )
-        .await
     }
 
     /// Sends a message; returns its ID.
