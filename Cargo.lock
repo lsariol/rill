@@ -5570,6 +5570,7 @@ dependencies = [
  "rill-twitch",
  "rill-youtube",
  "rustls",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-appender",
