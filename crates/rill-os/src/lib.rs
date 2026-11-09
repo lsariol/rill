@@ -1,6 +1,7 @@
 //! Rill's OS integrations, kept small and behind plain functions.
 
 pub mod credentials;
+pub mod known;
 pub mod settings;
 pub mod window;
 

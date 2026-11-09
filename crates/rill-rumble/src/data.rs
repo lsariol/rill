@@ -3,7 +3,9 @@
 //! The API returns the latest messages on every poll, without message IDs, so a message is known
 //! by its time, author, text and amount.
 
-use rill_core::{Account, Author, ChatMessage, Fragment, MessageKind, Platform, Roles, split_text};
+use rill_core::{
+    Account, Author, ChatMessage, EventKind, Fragment, MessageKind, Platform, Roles, split_text,
+};
 use serde_json::Value;
 
 /// One poll's reply.
@@ -42,7 +44,11 @@ impl Supporter {
                 ..Author::default()
             },
             fragments: vec![Fragment::Text(self.action.to_string())],
-            kind: MessageKind::Event,
+            kind: MessageKind::Event(match self.action {
+                "followed" => EventKind::Follow,
+                "subscribed" => EventKind::Subscription,
+                _ => EventKind::Other,
+            }),
             sent_at_ms: chrono::DateTime::parse_from_rfc3339(&self.at)
                 .map(|t| t.timestamp_millis())
                 .unwrap_or_else(|_| rill_core::now_ms()),
@@ -122,7 +128,7 @@ impl Said {
                     cents % 100
                 ))];
                 f.extend(split_text(&self.text));
-                (MessageKind::Event, f)
+                (MessageKind::Event(EventKind::Money), f)
             }
             None => (MessageKind::Chat, split_text(&self.text)),
         };
@@ -276,7 +282,7 @@ mod tests {
         assert!(live.messages[1].to_message().author.roles.moderator);
         assert!(live.messages[3].to_message().author.roles.subscriber);
         let rant = live.messages[2].to_message();
-        assert_eq!(rant.kind, MessageKind::Event);
+        assert_eq!(rant.kind, MessageKind::Event(EventKind::Money));
         assert_eq!(rant.plain_text(), "sent a $5.00 Rant: great stream");
     }
 
@@ -290,7 +296,7 @@ mod tests {
             (m.author.display_name.as_str(), m.plain_text().as_str()),
             ("newfan", "followed")
         );
-        assert_eq!(m.kind, MessageKind::Event);
+        assert!(m.kind.is_event());
     }
 
     #[test]

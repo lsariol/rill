@@ -90,7 +90,78 @@ pub enum MessageKind {
     /// A `/me` action.
     Action,
     /// A platform event shown in chat, such as a subscription.
-    Event,
+    Event(EventKind),
+}
+
+impl MessageKind {
+    pub fn is_event(self) -> bool {
+        matches!(self, MessageKind::Event(_))
+    }
+}
+
+/// What sort of event a line is, so each can have its own highlight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub enum EventKind {
+    /// Subscriptions, resubs and memberships.
+    Subscription,
+    /// Gifted subs and memberships.
+    Gift,
+    /// Raids and hosts.
+    Raid,
+    /// Money: Bits, Rants, Super Chats.
+    Money,
+    /// Channel point redemptions.
+    Redemption,
+    Follow,
+    Announcement,
+    /// An ad break starting or ending (a notice line).
+    AdBreak,
+    #[default]
+    Other,
+}
+
+impl EventKind {
+    pub const ALL: [EventKind; 9] = [
+        EventKind::Subscription,
+        EventKind::Gift,
+        EventKind::Raid,
+        EventKind::Money,
+        EventKind::Redemption,
+        EventKind::Follow,
+        EventKind::Announcement,
+        EventKind::AdBreak,
+        EventKind::Other,
+    ];
+
+    /// Its name in `settings.json`.
+    pub fn key(self) -> &'static str {
+        match self {
+            EventKind::Subscription => "subscription",
+            EventKind::Gift => "gift",
+            EventKind::Raid => "raid",
+            EventKind::Money => "money",
+            EventKind::Redemption => "redemption",
+            EventKind::Follow => "follow",
+            EventKind::Announcement => "announcement",
+            EventKind::AdBreak => "ad_break",
+            EventKind::Other => "other",
+        }
+    }
+
+    /// Its name in Settings.
+    pub fn label(self) -> &'static str {
+        match self {
+            EventKind::Subscription => "Subscriptions and memberships",
+            EventKind::Gift => "Gifted subs",
+            EventKind::Raid => "Raids and hosts",
+            EventKind::Money => "Bits, Rants and Super Chats",
+            EventKind::Redemption => "Channel point redemptions",
+            EventKind::Follow => "Follows",
+            EventKind::Announcement => "Announcements",
+            EventKind::AdBreak => "Ad breaks",
+            EventKind::Other => "Other events",
+        }
+    }
 }
 
 /// The message a reply answers.

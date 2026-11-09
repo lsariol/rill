@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
-use crate::{ChatMessage, Fragment, Level, MessageKind, Platform};
+use crate::{ChatMessage, EventKind, Fragment, Level, Platform};
 
 /// The default number of entries kept.
 pub const DEFAULT_CAPACITY: usize = 5_000;
@@ -17,17 +17,27 @@ pub struct Entry {
     pub received_ms: i64,
     /// Mentions the signed-in user.
     pub highlighted: bool,
+    /// The author's first message in this channel, as far as Rill knows.
+    pub first: bool,
     pub deleted: bool,
 }
 
 impl Entry {
+    /// The sort of channel event this line is, if it is one. Event notices are ad breaks.
+    pub fn event(&self) -> Option<EventKind> {
+        match &self.item {
+            Item::Chat(m) => match m.kind {
+                crate::MessageKind::Event(k) => Some(k),
+                _ => None,
+            },
+            Item::Notice(n) => (n.level == Level::Event).then_some(EventKind::AdBreak),
+            Item::Sent(_) => None,
+        }
+    }
+
     /// A channel event: a subscription, gift, raid, Rant, redemption or ad break.
     pub fn is_event(&self) -> bool {
-        match &self.item {
-            Item::Chat(m) => m.kind == MessageKind::Event,
-            Item::Notice(n) => n.level == Level::Event,
-            Item::Sent(_) => false,
-        }
+        self.event().is_some()
     }
 }
 
@@ -36,8 +46,11 @@ impl Entry {
 pub struct Mark {
     /// Its place among the visible lines.
     pub ix: usize,
-    /// Mentions you (otherwise it's an event).
+    /// Mentions you.
     pub mention: bool,
+    /// The author's first message.
+    pub first: bool,
+    pub event: Option<EventKind>,
 }
 
 /// What a feed line holds.
@@ -192,6 +205,11 @@ impl Feed {
 
     /// Adds an entry at the end, evicting the oldest past capacity. Returns its seq.
     pub fn push(&mut self, item: Item, received_ms: i64) -> u64 {
+        self.push_line(item, received_ms, false)
+    }
+
+    /// Adds an entry, noting whether it's the author's first message. Returns its seq.
+    pub fn push_line(&mut self, item: Item, received_ms: i64, first: bool) -> u64 {
         let seq = self.next_seq;
         self.next_seq += 1;
         let highlighted = self.mentions_me(&item);
@@ -200,13 +218,14 @@ impl Feed {
             item,
             received_ms,
             highlighted,
+            first,
             deleted: false,
         };
         if self.filter.shows(&entry) {
             self.visible.push_back(seq);
             self.changes.appended += 1;
         }
-        if entry.highlighted || entry.is_event() {
+        if entry.highlighted || entry.first || entry.is_event() {
             self.flagged.push_back(seq);
         }
         self.entries.push_back(entry);
@@ -231,8 +250,13 @@ impl Feed {
             .iter()
             .filter_map(|&seq| {
                 let ix = self.visible_index(seq)?;
-                let mention = self.get(seq)?.highlighted;
-                Some(Mark { ix, mention })
+                let e = self.get(seq)?;
+                Some(Mark {
+                    ix,
+                    mention: e.highlighted,
+                    first: e.first,
+                    event: e.event(),
+                })
             })
             .collect()
     }
@@ -449,7 +473,7 @@ mod tests {
         f.push(chat(Platform::Twitch, "2", "a", "hi"), 0);
         let mut sub = chat(Platform::Kick, "3", "b", "subscribed");
         if let Item::Chat(m) = &mut sub {
-            m.kind = MessageKind::Event;
+            m.kind = crate::MessageKind::Event(EventKind::Subscription);
         }
         f.push(sub, 0);
         f.push(
@@ -465,15 +489,21 @@ mod tests {
             [
                 Mark {
                     ix: 0,
-                    mention: true
+                    mention: true,
+                    first: false,
+                    event: None
                 },
                 Mark {
                     ix: 2,
-                    mention: false
+                    mention: false,
+                    first: false,
+                    event: Some(EventKind::Subscription)
                 },
                 Mark {
                     ix: 3,
-                    mention: false
+                    mention: false,
+                    first: false,
+                    event: Some(EventKind::AdBreak)
                 },
             ]
         );

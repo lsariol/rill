@@ -27,9 +27,25 @@ use crate::platforms::Platforms;
 use crate::style;
 
 /// Feed entries kept in memory.
-/// Highlighted lines' middles, in pixels from the top of the history, and whether each is a
-/// mention (otherwise an event).
-type MarkLines = Rc<Vec<(f32, bool)>>;
+/// How the view starts: from the command line, not Settings.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ViewOptions {
+    /// Chat lines to keep, overriding Settings (`--history`).
+    pub history: Option<usize>,
+    /// Simulated chat: first-time chatters are marked after a minute instead of a week.
+    pub simulated: bool,
+}
+
+/// Highlighted lines' middles, in pixels from the top of the history, and their colors.
+type MarkLines = Rc<Vec<(f32, u32)>>;
+
+/// The highlight rows in Settings that have a color: mentions, first-time chatters, then each
+/// kind of event.
+pub(crate) fn color_keys() -> Vec<&'static str> {
+    let mut keys = vec!["mention", "first"];
+    keys.extend(rill_core::EventKind::ALL.iter().map(|k| k.key()));
+    keys
+}
 
 /// The history choices in Settings: chat lines, a short note, and Rill's memory use with that
 /// history full (measured under simulated chat, so long messages use somewhat more).
@@ -69,6 +85,10 @@ pub struct ChatView {
     pub(crate) link_previews: bool,
     /// Which lines stand out, and in what colors.
     pub(crate) highlights: rill_os::settings::Highlights,
+    /// The hex box for each highlight color in Settings, by key (see `color_keys`).
+    pub(crate) color_inputs: Vec<(&'static str, Entity<gpui_component::input::InputState>)>,
+    /// A failure to keep known chatters was shown once already.
+    known_error_shown: bool,
     pub(crate) previews: crate::preview::Previews,
     /// What the pointer is over (a link, emote or badge), and which line or badge reported it.
     pub(crate) hover: Option<(SharedString, crate::chat_text::Hover)>,
@@ -135,7 +155,7 @@ impl ChatView {
         platforms: Platforms,
         events: mpsc::Receiver<Event>,
         startup_errors: Vec<String>,
-        history: Option<usize>,
+        options: ViewOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -173,11 +193,48 @@ impl ChatView {
 
         let pump = cx.spawn(async move |this, cx| pump_events(this, events, cx).await);
 
+        let ViewOptions { history, simulated } = options;
         let history = history
             .or(saved.as_ref().map(|s| s.message_history))
             .unwrap_or(rill_core::feed::DEFAULT_CAPACITY)
             .clamp(100, 1_000_000);
         let mut session = Session::new(history);
+        // Who has chatted before. Simulated chat learns for a minute, then marks new names.
+        if platforms.saves() {
+            match rill_os::known::load() {
+                Ok(k) => {
+                    let p = |name: &str| Platform::from_name(name);
+                    session.load_known(
+                        k.since.into_iter().filter_map(|(n, t)| Some((p(&n)?, t))),
+                        k.ids.into_iter().filter_map(|(n, id)| Some((p(&n)?, id))),
+                    );
+                }
+                Err(e) => session.notice(None, rill_core::Level::Warn, &e, now_ms()),
+            }
+        } else if simulated {
+            session.set_learning(60_000);
+        }
+        let highlights = saved
+            .as_ref()
+            .map(|s| s.highlights.clone())
+            .unwrap_or_default();
+        let mut color_subscriptions = Vec::new();
+        let color_inputs: Vec<_> = color_keys()
+            .into_iter()
+            .map(|key| {
+                let input = cx.new(|cx| {
+                    gpui_component::input::InputState::new(window, cx).placeholder("#rrggbb")
+                });
+                color_subscriptions.push(cx.subscribe_in(
+                    &input,
+                    window,
+                    move |view: &mut Self, input, event: &InputEvent, window, cx| {
+                        view.on_color_input(key, input, event, window, cx)
+                    },
+                ));
+                (key, input)
+            })
+            .collect();
         for e in startup_errors {
             session.notice(None, rill_core::Level::Error, &e, now_ms());
         }
@@ -191,10 +248,9 @@ impl ChatView {
             completion_ix: 0,
             show_deleted,
             link_previews,
-            highlights: saved
-                .as_ref()
-                .map(|s| s.highlights.clone())
-                .unwrap_or_default(),
+            highlights,
+            color_inputs,
+            known_error_shown: false,
             previews: Default::default(),
             hover: None,
             preview_task: None,
@@ -236,8 +292,17 @@ impl ChatView {
             stats: Stats::default(),
             started: Instant::now(),
             _tasks: vec![pump],
-            _subscriptions: vec![subscription],
+            _subscriptions: {
+                let mut all = vec![subscription];
+                all.extend(color_subscriptions);
+                all
+            },
         };
+        // Each hex box starts with its color.
+        for (key, input) in view.color_inputs.clone() {
+            let hex = style::to_hex(view.color_of(key));
+            input.update(cx, |s, cx| s.set_value(hex, window, cx));
+        }
         view.sync_list();
         view
     }
@@ -259,6 +324,7 @@ impl ChatView {
             }
             self.session.apply(event, now);
         }
+        self.keep_known_chatters();
         if let Destination::One(p) = self.destination
             && !self.session.sendable().contains(&p)
         {
@@ -439,6 +505,7 @@ impl ChatView {
         cx: &mut Context<Self>,
     ) {
         change(&mut self.highlights);
+        self.mark_cache = None;
         if self.platforms.saves()
             && let Err(e) = rill_os::settings::update(|s| change(&mut s.highlights))
         {
@@ -452,13 +519,146 @@ impl ChatView {
 
     /// The color a line stands out in, if any: mentions first, then events.
     pub(crate) fn highlight_color(&self, entry: &rill_core::Entry) -> Option<u32> {
+        self.line_color(entry.highlighted, entry.first, entry.event())
+    }
+
+    /// A line's highlight: a mention first, then a first-time chatter, then its kind of event,
+    /// each only while it's turned on.
+    fn line_color(
+        &self,
+        mention: bool,
+        first: bool,
+        event: Option<rill_core::EventKind>,
+    ) -> Option<u32> {
         let h = &self.highlights;
-        if entry.highlighted && h.mentions {
-            Some(style::parse_hex(&h.mention_color).unwrap_or(style::MENTION_BAR))
-        } else if entry.is_event() && h.events {
-            Some(style::parse_hex(&h.event_color).unwrap_or(0xa970ff))
+        if mention && h.mentions {
+            Some(self.color_of("mention"))
+        } else if first && h.first_chatters {
+            Some(self.color_of("first"))
         } else {
-            None
+            let kind = event?;
+            (h.events && !h.events_off.iter().any(|k| k == kind.key()))
+                .then(|| self.color_of(kind.key()))
+        }
+    }
+
+    /// A highlight's color: the one chosen in Settings, else Rill's.
+    pub(crate) fn color_of(&self, key: &str) -> u32 {
+        let h = &self.highlights;
+        let (chosen, default) = match key {
+            "mention" => (Some(&h.mention_color), style::MENTION_BAR),
+            "first" => (Some(&h.first_chatter_color), style::FIRST_CHATTER),
+            k => {
+                let kind = rill_core::EventKind::ALL
+                    .into_iter()
+                    .find(|e| e.key() == k)
+                    .unwrap_or_default();
+                (h.event_colors.get(k), style::event_default(kind))
+            }
+        };
+        chosen.and_then(|c| style::parse_hex(c)).unwrap_or(default)
+    }
+
+    /// Whether a highlight row is on: `mention`, `first`, `events` (all events), `marks`, or a
+    /// kind of event.
+    pub(crate) fn highlight_on(&self, key: &str) -> bool {
+        let h = &self.highlights;
+        match key {
+            "mention" => h.mentions,
+            "first" => h.first_chatters,
+            "events" => h.events,
+            "marks" => h.scrollbar_marks,
+            k => !h.events_off.iter().any(|o| o == k),
+        }
+    }
+
+    /// Turns a highlight row on or off, and saves it.
+    pub(crate) fn set_highlight_on(&mut self, key: &'static str, on: bool, cx: &mut Context<Self>) {
+        self.set_highlights(
+            move |h| match key {
+                "mention" => h.mentions = on,
+                "first" => h.first_chatters = on,
+                "events" => h.events = on,
+                "marks" => h.scrollbar_marks = on,
+                k => {
+                    h.events_off.retain(|o| o != k);
+                    if !on {
+                        h.events_off.push(k.to_string());
+                    }
+                }
+            },
+            cx,
+        );
+    }
+
+    /// Sets a highlight's color, saves it, and shows it in that row's hex box.
+    pub(crate) fn set_color(
+        &mut self,
+        key: &'static str,
+        color: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hex = style::to_hex(color);
+        let saved = hex.clone();
+        self.set_highlights(
+            move |h| match key {
+                "mention" => h.mention_color = saved.clone(),
+                "first" => h.first_chatter_color = saved.clone(),
+                k => {
+                    h.event_colors.insert(k.to_string(), saved.clone());
+                }
+            },
+            cx,
+        );
+        if let Some((_, input)) = self.color_inputs.iter().find(|(k, _)| *k == key) {
+            input.update(cx, |s, cx| s.set_value(hex, window, cx));
+        }
+    }
+
+    /// A row's hex box was confirmed (Enter or leaving it): a valid color is used, anything else
+    /// puts the current one back.
+    fn on_color_input(
+        &mut self,
+        key: &'static str,
+        input: &Entity<gpui_component::input::InputState>,
+        event: &InputEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+            return;
+        }
+        let typed = input.read(cx).value().to_string();
+        let color = style::parse_hex(&typed).unwrap_or_else(|| self.color_of(key));
+        self.set_color(key, color, window, cx);
+    }
+
+    /// Keeps the names that chatted for the first time, so they aren't first-timers next time.
+    fn keep_known_chatters(&mut self) {
+        let changes = self.session.take_known_changes();
+        if !self.platforms.saves() || (changes.since.is_empty() && changes.ids.is_empty()) {
+            return;
+        }
+        let name = |p: Platform| p.name().to_lowercase();
+        let known = rill_os::known::Known {
+            since: changes
+                .since
+                .into_iter()
+                .map(|(p, t)| (name(p), t))
+                .collect(),
+            ids: changes
+                .ids
+                .into_iter()
+                .map(|(p, id)| (name(p), id))
+                .collect(),
+        };
+        if let Err(e) = rill_os::known::append(&known)
+            && !self.known_error_shown
+        {
+            self.known_error_shown = true;
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
         }
     }
 
@@ -466,16 +666,13 @@ impl ChatView {
     /// off while you were away is easy to find.
     fn render_marks(&mut self) -> Option<AnyElement> {
         let h = &self.highlights;
-        if !h.scrollbar_marks || !(h.mentions || h.events) {
+        if !h.scrollbar_marks || !(h.mentions || h.events || h.first_chatters) {
             return None;
         }
         let total = self.session.feed.visible_len();
         if total == 0 {
             return None;
         }
-        let (show_mentions, show_events) = (h.mentions, h.events);
-        let mention = style::parse_hex(&h.mention_color).unwrap_or(style::MENTION_BAR);
-        let event = style::parse_hex(&h.event_color).unwrap_or(0xa970ff);
         let (lines, measured) = self.mark_offsets();
         // A line's share of the track, between 1 and 3 px: thin with a long history.
         let track = f32::from(self.feed_bounds.get().size.height);
@@ -509,23 +706,16 @@ impl ChatView {
             let on_screen = (y - offset).clamp(0., viewport);
             offset / max_scroll * (track - thumb) + on_screen / viewport * thumb
         };
-        // One mark per pixel row, so a busy stretch doesn't draw thousands; mentions win.
-        let mut rows: Vec<(i32, bool)> = Vec::new();
-        for &(y, is_mention) in lines.iter() {
-            if !(if is_mention {
-                show_mentions
-            } else {
-                show_events
-            }) {
-                continue;
-            }
+        // One mark per pixel row, so a busy stretch doesn't draw thousands.
+        let mut rows: Vec<(i32, u32)> = Vec::new();
+        for &(y, color) in lines.iter() {
             let at = place(y).round() as i32;
-            match rows.last_mut() {
-                Some((last, m)) if (*last - at).abs() < 2 => *m |= is_mention,
-                _ => rows.push((at, is_mention)),
+            match rows.last() {
+                Some((last, _)) if (*last - at).abs() < 2 => {}
+                _ => rows.push((at, color)),
             }
         }
-        let marks = rows.into_iter().map(|(at, is_mention)| {
+        let marks = rows.into_iter().map(|(at, color)| {
             div()
                 .absolute()
                 .top(px(at as f32 - tall / 2.))
@@ -533,7 +723,7 @@ impl ChatView {
                 .w_full()
                 .h(px(tall))
                 .rounded_sm()
-                .bg(rgb(if is_mention { mention } else { event }))
+                .bg(rgb(color))
         });
         // Only a picture: the scroll bar underneath still takes every click and drag.
         Some(
@@ -589,7 +779,9 @@ impl ChatView {
                 .and_then(|e| self.row_heights.get(&e.seq).copied())
                 .unwrap_or(self.hint_height);
             while let Some(m) = next.next_if(|m| m.ix == ix) {
-                lines.push((y + h / 2., m.mention));
+                if let Some(color) = self.line_color(m.mention, m.first, m.event) {
+                    lines.push((y + h / 2., color));
+                }
             }
             y += h;
         }

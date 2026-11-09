@@ -1034,105 +1034,173 @@ impl ChatView {
             .into_any_element()
     }
 
-    /// Highlights: mentions and events, each on or off with its color, and the scroll bar marks.
+    /// Highlights: mentions, first-time chatters and each kind of event, each on or off with its
+    /// color (a swatch or any hex code), and the scroll bar marks.
     fn render_highlight_settings(&self, cx: &mut Context<Self>) -> AnyElement {
-        let h = &self.highlights;
-        let row = |id: &'static str,
-                   title: &'static str,
-                   what: &'static str,
-                   on: bool,
-                   color: Option<String>,
-                   cx: &mut Context<Self>| {
-            let swatches = color.map(|current| {
-                let current = style::parse_hex(&current);
+        let events_on = self.highlight_on("events");
+        let mut rows: Vec<AnyElement> = vec![
+            self.highlight_row(
+                "mention",
+                "Mentions of you",
+                "Messages that name you.",
+                true,
+                false,
+                cx,
+            ),
+            self.highlight_row(
+                "first",
+                "First-time chatters",
+                "Someone's first message in your chat.",
+                true,
+                false,
+                cx,
+            ),
+        ];
+        if let Some(note) = self.first_chatters_note() {
+            rows.push(
                 div()
-                    .flex()
-                    .gap_1()
-                    .children(style::HIGHLIGHT_COLORS.iter().map(|&c| {
-                        let picked = current == Some(c);
-                        div()
-                            .id(SharedString::from(format!("{id}-{c:06x}")))
-                            .size(px(16.))
-                            .rounded_full()
-                            .cursor_pointer()
-                            .bg(rgb(c))
-                            .border_2()
-                            .border_color(rgb(if picked { 0xffffff } else { style::PANEL }))
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                let hex = style::to_hex(c);
-                                view.set_highlights(
-                                    |h| match id {
-                                        "mentions" => h.mention_color = hex.clone(),
-                                        _ => h.event_color = hex.clone(),
-                                    },
-                                    cx,
-                                );
-                            }))
-                    }))
-            });
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(title)
-                        .child(div().text_xs().text_color(rgb(style::FAINT)).child(what))
-                        .children(swatches),
-                )
-                .child(
-                    Switch::new(SharedString::from(format!("highlight-{id}")))
-                        .small()
-                        .checked(on)
-                        .accessibility_label(title)
-                        .on_click(cx.listener(move |view, on: &bool, _, cx| {
-                            let on = *on;
-                            view.set_highlights(
-                                |h| match id {
-                                    "mentions" => h.mentions = on,
-                                    "events" => h.events = on,
-                                    _ => h.scrollbar_marks = on,
-                                },
-                                cx,
-                            );
-                        })),
-                )
-        };
+                    .pl_2()
+                    .text_xs()
+                    .text_color(rgb(style::MUTED))
+                    .child(note)
+                    .into_any_element(),
+            );
+        }
+        rows.push(self.highlight_row(
+            "events",
+            "Events",
+            "Subscriptions, gifts, raids and the rest, each in its own color below.",
+            false,
+            false,
+            cx,
+        ));
+        for kind in rill_core::EventKind::ALL {
+            rows.push(self.highlight_row(kind.key(), kind.label(), "", true, !events_on, cx));
+        }
+        rows.push(self.highlight_row(
+            "marks",
+            "Marks on the scroll bar",
+            "Thin marks along the scroll bar show where highlighted lines are, so a sub you \
+             missed is easy to scroll back to.",
+            false,
+            false,
+            cx,
+        ));
         div()
             .flex()
             .flex_col()
             .gap_2()
             .child(div().pt_2().font_bold().text_sm().child("Highlights"))
-            .child(row(
-                "mentions",
-                "Mentions of you",
-                "Messages that name you stand out in this color.",
-                h.mentions,
-                Some(h.mention_color.clone()),
-                cx,
-            ))
-            .child(row(
-                "events",
-                "Events",
-                "Subscriptions, gifted subs, raids, Rants, redemptions and ad breaks.",
-                h.events,
-                Some(h.event_color.clone()),
-                cx,
-            ))
-            .child(row(
-                "marks",
-                "Marks on the scroll bar",
-                "Thin marks along the scroll bar show where highlighted lines are, so a sub you missed is easy to scroll back to.",
-                h.scrollbar_marks,
-                None,
-                cx,
-            ))
+            .children(rows)
             .into_any_element()
+    }
+
+    /// One highlight: its name, a switch, and with `colored` its swatches and hex box. `dimmed`
+    /// rows (event kinds while events are off) are shown faded.
+    fn highlight_row(
+        &self,
+        key: &'static str,
+        title: &'static str,
+        what: &'static str,
+        colored: bool,
+        dimmed: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let on = self.highlight_on(key);
+        let current = self.color_of(key);
+        let is_kind = rill_core::EventKind::ALL.iter().any(|k| k.key() == key);
+        let colors = if colored {
+            let swatches: Vec<_> = style::HIGHLIGHT_COLORS
+                .iter()
+                .map(|&c| {
+                    div()
+                        .id(SharedString::from(format!("{key}-{c:06x}")))
+                        .size(px(16.))
+                        .rounded_full()
+                        .cursor_pointer()
+                        .bg(rgb(c))
+                        .border_2()
+                        .border_color(rgb(if c == current { 0xffffff } else { style::PANEL }))
+                        .on_click(cx.listener(move |view, _, window, cx| {
+                            view.set_color(key, c, window, cx);
+                        }))
+                })
+                .collect();
+            let hex = self
+                .color_inputs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, input)| div().w(px(84.)).child(Input::new(input).xsmall()));
+            let row = div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                // The color in use, even when it isn't one of the swatches.
+                .child(div().w(px(4.)).h(px(16.)).rounded_sm().bg(rgb(current)))
+                .children(swatches)
+                .children(hex);
+            Some(row)
+        } else {
+            None
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .when(is_kind, |d| d.pl_4())
+            .when(dimmed, |d| d.opacity(0.5))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(title)
+                    .when(!what.is_empty(), |d| {
+                        d.child(div().text_xs().text_color(rgb(style::FAINT)).child(what))
+                    })
+                    .children(colors),
+            )
+            .child(
+                Switch::new(SharedString::from(format!("highlight-{key}")))
+                    .small()
+                    .checked(on)
+                    .accessibility_label(title)
+                    .on_click(cx.listener(move |view, on: &bool, _, cx| {
+                        view.set_highlight_on(key, *on, cx);
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// While Rill is still learning who has chatted, when first-time chatters start being marked.
+    fn first_chatters_note(&self) -> Option<String> {
+        let now = now_ms();
+        let starts: Vec<i64> = self
+            .platforms
+            .on()
+            .into_iter()
+            .filter_map(|p| self.session.first_chatters_from(p))
+            .collect();
+        if starts.is_empty() {
+            return Some(
+                "Rill learns who has chatted from your chat; it starts when chat arrives.".into(),
+            );
+        }
+        let latest = *starts.iter().max()?;
+        (latest > now).then(|| {
+            let date = chrono::Local
+                .timestamp_millis_opt(latest)
+                .single()
+                .map(|t| t.format("%B %-d").to_string())
+                .unwrap_or_default();
+            format!(
+                "Rill is learning who has chatted before, so it doesn't mark everyone at first: \
+                 first-time chatters are marked from {date}."
+            )
+        })
     }
 
     /// Message history: how many chat lines to keep, with what each choice costs and how long it

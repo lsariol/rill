@@ -66,17 +66,46 @@ pub fn scrollbar(bar: gpui_component::scroll::Scrollbar) -> gpui_component::scro
         })
 }
 
-/// Highlight colors to choose from in Settings.
-pub const HIGHLIGHT_COLORS: [u32; 8] = [
-    0xf23f43, 0xf0883e, 0xf0b232, 0x23a55a, 0x1abc9c, 0x4da6ff, 0xa970ff, 0xe05bb5,
+/// Highlight colors to choose from in Settings (any other is a hex code away).
+pub const HIGHLIGHT_COLORS: [u32; 10] = [
+    0xf23f43, 0xf0883e, 0xf0b232, 0x23a55a, 0x1abc9c, 0x4da6ff, 0x7289da, 0xa970ff, 0xe05bb5,
+    0x949ba4,
 ];
 
-/// Reads `#rrggbb` (or `rrggbb`).
+/// Reads `#rrggbb` or `#rgb` (the `#` is optional).
 pub fn parse_hex(s: &str) -> Option<u32> {
     let hex = s.trim().trim_start_matches('#');
-    (hex.len() == 6)
-        .then(|| u32::from_str_radix(hex, 16).ok())
-        .flatten()
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    match hex.len() {
+        6 => u32::from_str_radix(hex, 16).ok(),
+        3 => {
+            let v = u32::from_str_radix(hex, 16).ok()?;
+            let (r, g, b) = ((v >> 8) & 0xf, (v >> 4) & 0xf, v & 0xf);
+            Some((r * 0x11) << 16 | (g * 0x11) << 8 | (b * 0x11))
+        }
+        _ => None,
+    }
+}
+
+/// First-time chatters' highlight unless Settings says otherwise.
+pub const FIRST_CHATTER: u32 = 0x23a55a;
+
+/// Each kind of event's highlight unless Settings says otherwise.
+pub fn event_default(kind: rill_core::EventKind) -> u32 {
+    use rill_core::EventKind::*;
+    match kind {
+        Subscription => 0xa970ff,
+        Gift => 0xe05bb5,
+        Raid => 0x4da6ff,
+        Money => 0xf0b232,
+        Redemption => 0x1abc9c,
+        Follow => 0x7289da,
+        Announcement => 0xf0883e,
+        AdBreak => 0x949ba4,
+        Other => 0xa970ff,
+    }
 }
 
 /// Writes a color as `#rrggbb`.
