@@ -20,6 +20,10 @@ use tokio::time::{Instant, sleep_until};
 use crate::api::{Api, ApiError};
 use crate::auth::{AuthError, Client, Token};
 
+/// Google hasn't verified Rill's sign-in yet: only Google accounts on its test list can connect,
+/// and sign-ins last 7 days. Rill says so in Accounts and Settings while this is true.
+pub const LIMITED: bool = true;
+
 const BUILTIN_CLIENT_ID: Option<&str> = option_env!("RILL_YOUTUBE_CLIENT_ID");
 const BUILTIN_CLIENT_SECRET: Option<&str> = option_env!("RILL_YOUTUBE_CLIENT_SECRET");
 const NOT_CONNECTED: &str = "YouTube isn't connected. Open Accounts to connect it.";

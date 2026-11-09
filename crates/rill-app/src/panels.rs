@@ -662,6 +662,7 @@ impl ChatView {
                 _ if !set_up => "Coming soon".into(),
                 (ConnectionStatus::Connected, Some(a)) => format!("Connected as {a}").into(),
                 (ConnectionStatus::Waiting(why), Some(a)) => {
+                    let why = why.strip_prefix("Signed in. ").unwrap_or(why);
                     format!("Signed in as {a}. {why}").into()
                 }
                 (ConnectionStatus::Reconnecting { .. }, _) => status.label().into(),
@@ -712,6 +713,33 @@ impl ChatView {
             } else {
                 line
             };
+            let youtube_limited = (p == Platform::YouTube && rill_youtube::LIMITED).then(|| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(rgb(style::MUTED))
+                            .child(div().text_color(rgb(style::WARN)).child("Limited for now."))
+                            .child(
+                                "Until Google finishes reviewing Rill, only Google accounts on \
+                                 Rill's test list can connect, and you sign in again every 7 days.",
+                            ),
+                    )
+                    .child(
+                        Button::new("youtube-limited")
+                            .xsmall()
+                            .ghost()
+                            .label("Details")
+                            .on_click(|_, _, cx| {
+                                cx.open_url(&format!("{}/support#youtube", rill_core::WEBSITE))
+                            }),
+                    )
+            });
             // Rumble connects with the private link from the account's Live Stream API page.
             let rumble_link = (p == Platform::Rumble
                 && set_up
@@ -908,6 +936,7 @@ impl ChatView {
                         .children(button),
                 )
                 .children(error.map(|e| div().text_xs().text_color(rgb(style::ERROR)).child(e)))
+                .children(youtube_limited)
                 .children(prompt_box)
                 .children(kick_join)
                 .children(rumble_link)
@@ -933,6 +962,9 @@ impl ChatView {
             let on = self.platforms.is_on(p);
             let what = match p {
                 Platform::Twitch | Platform::Kick => "Chat, moderation and channel tools",
+                Platform::YouTube if rill_youtube::LIMITED => {
+                    "Live chat and moderation (limited for now)"
+                }
                 Platform::YouTube => "Live chat and moderation",
                 Platform::Rumble => "Read-only chat and Rants",
             };
