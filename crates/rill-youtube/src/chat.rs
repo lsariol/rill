@@ -5,17 +5,16 @@ use rill_core::{
 };
 use serde_json::Value;
 
-/// One page of messages: the events, where to continue, and how long to wait.
+/// One page of messages: the events and where to continue.
 #[derive(Debug, PartialEq)]
 pub struct Page {
     pub events: Vec<Event>,
     pub next_page_token: Option<String>,
-    pub wait_ms: u64,
     /// The chat went offline.
     pub offline: bool,
 }
 
-/// Reads a liveChatMessages.list response.
+/// Reads one page of chat: a streamed reply, in the shape of a `liveChatMessages.list` response.
 pub fn page(v: &Value) -> Page {
     let events = v["items"]
         .as_array()
@@ -26,7 +25,6 @@ pub fn page(v: &Value) -> Page {
     Page {
         events,
         next_page_token: v["nextPageToken"].as_str().map(str::to_string),
-        wait_ms: v["pollingIntervalMillis"].as_u64().unwrap_or(5_000),
         offline: v["offlineAt"].is_string(),
     }
 }
@@ -129,7 +127,6 @@ mod tests {
             serde_json::from_str(include_str!("../tests/fixtures/messages.json")).unwrap();
         let p = page(&v);
         assert_eq!(p.next_page_token.as_deref(), Some("GKjVnqvLs"));
-        assert_eq!(p.wait_ms, 3_000);
         assert!(!p.offline);
         assert_eq!(p.events.len(), 3);
         let Event::Message(m) = &p.events[0] else {

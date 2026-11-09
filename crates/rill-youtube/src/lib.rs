@@ -30,6 +30,14 @@ const FIND_EVERY: Duration = Duration::from_secs(60);
 const QUOTA_WAIT: Duration = Duration::from_secs(15 * 60);
 /// Units of daily quota after which Rill warns once.
 const QUOTA_WARN: u64 = 8_000;
+/// The shortest wait before reopening a chat stream that closed normally (each opening costs quota).
+const REOPEN: Duration = Duration::from_secs(5);
+/// The first wait after a failed chat stream; it doubles each time, up to 60 times this.
+const RETRY: Duration = Duration::from_secs(5);
+/// A stream open this long, or one that carried chat, was working.
+const HEALTHY: Duration = Duration::from_secs(60);
+/// Failed attempts in a row before the user is told.
+const TELL_AFTER: u32 = 3;
 /// Authors remembered for `/ban name`.
 const AUTHOR_LIMIT: usize = 5_000;
 
@@ -46,7 +54,6 @@ const OWNER: Capabilities = Capabilities::of(&[
 /// The YouTube connection.
 pub struct YouTubeAdapter {
     client: Option<Client>,
-    min_poll: Duration,
 }
 
 impl YouTubeAdapter {
@@ -63,10 +70,7 @@ impl YouTubeAdapter {
             (Some(id), Some(secret)) => Some(Client { id, secret }),
             _ => None,
         };
-        YouTubeAdapter {
-            client,
-            min_poll: Duration::from_millis(settings.min_poll_ms.unwrap_or(5_000).max(1_000)),
-        }
+        YouTubeAdapter { client }
     }
 }
 
@@ -85,13 +89,16 @@ struct Ctx {
     requests: mpsc::Receiver<Request>,
     http: reqwest::Client,
     client: Client,
-    min_poll: Duration,
+    /// The shortest wait before reopening a stream that closed normally.
+    reopen: Duration,
+    /// The first wait after a failed stream.
+    retry: Duration,
     /// The Data API's address; tests use a local server.
     api_base: String,
     /// Where to load 7TV's global emotes from; tests leave it out.
     seven_tv: Option<rill_emotes::Config>,
-    /// The gRPC chat stream's address; `None` polls only.
-    stream: Option<String>,
+    /// The gRPC chat stream's address; tests use a local server.
+    stream: String,
 }
 
 enum Outcome {
@@ -144,10 +151,11 @@ async fn run(adapter: YouTubeAdapter, io: AdapterIo) {
         requests,
         http,
         client,
-        min_poll: adapter.min_poll,
+        reopen: REOPEN,
+        retry: RETRY,
         api_base: api::API.into(),
         seven_tv: Some(rill_emotes::Config::default()),
-        stream: Some(stream::ENDPOINT.into()),
+        stream: stream::ENDPOINT.into(),
     };
     let mut failure: Option<String> = None;
     loop {
@@ -272,7 +280,7 @@ fn expired() -> Outcome {
     Outcome::Failed(AuthError::Invalid.message())
 }
 
-/// A signed-in session: find the live chat, then poll it.
+/// A signed-in session: find the live chat, then stream it.
 async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
     let api = Api::new(ctx.http.clone(), ctx.client.clone(), token, &ctx.api_base);
     let live = Live::default();
@@ -318,7 +326,6 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
     });
     let mut told_not_live = false;
     let mut told_not_enabled = false;
-    let mut warned_quota = false;
     loop {
         let chat = match api.active_chat().await {
             Ok(Some(chat)) => chat,
@@ -390,140 +397,109 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
         ctx.events
             .status(ConnectionStatus::Connected, Some(account.clone()), OWNER)
             .await;
-        let mut page_token: Option<String> = None;
-        let mut streaming = ctx.stream.is_some();
-        let mut stream_failures = 0u32;
+        let mut f = Follow {
+            chat,
+            account: account.clone(),
+            page_token: None,
+            down: false,
+            told_down: false,
+            warned_quota: false,
+        };
+        let mut retry = Backoff::new(ctx.retry, ctx.retry * 60);
+        let mut refreshed = false;
         loop {
-            if streaming {
-                match stream_chat(ctx, &api, &live, &chat, &mut page_token).await {
-                    StreamEnd::Stop(end) => return end,
-                    StreamEnd::ChatOver => {
-                        ctx.events
-                            .notice(Level::Info, "YouTube: the stream's chat went offline.")
-                            .await;
-                        break;
-                    }
-                    StreamEnd::Closed { got_messages } => {
-                        if got_messages {
-                            stream_failures = 0;
-                        }
-                        // Reopening costs a call: never more often than polling would.
-                        if let Some(end) =
-                            pause(ctx, &api, &live, Instant::now() + ctx.min_poll).await
-                        {
-                            return end;
-                        }
-                    }
-                    StreamEnd::Failed(e) => match e {
-                        stream::StreamError::Unauthorized => {
-                            // Refreshed and still refused: the stream won't take this sign-in.
-                            stream_failures += 1;
-                            if stream_failures >= 2 {
-                                tracing::warn!(
-                                    "YouTube chat stream refuses the sign-in; polling instead"
-                                );
-                                streaming = false;
-                            } else if let Err(ApiError::Unauthorized) = api.bearer(true).await {
-                                return expired();
-                            }
-                        }
-                        stream::StreamError::ChatEnded => {
-                            ctx.events
-                                .notice(Level::Info, ApiError::ChatEnded.message())
-                                .await;
-                            break;
-                        }
-                        stream::StreamError::Quota => {
-                            if let Some(end) = quota_pause(ctx, &api, &live, &account).await {
-                                return end;
-                            }
-                        }
-                        stream::StreamError::Unsupported(why) => {
-                            tracing::warn!(err = %why, "YouTube chat stream unavailable; polling instead");
-                            streaming = false;
-                        }
-                        stream::StreamError::Lost(why) => {
-                            stream_failures += 1;
-                            tracing::warn!(err = %why, failures = stream_failures, "YouTube chat stream lost");
-                            if stream_failures >= 3 {
-                                tracing::warn!(
-                                    "YouTube chat stream keeps failing; polling instead"
-                                );
-                                streaming = false;
-                            } else if let Some(end) =
-                                pause(ctx, &api, &live, Instant::now() + backoff.next_delay()).await
-                            {
-                                return end;
-                            }
-                        }
-                    },
+            let (error, healthy) = match stream_chat(ctx, &api, &live, &mut f).await {
+                StreamEnd::Stop(end) => return end,
+                StreamEnd::ChatOver => {
+                    ctx.events
+                        .notice(Level::Info, "YouTube: the stream's chat went offline.")
+                        .await;
+                    break;
                 }
-                continue;
+                StreamEnd::Ended { error, healthy } => (error, healthy),
+            };
+            if healthy {
+                retry.reset();
+                refreshed = false;
             }
-            match api.messages(&chat, page_token.as_deref()).await {
-                Ok(v) => {
-                    backoff.reset();
-                    let page = chat::page(&v);
-                    remember_authors(&live, &page.events).await;
-                    for e in page.events {
-                        if !ctx.events.send(e).await {
-                            return Outcome::Stop;
-                        }
-                    }
-                    if page.offline {
-                        ctx.events
-                            .notice(Level::Info, "YouTube: the stream's chat went offline.")
-                            .await;
-                        break;
-                    }
-                    page_token = page.next_page_token;
-                    if !warned_quota && api.units() > QUOTA_WARN {
-                        warned_quota = true;
-                        ctx.events.notice(Level::Warn, format!(
-                            "YouTube: Rill has used about {} of the usual 10,000 daily quota units. Set youtube.min_poll_ms higher in settings.json to stretch it.",
-                            api.units()
-                        )).await;
-                    }
-                    let wait = Duration::from_millis(page.wait_ms).max(ctx.min_poll);
+            let why = match error {
+                None => {
+                    // Each opening costs quota, so a stream that keeps closing early waits longer.
+                    let wait = if healthy {
+                        ctx.reopen
+                    } else {
+                        retry.next_delay()
+                    };
+                    tracing::debug!(healthy, "YouTube chat stream closed");
                     if let Some(end) = pause(ctx, &api, &live, Instant::now() + wait).await {
                         return end;
                     }
+                    continue;
                 }
-                Err(ApiError::Unauthorized) => return expired(),
-                Err(ApiError::ChatEnded) => {
+                Some(stream::StreamError::ChatEnded) => {
                     ctx.events
                         .notice(Level::Info, ApiError::ChatEnded.message())
                         .await;
                     break;
                 }
-                Err(ApiError::Quota) => {
+                Some(stream::StreamError::Quota) => {
                     if let Some(end) = quota_pause(ctx, &api, &live, &account).await {
                         return end;
                     }
+                    continue;
                 }
-                Err(e) => {
-                    tracing::warn!(err = %e.message(), "YouTube chat poll failed");
-                    let attempt = backoff.attempt() + 1;
-                    ctx.events
-                        .status(
-                            ConnectionStatus::Reconnecting { attempt },
-                            Some(account.clone()),
-                            OWNER,
-                        )
-                        .await;
-                    if let Some(end) =
-                        pause(ctx, &api, &live, Instant::now() + backoff.next_delay()).await
-                    {
-                        return end;
+                Some(stream::StreamError::Unauthorized) if !refreshed => {
+                    refreshed = true;
+                    if let Err(ApiError::Unauthorized) = api.bearer(true).await {
+                        return expired();
                     }
-                    ctx.events
-                        .status(ConnectionStatus::Connected, Some(account.clone()), OWNER)
-                        .await;
+                    continue;
                 }
+                Some(stream::StreamError::Unauthorized) => {
+                    "YouTube: the chat stream refuses the sign-in.".to_string()
+                }
+                Some(stream::StreamError::Unsupported(why) | stream::StreamError::Lost(why)) => why,
+            };
+            // Never poll instead: polling uses up the quota every user shares far faster.
+            let wait = retry.next_delay();
+            let attempt = retry.attempt();
+            tracing::warn!(err = %why, attempt, "YouTube chat stream failed");
+            f.down = true;
+            ctx.events
+                .status(
+                    ConnectionStatus::Reconnecting { attempt },
+                    Some(account.clone()),
+                    OWNER,
+                )
+                .await;
+            if attempt >= TELL_AFTER && !f.told_down {
+                f.told_down = true;
+                ctx.events
+                    .notice(
+                        Level::Warn,
+                        "YouTube: Rill can't read chat right now and keeps trying, less often as time goes on. Other platforms aren't affected. If chat doesn't come back, send your logs from Settings → About.",
+                    )
+                    .await;
+            }
+            if let Some(end) = pause(ctx, &api, &live, Instant::now() + wait).await {
+                return end;
             }
         }
         *live.chat.lock().await = None;
     }
+}
+
+/// The chat being read, and how its stream is doing.
+struct Follow {
+    chat: String,
+    account: Account,
+    /// Where to resume after the stream closes.
+    page_token: Option<String>,
+    /// The stream failed and the header shows it reconnecting.
+    down: bool,
+    /// The user was told chat can't be read.
+    told_down: bool,
+    warned_quota: bool,
 }
 
 /// How a chat stream ended.
@@ -531,46 +507,55 @@ enum StreamEnd {
     Stop(Outcome),
     /// The chat went offline or ended.
     ChatOver,
-    /// The server closed the stream normally.
-    Closed {
-        got_messages: bool,
+    /// The stream closed (`error` is `None`) or failed. `healthy` when it carried chat or stayed
+    /// open a while first.
+    Ended {
+        error: Option<stream::StreamError>,
+        healthy: bool,
     },
-    Failed(stream::StreamError),
+}
+
+fn failed(e: stream::StreamError) -> StreamEnd {
+    StreamEnd::Ended {
+        error: Some(e),
+        healthy: false,
+    }
 }
 
 /// Reads the chat over the gRPC stream until it ends, answering requests meanwhile.
-async fn stream_chat(
-    ctx: &mut Ctx,
-    api: &Api,
-    live: &Live,
-    chat: &str,
-    page_token: &mut Option<String>,
-) -> StreamEnd {
-    let Some(endpoint) = ctx.stream.clone() else {
-        return StreamEnd::Failed(stream::StreamError::Unsupported("no stream address".into()));
-    };
+async fn stream_chat(ctx: &mut Ctx, api: &Api, live: &Live, f: &mut Follow) -> StreamEnd {
     let access = match api.bearer(false).await {
         Ok(a) => a,
-        Err(ApiError::Unauthorized) => return StreamEnd::Failed(stream::StreamError::Unauthorized),
-        Err(e) => return StreamEnd::Failed(stream::StreamError::Lost(e.message())),
+        Err(ApiError::Unauthorized) => return failed(stream::StreamError::Unauthorized),
+        Err(e) => return failed(stream::StreamError::Lost(e.message())),
     };
-    let channel = match stream::channel(&endpoint).await {
+    let channel = match stream::channel(&ctx.stream).await {
         Ok(c) => c,
-        Err(e) => return StreamEnd::Failed(e),
+        Err(e) => return failed(e),
     };
-    api.spend(api::cost::LIST_MESSAGES);
-    let mut messages = match stream::open(channel, &access, chat, page_token.as_deref()).await {
+    api.spend(api::cost::OPEN_STREAM);
+    let opened = Instant::now();
+    let mut messages = match stream::open(channel, &access, &f.chat, f.page_token.as_deref()).await
+    {
         Ok(s) => s,
-        Err(e) => return StreamEnd::Failed(e),
+        Err(e) => return failed(e),
     };
     tracing::debug!("YouTube chat stream open");
-    let mut got_messages = false;
+    let mut got_chat = false;
     loop {
         tokio::select! {
             next = messages.message() => match next {
                 Ok(Some(reply)) => {
+                    if f.down {
+                        f.down = false;
+                        ctx.events.status(ConnectionStatus::Connected, Some(f.account.clone()), OWNER).await;
+                        if f.told_down {
+                            f.told_down = false;
+                            ctx.events.notice(Level::Info, "YouTube: chat is back.").await;
+                        }
+                    }
                     let page = chat::page(&stream::to_json(&reply));
-                    got_messages |= !page.events.is_empty();
+                    got_chat |= !page.events.is_empty();
                     remember_authors(live, &page.events).await;
                     for e in page.events {
                         if !ctx.events.send(e).await {
@@ -578,14 +563,28 @@ async fn stream_chat(
                         }
                     }
                     if page.next_page_token.is_some() {
-                        *page_token = page.next_page_token;
+                        f.page_token = page.next_page_token;
                     }
                     if page.offline {
                         return StreamEnd::ChatOver;
                     }
+                    if !f.warned_quota && api.units() > QUOTA_WARN {
+                        f.warned_quota = true;
+                        ctx.events.notice(Level::Warn, format!(
+                            "YouTube: Rill has used about {} of YouTube's usual 10,000 daily quota units this session. Each message sent costs 50; if the quota runs out, YouTube chat stops until midnight Pacific time.",
+                            api.units()
+                        )).await;
+                    }
                 }
-                Ok(None) => return StreamEnd::Closed { got_messages },
-                Err(status) => return StreamEnd::Failed(stream::status_error(status)),
+                Ok(None) => {
+                    return StreamEnd::Ended { error: None, healthy: got_chat || opened.elapsed() >= HEALTHY };
+                }
+                Err(status) => {
+                    return StreamEnd::Ended {
+                        error: Some(stream::status_error(status)),
+                        healthy: got_chat || opened.elapsed() >= HEALTHY,
+                    };
+                }
             },
             req = ctx.requests.recv() => {
                 if let Some(end) = handle(ctx, api, live, req).await {
@@ -763,12 +762,10 @@ mod tests {
         let none = YouTubeAdapter::new(&rill_os::settings::YouTubeSettings {
             client_id: Some("id".into()),
             client_secret: None,
-            min_poll_ms: Some(200),
         });
         if BUILTIN_CLIENT_SECRET.is_none() {
             assert!(none.client.is_none());
         }
-        assert_eq!(none.min_poll, Duration::from_millis(1_000));
     }
 
     #[tokio::test]
@@ -800,8 +797,6 @@ mod sessions {
     use std::sync::Mutex as StdMutex;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
-
-    const MESSAGES: &str = include_str!("../tests/fixtures/messages.json");
 
     /// A request the fake API saw: method, path, query, JSON body.
     #[derive(Debug, Clone)]
@@ -871,8 +866,8 @@ mod sessions {
         (format!("http://{addr}"), log)
     }
 
-    /// The first page is the fixture; later pages come from `later`.
-    fn route_with(r: &Seen, later: fn() -> (u16, Value)) -> (u16, Value) {
+    /// The fake Data API's usual answers. Chat itself only comes over the stream.
+    fn base_route(r: &Seen) -> (u16, Value) {
         match (r.method.as_str(), r.path.as_str()) {
             ("GET", "/channels") => (
                 200,
@@ -882,13 +877,6 @@ mod sessions {
                 200,
                 json!({"items": [{"snippet": {"liveChatId": "chat1"}}]}),
             ),
-            ("GET", "/liveChat/messages") if r.query.contains("pageToken=p2") => later(),
-            ("GET", "/liveChat/messages") => {
-                let mut v: Value = serde_json::from_str(MESSAGES).unwrap();
-                v["nextPageToken"] = json!("p2");
-                v["pollingIntervalMillis"] = json!(10);
-                (200, v)
-            }
             ("POST", "/liveChat/messages") => (200, json!({"id": "sent-1"})),
             ("POST", "/liveChat/bans") => (200, json!({"id": "ban-1"})),
             ("DELETE", "/liveChat/bans") => (204, Value::Null),
@@ -898,6 +886,14 @@ mod sessions {
         }
     }
 
+    /// Whether the session ever asked the Data API for chat pages (polling).
+    fn polled(log: &Log) -> bool {
+        log.lock()
+            .unwrap()
+            .iter()
+            .any(|r| r.method == "GET" && r.path == "/liveChat/messages")
+    }
+
     fn api_error(status: u16, reason: &str) -> (u16, Value) {
         (
             status,
@@ -905,21 +901,23 @@ mod sessions {
         )
     }
 
-    /// Starts a session; returns its events, a request sender, and whether it stopped cleanly.
-    fn start(
+    /// Starts a session whose chat stream sends one message from `@viewer`; returns its events, a
+    /// request sender, and whether it stopped cleanly.
+    async fn start(
         base: &str,
     ) -> (
         mpsc::Receiver<Event>,
         mpsc::Sender<Request>,
         tokio::task::JoinHandle<bool>,
     ) {
-        start_with(base, None)
+        let stream = stream_server(FakeStream::sending(vec![hello()])).await;
+        start_with(base, stream)
     }
 
-    /// A session that reads chat over the gRPC stream at `stream`, when given.
+    /// A session that reads chat over the gRPC stream at `stream`.
     fn start_with(
         base: &str,
-        stream: Option<String>,
+        stream: String,
     ) -> (
         mpsc::Receiver<Event>,
         mpsc::Sender<Request>,
@@ -935,7 +933,8 @@ mod sessions {
                 id: "client".into(),
                 secret: "secret".into(),
             },
-            min_poll: Duration::from_millis(20),
+            reopen: Duration::from_millis(20),
+            retry: Duration::from_millis(10),
             api_base: base.into(),
             seven_tv: None,
             stream,
@@ -982,17 +981,9 @@ mod sessions {
     }
 
     #[tokio::test]
-    async fn polls_pages_sends_and_bans_by_name() {
-        fn route(r: &Seen) -> (u16, Value) {
-            route_with(r, || {
-                (
-                    200,
-                    json!({"items": [], "nextPageToken": "p2", "pollingIntervalMillis": 10}),
-                )
-            })
-        }
-        let (base, log) = api_server(route).await;
-        let (mut rx, tx, task) = start(&base);
+    async fn sends_and_bans_by_name() {
+        let (base, log) = api_server(base_route).await;
+        let (mut rx, tx, task) = start(&base).await;
         let seen = until(&mut rx, |e| matches!(e, Event::Message(_))).await;
         assert!(seen.iter().any(|e| matches!(
             e,
@@ -1050,19 +1041,6 @@ mod sessions {
             "{seen:#?}"
         );
 
-        let polled = || {
-            log.lock()
-                .unwrap()
-                .iter()
-                .any(|r| r.path == "/liveChat/messages" && r.query.contains("pageToken=p2"))
-        };
-        for _ in 0..250 {
-            if polled() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        assert!(polled(), "the next page was never asked for");
         drop(tx);
         assert!(
             task.await.unwrap(),
@@ -1100,12 +1078,33 @@ mod sessions {
         V3DataLiveChatMessageService, V3DataLiveChatMessageServiceServer,
     };
 
-    /// A fake gRPC chat stream: sends `replies`, then stays open; or fails with `fail`.
+    /// A fake gRPC chat stream: its first `fails` calls fail with `fail`; others send `replies`,
+    /// then stay open.
     struct FakeStream {
         replies: Vec<pb::LiveChatMessageListResponse>,
         fail: Option<tonic::Code>,
+        fails: usize,
         /// Each call's authorization header and chat ID.
         calls: Arc<StdMutex<Vec<(String, String)>>>,
+    }
+
+    impl FakeStream {
+        fn sending(replies: Vec<pb::LiveChatMessageListResponse>) -> FakeStream {
+            FakeStream {
+                replies,
+                fail: None,
+                fails: 0,
+                calls: Arc::default(),
+            }
+        }
+
+        fn failing(code: tonic::Code, fails: usize) -> FakeStream {
+            FakeStream {
+                fail: Some(code),
+                fails,
+                ..FakeStream::sending(vec![hello()])
+            }
+        }
     }
 
     type Replies = std::pin::Pin<
@@ -1130,8 +1129,12 @@ mod sessions {
                 .unwrap_or_default()
                 .to_string();
             let chat = req.get_ref().live_chat_id.clone().unwrap_or_default();
-            self.calls.lock().unwrap().push((auth, chat));
-            if let Some(code) = self.fail {
+            let earlier = {
+                let mut calls = self.calls.lock().unwrap();
+                calls.push((auth, chat));
+                calls.len() - 1
+            };
+            if let Some(code) = self.fail.filter(|_| earlier < self.fails) {
                 return Err(tonic::Status::new(code, "not here"));
             }
             use tokio_stream::StreamExt as _;
@@ -1178,30 +1181,32 @@ mod sessions {
         }
     }
 
+    /// One reply with one message from `@viewer`.
+    fn hello() -> pb::LiveChatMessageListResponse {
+        pb::LiveChatMessageListResponse {
+            items: vec![streamed("s0", "@viewer", "hello")],
+            next_page_token: Some("t0".into()),
+            ..Default::default()
+        }
+    }
+
     #[tokio::test]
     async fn reads_chat_over_the_stream_without_polling() {
-        fn route(r: &Seen) -> (u16, Value) {
-            route_with(r, || (200, json!({"items": []})))
-        }
-        let (base, log) = api_server(route).await;
-        let calls = Arc::new(StdMutex::new(Vec::new()));
-        let stream = stream_server(FakeStream {
-            replies: vec![
-                pb::LiveChatMessageListResponse {
-                    items: vec![streamed("s1", "Ann", "first over the stream")],
-                    next_page_token: Some("t1".into()),
-                    ..Default::default()
-                },
-                pb::LiveChatMessageListResponse {
-                    items: vec![streamed("s2", "Bob", "second")],
-                    ..Default::default()
-                },
-            ],
-            fail: None,
-            calls: calls.clone(),
-        })
-        .await;
-        let (mut rx, tx, task) = start_with(&base, Some(stream));
+        let (base, log) = api_server(base_route).await;
+        let fake = FakeStream::sending(vec![
+            pb::LiveChatMessageListResponse {
+                items: vec![streamed("s1", "Ann", "first over the stream")],
+                next_page_token: Some("t1".into()),
+                ..Default::default()
+            },
+            pb::LiveChatMessageListResponse {
+                items: vec![streamed("s2", "Bob", "second")],
+                ..Default::default()
+            },
+        ]);
+        let calls = fake.calls.clone();
+        let stream = stream_server(fake).await;
+        let (mut rx, tx, task) = start_with(&base, stream);
         let seen = until(
             &mut rx,
             |e| matches!(e, Event::Message(m) if m.plain_text() == "second"),
@@ -1235,33 +1240,57 @@ mod sessions {
             calls.lock().unwrap().clone(),
             [("Bearer access".to_string(), "chat1".to_string())]
         );
-        let log = log.lock().unwrap().clone();
-        assert!(
-            !log.iter()
-                .any(|r| r.method == "GET" && r.path == "/liveChat/messages"),
-            "it polled while streaming"
-        );
+        assert!(!polled(&log), "it polled while streaming");
     }
 
     #[tokio::test]
-    async fn polls_when_the_stream_is_unavailable() {
-        fn route(r: &Seen) -> (u16, Value) {
-            route_with(r, || {
-                (200, json!({"items": [], "pollingIntervalMillis": 10}))
-            })
-        }
-        let (base, _) = api_server(route).await;
-        let stream = stream_server(FakeStream {
-            replies: Vec::new(),
-            fail: Some(tonic::Code::Unimplemented),
-            calls: Arc::default(),
-        })
-        .await;
-        let (mut rx, tx, task) = start_with(&base, Some(stream));
-        // The fixture's messages arrive by polling instead.
-        until(&mut rx, |e| matches!(e, Event::Message(_))).await;
+    async fn retries_a_failing_stream_and_never_polls() {
+        let (base, log) = api_server(base_route).await;
+        let fake = FakeStream::failing(tonic::Code::Unavailable, 4);
+        let calls = fake.calls.clone();
+        let stream = stream_server(fake).await;
+        let (mut rx, tx, task) = start_with(&base, stream);
+        let seen = until(&mut rx, |e| matches!(e, Event::Message(_))).await;
+        assert!(seen.iter().any(|e| matches!(
+            e,
+            Event::Status {
+                status: ConnectionStatus::Reconnecting { .. },
+                ..
+            }
+        )));
+        assert!(seen.iter().any(|e| matches!(
+            e,
+            Event::Notice { level: Level::Warn, text, .. } if text.contains("keeps trying")
+        )));
+        assert!(seen.iter().any(|e| matches!(
+            e,
+            Event::Notice { text, .. } if text == "YouTube: chat is back."
+        )));
         drop(tx);
         assert!(task.await.unwrap());
+        assert_eq!(calls.lock().unwrap().len(), 5);
+        assert!(!polled(&log), "it polled instead of streaming");
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_stream_is_retried_ever_more_slowly() {
+        let (base, log) = api_server(base_route).await;
+        let fake = FakeStream::failing(tonic::Code::Unimplemented, usize::MAX);
+        let calls = fake.calls.clone();
+        let stream = stream_server(fake).await;
+        let (mut rx, tx, task) = start_with(&base, stream);
+        until(
+            &mut rx,
+            |e| matches!(e, Event::Notice { level: Level::Warn, text, .. } if text.contains("keeps trying")),
+        )
+        .await;
+        // Waits of 10 ms doubling: about 8 tries in a second, where steady retries would be 100.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let tries = calls.lock().unwrap().len();
+        assert!((4..=12).contains(&tries), "{tries} tries");
+        drop(tx);
+        assert!(task.await.unwrap());
+        assert!(!polled(&log), "it polled instead of streaming");
     }
 
     #[tokio::test]
@@ -1274,11 +1303,11 @@ mod sessions {
                         "liveChatId": "chat1", "title": "Old",
                         "scheduledStartTime": "2026-11-06T12:00:00Z", "description": "desc"}}]}),
                 ),
-                _ => route_with(r, || (200, json!({"items": []}))),
+                _ => base_route(r),
             }
         }
         let (base, log) = api_server(route).await;
-        let (mut rx, tx, task) = start(&base);
+        let (mut rx, tx, task) = start(&base).await;
         until(&mut rx, |e| matches!(e, Event::Message(_))).await;
         request(
             &tx,
@@ -1324,11 +1353,11 @@ mod sessions {
                     200,
                     json!({"items": [{"id": "b1", "snippet": {"liveChatId": "chat1"}}]}),
                 ),
-                _ => route_with(r, || (200, json!({"items": []}))),
+                _ => base_route(r),
             }
         }
         let (base, log) = api_server(route).await;
-        let (mut rx, tx, task) = start(&base);
+        let (mut rx, tx, task) = start(&base).await;
         until(&mut rx, |e| matches!(e, Event::Message(_))).await;
         request(&tx, 1, Command::StartAds { seconds: 60 }).await;
         let seen = until(&mut rx, |e| done(e, 1)).await;
@@ -1352,11 +1381,13 @@ mod sessions {
 
     #[tokio::test]
     async fn warns_when_the_quota_runs_out() {
-        fn route(r: &Seen) -> (u16, Value) {
-            route_with(r, || api_error(403, "quotaExceeded"))
-        }
-        let (base, _) = api_server(route).await;
-        let (mut rx, tx, task) = start(&base);
+        let (base, _) = api_server(base_route).await;
+        let stream = stream_server(FakeStream::failing(
+            tonic::Code::ResourceExhausted,
+            usize::MAX,
+        ))
+        .await;
+        let (mut rx, tx, task) = start_with(&base, stream);
         let seen = until(&mut rx, |e| {
             matches!(
                 e,
@@ -1402,11 +1433,11 @@ mod sessions {
         fn route(r: &Seen) -> (u16, Value) {
             match r.path.as_str() {
                 "/liveBroadcasts" => api_error(403, "liveStreamingNotEnabled"),
-                _ => route_with(r, || (200, json!({"items": []}))),
+                _ => base_route(r),
             }
         }
         let (base, log) = api_server(route).await;
-        let (mut rx, tx, task) = start(&base);
+        let (mut rx, tx, task) = start(&base).await;
         let seen = until(&mut rx, |e| {
             matches!(
                 e,
@@ -1444,14 +1475,19 @@ mod sessions {
 
     #[tokio::test]
     async fn looks_for_the_next_broadcast_when_chat_ends() {
-        fn route(r: &Seen) -> (u16, Value) {
-            route_with(r, || api_error(403, "liveChatEnded"))
-        }
-        let (base, log) = api_server(route).await;
-        let (mut rx, tx, task) = start(&base);
+        use pb::live_chat_message_snippet::type_wrapper::Type;
+        let (base, log) = api_server(base_route).await;
+        let mut end = streamed("s9", "@viewer", "");
+        end.snippet.as_mut().unwrap().r#type = Some(Type::ChatEndedEvent as i32);
+        let ended = pb::LiveChatMessageListResponse {
+            items: vec![end],
+            ..Default::default()
+        };
+        let stream = stream_server(FakeStream::sending(vec![hello(), ended])).await;
+        let (mut rx, tx, task) = start_with(&base, stream);
         let seen = until(
             &mut rx,
-            |e| matches!(e, Event::Notice { text, .. } if text.contains("ended")),
+            |e| matches!(e, Event::Notice { text, .. } if text.contains("offline")),
         )
         .await;
         assert!(seen.iter().any(|e| matches!(e, Event::Message(_))));
