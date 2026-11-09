@@ -101,9 +101,7 @@ fn recent_log() -> String {
     files.sort();
     let mut text = String::new();
     for file in files.iter().rev().take(2).rev() {
-        if let Ok(t) = std::fs::read_to_string(file) {
-            text.push_str(&t);
-        }
+        text.push_str(&tail(file, LOG_BYTES));
     }
     if text.len() > LOG_BYTES {
         let mut from = text.len() - LOG_BYTES;
@@ -113,6 +111,19 @@ fn recent_log() -> String {
         text = text[from..].to_string();
     }
     text
+}
+
+/// The last `bytes` of a file, without reading the rest.
+fn tail(file: &std::path::Path, bytes: usize) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(file) else {
+        return String::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let _ = f.seek(SeekFrom::Start(len.saturating_sub(bytes as u64)));
+    let mut buf = Vec::new();
+    let _ = f.take(bytes as u64).read_to_end(&mut buf);
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 /// The report to send, as JSON.
