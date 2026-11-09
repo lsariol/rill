@@ -116,6 +116,7 @@ impl ChatView {
                 names,
                 url,
                 size,
+                scope,
                 at,
             } => {
                 // About three times the size in chat, at most 112 px tall.
@@ -145,7 +146,7 @@ impl ChatView {
                         div()
                             .text_xs()
                             .text_color(rgb(style::FAINT))
-                            .child(crate::row::emote_source(&url)),
+                            .child(crate::row::emote_source(&url, scope)),
                     );
                 Some(self.hover_frame(at, f32::from(w).max(120.) + 24., 24., body))
             }

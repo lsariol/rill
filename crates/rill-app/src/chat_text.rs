@@ -41,6 +41,7 @@ pub(crate) enum Hover {
         names: Vec<String>,
         url: String,
         size: Option<(u16, u16)>,
+        scope: rill_core::EmoteScope,
         at: Point<Pixels>,
     },
     Badge {
@@ -69,6 +70,7 @@ pub(crate) enum Part {
         size: Option<(u16, u16)>,
         /// Zero-width: drawn over the emote before it.
         overlay: bool,
+        scope: rill_core::EmoteScope,
     },
 }
 
@@ -121,12 +123,20 @@ impl Parts {
         self.target(text, link_style(), Target::Link(url));
     }
 
-    pub fn emote(&mut self, name: &str, url: &str, size: Option<(u16, u16)>, overlay: bool) {
+    pub fn emote(
+        &mut self,
+        name: &str,
+        url: &str,
+        size: Option<(u16, u16)>,
+        overlay: bool,
+        scope: rill_core::EmoteScope,
+    ) {
         self.0.push(Part::Emote {
             name: name.into(),
             url: url.into(),
             size,
             overlay,
+            scope,
         });
     }
 }
@@ -192,6 +202,7 @@ struct Image {
     name: String,
     url: String,
     size: Option<(u16, u16)>,
+    scope: rill_core::EmoteScope,
 }
 
 /// Placeholder characters: digits are as wide as each other and never split by wrapping.
@@ -230,6 +241,7 @@ fn build(parts: &[Part], digit: Pixels) -> Built {
                 url,
                 size,
                 overlay,
+                scope,
             } => {
                 if *overlay && let Some((at, slot)) = base.clone() {
                     b.images.push(Image {
@@ -238,6 +250,7 @@ fn build(parts: &[Part], digit: Pixels) -> Built {
                         name: name.clone(),
                         url: url.clone(),
                         size: *size,
+                        scope: *scope,
                     });
                     continue;
                 }
@@ -256,6 +269,7 @@ fn build(parts: &[Part], digit: Pixels) -> Built {
                     name: name.clone(),
                     url: url.clone(),
                     size: *size,
+                    scope: *scope,
                 });
                 base = Some((at, slot));
             }
@@ -284,8 +298,13 @@ fn copy_text(text: &str, copies: &[(Range<usize>, String)], range: Range<usize>)
     out
 }
 
-/// An emote's hover card: its name and any zero-width emotes on it, its image and size.
-type EmoteCard = (Vec<String>, String, Option<(u16, u16)>);
+/// An emote's hover card: its name and any zero-width emotes on it, its image, size and scope.
+type EmoteCard = (
+    Vec<String>,
+    String,
+    Option<(u16, u16)>,
+    rill_core::EmoteScope,
+);
 
 /// Placeholder ranges and the emote name each copies as.
 type Copies = Vec<(Range<usize>, String)>;
@@ -620,7 +639,7 @@ impl Element for ChatText {
                         .filter(|o| o.at == i.at)
                         .map(|o| o.name.clone())
                         .collect();
-                    (names, i.url.clone(), i.size)
+                    (names, i.url.clone(), i.size, i.scope)
                 })
                 .collect(),
         );
@@ -650,11 +669,12 @@ impl Element for ChatText {
                                     at,
                                 }),
                                 Target::Emote(ix) => {
-                                    let (names, url, size) = emotes.get(*ix)?.clone();
+                                    let (names, url, size, scope) = emotes.get(*ix)?.clone();
                                     Some(Hover::Emote {
                                         names,
                                         url,
                                         size,
+                                        scope,
                                         at,
                                     })
                                 }
@@ -734,7 +754,13 @@ mod tests {
     fn copying_turns_placeholders_back_into_names() {
         let mut parts = Parts::default();
         parts.text("Bob: hi ", None);
-        parts.emote("Kappa", "https://e/1", Some((28, 28)), false);
+        parts.emote(
+            "Kappa",
+            "https://e/1",
+            Some((28, 28)),
+            false,
+            Default::default(),
+        );
         parts.text(" there", None);
         let b = build(&parts.0, px(7.));
         let whole = copy_text(&b.text, &b.copies, 0..b.text.len());
@@ -749,8 +775,20 @@ mod tests {
     #[test]
     fn a_zero_width_emote_takes_no_space() {
         let mut parts = Parts::default();
-        parts.emote("Base", "https://e/1", Some((28, 28)), false);
-        parts.emote("Rain", "https://e/2", Some((28, 28)), true);
+        parts.emote(
+            "Base",
+            "https://e/1",
+            Some((28, 28)),
+            false,
+            Default::default(),
+        );
+        parts.emote(
+            "Rain",
+            "https://e/2",
+            Some((28, 28)),
+            true,
+            Default::default(),
+        );
         let b = build(&parts.0, px(7.));
         assert_eq!(b.images.len(), 2);
         assert_eq!(b.images[0].at, b.images[1].at);

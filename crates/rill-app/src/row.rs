@@ -340,7 +340,8 @@ fn fragment_parts(parts: &mut Parts, fragments: &[Fragment], plain: Option<Highl
                 url: Some(url),
                 size,
                 overlay,
-            } => parts.emote(name, url, *size, *overlay),
+                scope,
+            } => parts.emote(name, url, *size, *overlay, *scope),
             Fragment::Emote { name, .. } => {
                 parts.text(name.clone(), Some(bold(style::hsla(style::MUTED))))
             }
@@ -386,25 +387,39 @@ pub(crate) fn emote_size(size: Option<(u16, u16)>) -> gpui::Size<gpui::Pixels> {
     }
 }
 
-/// Where an emote comes from, by its image's address.
-pub(crate) fn emote_source(url: &str) -> &'static str {
+/// Which service an emote comes from, by its image's address.
+pub(crate) fn emote_service(url: &str) -> Option<&'static str> {
     let host = url.split("://").nth(1).unwrap_or(url);
     if host.starts_with("static-cdn.jtvnw.net") {
-        "Twitch emote"
+        Some("Twitch")
     } else if host.contains("7tv.app") {
-        "7TV emote"
+        Some("7TV")
     } else if host.contains("betterttv.net") {
-        "BetterTTV emote"
+        Some("BetterTTV")
     } else if host.contains("frankerfacez.com") {
-        "FrankerFaceZ emote"
+        Some("FrankerFaceZ")
     } else if host.contains("kick.com") {
-        "Kick emote"
+        Some("Kick")
     } else if host.contains("ggpht.com") || host.contains("youtube.com") {
-        "YouTube emote"
+        Some("YouTube")
     } else if host.contains("rumble.com") {
-        "Rumble emote"
+        Some("Rumble")
     } else {
-        "Emote"
+        None
+    }
+}
+
+/// An emote's origin for its hover card: "7TV channel emote", "Twitch global emote".
+pub(crate) fn emote_source(url: &str, scope: rill_core::EmoteScope) -> String {
+    use rill_core::EmoteScope::*;
+    let service = emote_service(url)
+        .map(|s| format!("{s} "))
+        .unwrap_or_default();
+    match scope {
+        Channel => format!("{service}channel emote"),
+        Global => format!("{service}global emote"),
+        OtherChannel => format!("{service}emote from another channel"),
+        Unknown => format!("{service}emote"),
     }
 }
 
@@ -412,7 +427,7 @@ pub(crate) fn emote_source(url: &str) -> &'static str {
 pub(crate) fn bigger_image(url: &str) -> String {
     let swap = |from: &str, to: &str| url.strip_suffix(from).map(|base| format!("{base}{to}"));
     if url.contains("static-cdn.jtvnw.net/emoticons/") {
-        swap("/1.0", "/3.0")
+        swap("/1.0", "/3.0").or_else(|| swap("/2.0", "/3.0"))
     } else if url.contains("static-cdn.jtvnw.net/badges/") {
         swap("/2", "/3").or_else(|| swap("/1", "/3"))
     } else if url.contains("7tv.app") {
@@ -599,18 +614,21 @@ mod tests {
 
     #[test]
     fn says_where_an_emote_comes_from() {
+        use rill_core::EmoteScope::*;
+        let twitch = "https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/1.0";
+        assert_eq!(emote_source(twitch, Global), "Twitch global emote");
         assert_eq!(
-            emote_source("https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/1.0"),
-            "Twitch emote"
+            emote_source(twitch, OtherChannel),
+            "Twitch emote from another channel"
         );
         assert_eq!(
-            emote_source("https://cdn.7tv.app/emote/a/1x.webp"),
-            "7TV emote"
+            emote_source("https://cdn.7tv.app/emote/a/1x.webp", Channel),
+            "7TV channel emote"
         );
         assert_eq!(
-            emote_source("https://files.kick.com/emotes/1/fullsize"),
+            emote_source("https://files.kick.com/emotes/1/fullsize", Unknown),
             "Kick emote"
         );
-        assert_eq!(emote_source("https://example.com/x.png"), "Emote");
+        assert_eq!(emote_source("https://example.com/x.png", Unknown), "emote");
     }
 }

@@ -1,8 +1,8 @@
 //! EventSub WebSocket messages and their conversion into Rill events.
 
 use rill_core::{
-    Author, Badge, ChatMessage, Event, EventKind, Fragment, MessageKind, Platform, ReplyRef, Roles,
-    merge_text, split_text,
+    Author, Badge, ChatMessage, EmoteScope, Event, EventKind, Fragment, MessageKind, Platform,
+    ReplyRef, Roles, merge_text, split_text,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -282,10 +282,21 @@ fn chat_message(timestamp: &str, e: &Value, badges: &Badges) -> ChatMessage {
     for f in e["message"]["fragments"].as_array().into_iter().flatten() {
         let text = s(&f["text"]);
         match f["type"].as_str() {
-            Some("emote") => fragments.push(Fragment::emote(
-                text,
-                f["emote"]["id"].as_str().map(emote_url),
-            )),
+            Some("emote") => {
+                let mut emote = Fragment::emote(text, f["emote"]["id"].as_str().map(emote_url));
+                // Twitch says whose emote it is: "0" is global.
+                if let Fragment::Emote { scope, .. } = &mut emote {
+                    *scope = match f["emote"]["owner_id"].as_str() {
+                        Some("0") => EmoteScope::Global,
+                        Some(o) if o == e["broadcaster_user_id"].as_str().unwrap_or("") => {
+                            EmoteScope::Channel
+                        }
+                        Some(o) if !o.is_empty() => EmoteScope::OtherChannel,
+                        _ => EmoteScope::Unknown,
+                    };
+                }
+                fragments.push(emote)
+            }
             Some("mention") => fragments.push(Fragment::Mention(
                 f["mention"]["user_login"]
                     .as_str()
@@ -499,7 +510,13 @@ mod tests {
             m.fragments,
             vec![
                 Fragment::Text("Hi chat ".into()),
-                Fragment::emote("Kappa", Some(emote_url("25"))),
+                Fragment::Emote {
+                    name: "Kappa".into(),
+                    url: Some(emote_url("25")),
+                    size: None,
+                    overlay: false,
+                    scope: EmoteScope::Global,
+                },
                 Fragment::Text(" ".into()),
                 Fragment::Mention("rill_dev".into()),
                 Fragment::Text(" see ".into()),

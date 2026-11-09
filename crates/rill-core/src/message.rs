@@ -76,10 +76,26 @@ pub enum Fragment {
         size: Option<(u16, u16)>,
         /// A zero-width emote, drawn over the emote before it.
         overlay: bool,
+        /// Whose emote it is.
+        scope: EmoteScope,
     },
     /// An `@name` mention, without the `@`.
     Mention(String),
     Link(String),
+}
+
+/// Whose emote it is, for its hover card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EmoteScope {
+    /// The platform didn't say.
+    #[default]
+    Unknown,
+    /// The channel's own.
+    Channel,
+    /// Everyone's.
+    Global,
+    /// Another channel's, usable here through a subscription.
+    OtherChannel,
 }
 
 /// What sort of chat line a message is.
@@ -205,6 +221,7 @@ impl Fragment {
             url,
             size: None,
             overlay: false,
+            scope: EmoteScope::Unknown,
         }
     }
 }

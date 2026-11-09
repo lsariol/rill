@@ -44,13 +44,14 @@ pub struct Emote {
 }
 
 impl Emote {
-    fn fragment(&self) -> Fragment {
+    fn fragment(&self, scope: rill_core::EmoteScope) -> Fragment {
         Fragment::Emote {
             name: self.name.clone(),
             url: Some(self.url.clone()),
             // A provider that doesn't give sizes leaves them 0: drawn at emote height.
             size: (self.size.0 > 0 && self.size.1 > 0).then_some(self.size),
             overlay: self.overlay,
+            scope,
         }
     }
 }
@@ -134,10 +135,17 @@ impl Emotes {
 impl Sets {
     /// The channel's own emotes first (7TV, then BetterTTV and FrankerFaceZ), then the globals.
     fn find(&self, word: &str) -> Option<&Emote> {
+        self.scoped(word).map(|(e, _)| e)
+    }
+
+    /// The emote and whether it's the channel's own or global.
+    fn scoped(&self, word: &str) -> Option<(&Emote, rill_core::EmoteScope)> {
+        use rill_core::EmoteScope::{Channel, Global};
         self.channel
             .get(word)
             .or_else(|| self.others.get(word))
-            .or_else(|| self.global.get(word))
+            .map(|e| (e, Channel))
+            .or_else(|| self.global.get(word).map(|e| (e, Global)))
     }
 }
 
@@ -148,7 +156,9 @@ impl Enrich for Emotes {
             return;
         }
         let fragments = std::mem::take(&mut message.fragments);
-        message.fragments = replace_words(fragments, |w| s.find(w).map(Emote::fragment));
+        message.fragments = replace_words(fragments, |w| {
+            s.scoped(w).map(|(e, scope)| e.fragment(scope))
+        });
     }
 }
 

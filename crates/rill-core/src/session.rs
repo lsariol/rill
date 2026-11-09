@@ -462,6 +462,7 @@ impl Session {
                     url: e.url.clone(),
                     size: e.size,
                     overlay: false,
+                    scope: crate::EmoteScope::Unknown,
                 }),
                 None => out.push(Fragment::Text(word.into())),
             }
