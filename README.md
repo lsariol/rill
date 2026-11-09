@@ -67,7 +67,8 @@ folder; the benchmark scripts use `.dev\bench\data`.
   and picture; **Link previews** in Settings turns that off (`link_previews`), and hovering then
   shows only the address. Rill fetches a preview only for the link you're hovering, and never for
   addresses on your computer or local network.
-- **Emotes:** hovering an emote in chat shows it bigger, with its name and where it comes from.
+- **Emotes:** hovering an emote in chat shows it bigger, with its name and where it comes from
+  (such as "7TV channel emote" or "Twitch emote from another channel").
   Platform emotes, plus 7TV, BetterTTV and FrankerFaceZ. The channel's 7TV set loads on
   Twitch and Kick (changes show up without a restart), its BetterTTV and FrankerFaceZ sets on
   Twitch, and the three services' global emotes everywhere. In the composer, type `:` and the

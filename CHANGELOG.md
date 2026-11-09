@@ -21,7 +21,7 @@ Rill's first release, in progress.
 - Replies: from a user card or with R on a picked message, on Twitch and Kick; the composer quotes the message, and replies in chat show what they answer.
 - Clicking a name opens a user card with the moderation actions that platform allows: delete, timeouts, ban and unban. It floats over the chat beside the message, which stays marked while chat keeps moving, and lists everything that user said that's still in the chat. Its actions leave the card open and the chat where it is, and a click anywhere else closes it.
 - Chat text can be selected across messages and copied, each line with its time, and emotes as their names. The time is the first column of every row.
-- Hovering an emote in chat shows it bigger, with its name, any zero-width emotes on it, and where it comes from (Twitch, Kick, 7TV, BetterTTV or FrankerFaceZ).
+- Hovering an emote in chat shows it bigger, with its name, any zero-width emotes on it, and where it comes from: the service (Twitch, Kick, 7TV, BetterTTV or FrankerFaceZ) and, where known, whether it's the channel's own, global, or from another channel.
 - Hovering a badge says at once what it is, including how long a subscriber has subscribed. Twitch channels' custom moderator and VIP badges from FrankerFaceZ are shown, along with Twitch and Kick channels' own subscriber badges.
 - Links are clickable on every platform and open in the browser. Hovering one shows a preview with the page's title, description and picture, fetched only while hovering and never for local addresses; "Link previews" in Settings turns previews off.
 - A poll form (question, 2 to 5 choices, length) for Twitch.

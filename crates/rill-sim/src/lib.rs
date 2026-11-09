@@ -245,6 +245,7 @@ impl Sim {
                         url: Some(format!("https://cdn.7tv.app/emote/{id}/1x.webp")),
                         size: Some((w, h)),
                         overlay,
+                        scope: rill_core::EmoteScope::Global,
                     });
                 } else {
                     let (name, id) = *self.rng.pick(EMOTES);
