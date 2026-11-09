@@ -1030,6 +1030,7 @@ impl ChatView {
                             })),
                     ),
             )
+            .child(self.render_text_size(cx))
             .child(self.render_history_choice(cx))
             .child(self.render_highlight_settings(cx))
             .into_any_element()
@@ -1202,6 +1203,33 @@ impl ChatView {
                  first-time chatters are marked from {date}."
             )
         })
+    }
+
+    /// Text size: a button per size, with the keys that change it.
+    fn render_text_size(&self, cx: &mut Context<Self>) -> AnyElement {
+        let current = self.text_size;
+        let buttons = crate::chat_view::TEXT_SIZES.iter().map(|&pct| {
+            let b = Button::new(("text-size", pct as usize))
+                .xsmall()
+                .label(format!("{pct}%"));
+            let b = if pct == current {
+                b.primary()
+            } else {
+                b.outline()
+            };
+            b.on_click(cx.listener(move |view, _, _, cx| view.set_text_size(pct, cx)))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child("Text size")
+            .child(div().text_xs().text_color(rgb(style::FAINT)).child(
+                "Chat, emotes and badges, and the rest of the window. Ctrl+= and Ctrl+- change it \
+                 from anywhere, Ctrl+0 puts it back.",
+            ))
+            .child(div().flex().flex_wrap().gap_1().children(buttons))
+            .into_any_element()
     }
 
     /// Message history: how many chat lines to keep, with what each choice costs and how long it

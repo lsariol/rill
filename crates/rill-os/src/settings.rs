@@ -19,6 +19,8 @@ pub struct Settings {
     /// How many chat lines Rill keeps for scrolling back, searching and user cards.
     pub message_history: usize,
     pub highlights: Highlights,
+    /// Text and emote size, in percent of normal (90 to 150).
+    pub text_size: u32,
     pub twitch: TwitchSettings,
     pub youtube: YouTubeSettings,
     pub kick: KickSettings,
@@ -32,6 +34,7 @@ impl Default for Settings {
             link_previews: true,
             message_history: 5_000,
             highlights: Highlights::default(),
+            text_size: 100,
             twitch: TwitchSettings::default(),
             youtube: YouTubeSettings::default(),
             kick: KickSettings::default(),

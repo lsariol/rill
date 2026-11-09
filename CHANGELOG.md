@@ -40,6 +40,7 @@ Rill's first release, in progress.
 - First-time chatters are highlighted: Rill remembers who has chatted in your channels and, after watching a platform for a week, marks a new name's first message.
 - Highlights: mentions of you (red) and events such as subscriptions, gifted subs, raids, Rants, redemptions and ad breaks (purple) stand out with a colored bar and tint, and thin marks along the scroll bar show where they are in the history. Each kind can be turned off or given another color in Settings, and the marks hidden.
 - Long panels such as Settings scroll, with a scroll bar, instead of pushing the chat off the window.
+- Text size, 90 % to 150 %, in Settings or with Ctrl+=, Ctrl+- and Ctrl+0; emotes, badges and icons scale with the text.
 - Ctrl+F (Cmd+F on macOS) searches the feed: only messages whose text or author matches stay visible, with a count. Esc closes the search.
 - Keyboard use: F6 moves between the composer and the messages; arrow keys pick a message and Enter opens its user card; Tab and Shift+Tab move between buttons; Esc closes a card and returns to the composer, and Esc then Tab leaves the composer.
 - Rill reopens at the size and place it was closed (kept in `window.json` beside `settings.json`), unless that spot is no longer on a screen.
