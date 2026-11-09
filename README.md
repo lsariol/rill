@@ -123,6 +123,9 @@ folder; the benchmark scripts use `.dev\bench\data`.
   First-time chatters: no platform says when someone chats for the first time, so Rill keeps a
   list of who has chatted in your channels (`known-chatters.txt` beside `settings.json`) and
   starts marking first-timers once it has watched a platform's chat for a week.
+- **Text size:** Settings → Text size makes chat, emotes, badges and the rest of the window
+  90 % to 150 % of normal (`text_size`); Ctrl+= and Ctrl+- change it from anywhere, and Ctrl+0
+  puts it back.
 - **Keyboard:** F6 moves between the composer and the messages. In the messages, Up and Down (or
   Home and End) pick one, and Enter or Space opens its user card. Tab and Shift+Tab move between
   buttons, and Enter or Space presses one. In the composer, press Esc (with nothing to close),

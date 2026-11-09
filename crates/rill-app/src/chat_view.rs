@@ -47,6 +47,9 @@ pub(crate) fn color_keys() -> Vec<&'static str> {
     keys
 }
 
+/// The text sizes in Settings, in percent.
+pub const TEXT_SIZES: [u32; 5] = [90, 100, 115, 130, 150];
+
 /// The history choices in Settings: chat lines, a short note, and Rill's memory use with that
 /// history full (measured under simulated chat, so long messages use somewhat more).
 pub const HISTORY_CHOICES: [(usize, &str, u32); 5] = [
@@ -85,6 +88,8 @@ pub struct ChatView {
     pub(crate) link_previews: bool,
     /// Which lines stand out, and in what colors.
     pub(crate) highlights: rill_os::settings::Highlights,
+    /// Text size in percent of normal.
+    pub(crate) text_size: u32,
     /// The hex box for each highlight color in Settings, by key (see `color_keys`).
     pub(crate) color_inputs: Vec<(&'static str, Entity<gpui_component::input::InputState>)>,
     /// A failure to keep known chatters was shown once already.
@@ -218,6 +223,11 @@ impl ChatView {
             .as_ref()
             .map(|s| s.highlights.clone())
             .unwrap_or_default();
+        let text_size = saved
+            .as_ref()
+            .map_or(100, |s| s.text_size)
+            .clamp(TEXT_SIZES[0], TEXT_SIZES[TEXT_SIZES.len() - 1]);
+        crate::row::set_scale(text_size);
         let mut color_subscriptions = Vec::new();
         let color_inputs: Vec<_> = color_keys()
             .into_iter()
@@ -249,6 +259,7 @@ impl ChatView {
             show_deleted,
             link_previews,
             highlights,
+            text_size,
             color_inputs,
             known_error_shown: false,
             previews: Default::default(),
@@ -790,6 +801,38 @@ impl ChatView {
         (lines, y)
     }
 
+    /// Sets the text size (emotes, icons and badges follow), and saves it.
+    pub(crate) fn set_text_size(&mut self, pct: u32, cx: &mut Context<Self>) {
+        let pct = pct.clamp(TEXT_SIZES[0], TEXT_SIZES[TEXT_SIZES.len() - 1]);
+        if pct == self.text_size {
+            return;
+        }
+        self.text_size = pct;
+        crate::row::set_scale(pct);
+        if self.platforms.saves()
+            && let Err(e) = rill_os::settings::update(|s| s.text_size = pct)
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+        }
+        // Every row changes height.
+        self.row_heights.clear();
+        self.mark_cache = None;
+        self.list.remeasure();
+        cx.notify();
+    }
+
+    /// Ctrl+= and Ctrl+-: the next size up or down.
+    fn step_text_size(&mut self, by: i32, cx: &mut Context<Self>) {
+        let at = TEXT_SIZES
+            .iter()
+            .position(|&s| s >= self.text_size)
+            .unwrap_or(1) as i32;
+        let next = (at + by).clamp(0, TEXT_SIZES.len() as i32 - 1) as usize;
+        self.set_text_size(TEXT_SIZES[next], cx);
+    }
+
     /// Turns link previews on or off, and saves the choice.
     pub(crate) fn set_link_previews(&mut self, on: bool, cx: &mut Context<Self>) {
         self.link_previews = on;
@@ -1241,6 +1284,8 @@ impl Focusable for ChatView {
 
 impl Render for ChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Text and spacing are in rems: the text size scales them all.
+        window.set_rem_size(px(16. * self.text_size as f32 / 100.));
         self.stats.renders += 1;
         let compact = self.compact || window.viewport_size().width < px(NARROW);
         if compact != self.effective_compact {
@@ -1254,6 +1299,13 @@ impl Render for ChatView {
             .on_action(cx.listener(Self::on_switch_region))
             .on_action(cx.listener(Self::on_to_composer))
             .on_action(cx.listener(Self::on_find))
+            .on_action(cx.listener(|view, _: &focus::TextBigger, _, cx| view.step_text_size(1, cx)))
+            .on_action(
+                cx.listener(|view, _: &focus::TextSmaller, _, cx| view.step_text_size(-1, cx)),
+            )
+            .on_action(
+                cx.listener(|view, _: &focus::TextNormal, _, cx| view.set_text_size(100, cx)),
+            )
             .size_full()
             .flex()
             .flex_col()

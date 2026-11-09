@@ -521,7 +521,7 @@ impl Element for ChatText {
 
         // Lines with images are as tall as the images.
         let tall = (!b.images.is_empty()).then(|| TextStyleRefinement {
-            line_height: Some(px(row::EMOTE + 2.).into()),
+            line_height: Some(px(row::emote_px() + 2. * row::scale()).into()),
             ..TextStyleRefinement::default()
         });
         let (layout_id, ()) = window.with_text_style(tall, |window| {

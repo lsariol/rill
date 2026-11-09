@@ -6,7 +6,18 @@ use gpui::{App, Context, Focusable, KeyBinding, Window, actions};
 
 use crate::chat_view::ChatView;
 
-actions!(focus, [FocusNext, FocusPrev, SwitchRegion, ToComposer]);
+actions!(
+    focus,
+    [
+        FocusNext,
+        FocusPrev,
+        SwitchRegion,
+        ToComposer,
+        TextBigger,
+        TextSmaller,
+        TextNormal
+    ]
+);
 
 pub const CONTEXT: &str = "ChatView";
 
@@ -19,6 +30,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("f6", SwitchRegion, view),
         KeyBinding::new("shift-f6", SwitchRegion, view),
         KeyBinding::new("escape", ToComposer, view),
+        KeyBinding::new("ctrl-=", TextBigger, view),
+        KeyBinding::new("ctrl-+", TextBigger, view),
+        KeyBinding::new("ctrl--", TextSmaller, view),
+        KeyBinding::new("ctrl-0", TextNormal, view),
     ]);
 }
 

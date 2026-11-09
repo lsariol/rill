@@ -17,8 +17,27 @@ use crate::panels::{Panel, UserCard};
 use crate::style;
 use gpui::SharedString;
 
-pub(crate) const EMOTE: f32 = 22.;
-const ICON: f32 = 14.;
+/// The text size chosen in Settings, in percent; emotes, icons and badges follow it.
+static SCALE_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(100);
+
+/// Sets the size emotes, icons and badges are drawn at, in percent of normal.
+pub(crate) fn set_scale(pct: u32) {
+    SCALE_PCT.store(pct, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn scale() -> f32 {
+    SCALE_PCT.load(std::sync::atomic::Ordering::Relaxed) as f32 / 100.
+}
+
+/// An emote's height in chat.
+pub(crate) fn emote_px() -> f32 {
+    22. * scale()
+}
+
+/// Platform icons and badges.
+fn icon_px() -> f32 {
+    14. * scale()
+}
 
 impl ChatView {
     /// Tells the view when the pointer moves onto or off a link, emote or badge, for its card.
@@ -205,9 +224,9 @@ fn row_frame(seq: u64, highlight: Option<u32>, compact: bool) -> gpui::Stateful<
 fn gutter(platform: Option<Platform>) -> impl IntoElement {
     div()
         .pt(px(3.))
-        .w(px(ICON))
+        .w(px(icon_px()))
         .flex_none()
-        .children(platform.map(|p| style::platform_icon(p, ICON)))
+        .children(platform.map(|p| style::platform_icon(p, icon_px())))
 }
 
 /// A time as the row shows it.
@@ -248,13 +267,13 @@ fn badges(seq: u64, badges: &[Badge], hover: HoverFn) -> impl IntoElement {
                 // FrankerFaceZ's custom moderator badges are drawn on moderator green.
                 Some(url) if b.id.starts_with("moderator/") && url.contains("frankerfacez.com") => {
                     div()
-                        .size(px(ICON))
+                        .size(px(icon_px()))
                         .rounded_sm()
                         .bg(rgb(0x34ae0a))
-                        .child(img(url.clone()).size(px(ICON)))
+                        .child(img(url.clone()).size(px(icon_px())))
                         .into_any_element()
                 }
-                Some(url) => img(url.clone()).size(px(ICON)).into_any_element(),
+                Some(url) => img(url.clone()).size(px(icon_px())).into_any_element(),
                 None => badge_chip(b).into_any_element(),
             };
             let (title, url) = (b.title.clone(), b.image_url.clone());
@@ -285,7 +304,7 @@ fn badge_chip(b: &Badge) -> impl IntoElement {
         _ => ("•", 0x4e5058),
     };
     div()
-        .size(px(ICON))
+        .size(px(icon_px()))
         .rounded_sm()
         .bg(rgb(color))
         .flex()
@@ -379,11 +398,11 @@ fn order(seq: u64, line: usize) -> u64 {
 
 /// The size an emote is drawn at: its own proportions (third-party emotes vary), or square.
 pub(crate) fn emote_size(size: Option<(u16, u16)>) -> gpui::Size<gpui::Pixels> {
-    // 7TV's 1x images are 32 px tall where Twitch's are 28: keep the same ratio to EMOTE.
-    let scale = EMOTE / 28.;
+    // 7TV's 1x images are 32 px tall where Twitch's are 28: keep the same ratio to an emote.
+    let scale = emote_px() / 28.;
     match size {
         Some((w, h)) => gpui::size(px(f32::from(w) * scale), px(f32::from(h.min(32)) * scale)),
-        None => gpui::size(px(EMOTE), px(EMOTE)),
+        None => gpui::size(px(emote_px()), px(emote_px())),
     }
 }
 
@@ -463,7 +482,7 @@ pub(crate) fn emote_image(name: &str, url: Option<&str>, size: Option<(u16, u16)
             let s = emote_size(size);
             image.w(s.width).h(s.height).into_any_element()
         }
-        None => image.h(px(EMOTE)).into_any_element(),
+        None => image.h(px(emote_px())).into_any_element(),
     }
 }
 
@@ -492,7 +511,7 @@ fn sent_row(
             .flex()
             .items_center()
             .gap(px(1.))
-            .child(style::platform_icon(d.platform, ICON))
+            .child(style::platform_icon(d.platform, icon_px()))
             .child(div().text_xs().text_color(rgb(color)).child(mark))
     });
     let failures = s.deliveries.iter().filter_map(|d| match &d.state {
@@ -520,12 +539,12 @@ fn sent_row(
         .on_hover(hover);
     // One mark in the icon column, like received messages, so the text lines up with them.
     let mark = match s.deliveries.as_slice() {
-        [one] => style::platform_icon(one.platform, ICON).into_any_element(),
+        [one] => style::platform_icon(one.platform, icon_px()).into_any_element(),
         _ => all_mark().into_any_element(),
     };
     row_frame(entry.seq, None, compact)
         .when(!compact, |d| d.child(time(entry.seq, entry.received_ms)))
-        .child(div().pt(px(3.)).w(px(ICON)).flex_none().child(mark))
+        .child(div().pt(px(3.)).w(px(icon_px())).flex_none().child(mark))
         .child(div().flex_1().min_w_0().child(body).children(failures))
         .child(div().flex().flex_none().gap_1().pt(px(1.)).children(marks))
 }
@@ -533,7 +552,7 @@ fn sent_row(
 /// A small rainbow square: sent to every platform.
 fn all_mark() -> impl IntoElement {
     div()
-        .size(px(ICON))
+        .size(px(icon_px()))
         .rounded_sm()
         .overflow_hidden()
         .flex()
