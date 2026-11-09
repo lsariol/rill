@@ -1033,6 +1033,7 @@ impl ChatView {
             .child(self.render_text_size(cx))
             .child(self.render_history_choice(cx))
             .child(self.render_highlight_settings(cx))
+            .child(self.render_updates(cx))
             .into_any_element()
     }
 
@@ -1203,6 +1204,84 @@ impl ChatView {
                  first-time chatters are marked from {date}."
             )
         })
+    }
+
+    /// Updates: the automatic check, where it stands, and buttons to check or install now.
+    fn render_updates(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::chat_view::UpdateStatus;
+        let version = env!("CARGO_PKG_VERSION");
+        let status: String = match &self.update {
+            UpdateStatus::Idle if self.auto_update => format!("Rill {version}. Checking shortly."),
+            UpdateStatus::Idle => format!("Rill {version}."),
+            UpdateStatus::Checking => format!("Rill {version}. Checking for a new version…"),
+            UpdateStatus::NotInstalled => format!(
+                "Rill {version}, run from source: only Rill installed with its installer updates."
+            ),
+            UpdateStatus::UpToDate => format!("Rill {version} is the newest version."),
+            UpdateStatus::Ready(r) => format!(
+                "Rill {} is downloaded: it installs the next time Rill starts.",
+                r.version
+            ),
+            UpdateStatus::Failed(why) => why.clone(),
+        };
+        let ready = matches!(self.update, UpdateStatus::Ready(_));
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().pt_2().font_bold().text_sm().child("Updates"))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child("Check for updates automatically")
+                            .child(div().text_xs().text_color(rgb(style::FAINT)).child(
+                                "Rill looks for a new version when it starts and every six hours, \
+                                 downloads it in the background, and installs it the next time \
+                                 it starts. It never restarts on its own.",
+                            )),
+                    )
+                    .child(
+                        Switch::new("auto-update")
+                            .small()
+                            .checked(self.auto_update)
+                            .accessibility_label("Check for updates automatically")
+                            .on_click(cx.listener(|view, on: &bool, _, cx| {
+                                view.set_auto_update(*on, cx);
+                            })),
+                    ),
+            )
+            .child(div().text_xs().text_color(rgb(style::MUTED)).child(status))
+            .child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .child(
+                        Button::new("check-update")
+                            .xsmall()
+                            .outline()
+                            .label("Check now")
+                            .disabled(matches!(self.update, UpdateStatus::Checking) || ready)
+                            .on_click(cx.listener(|view, _, _, cx| view.check_for_update(cx))),
+                    )
+                    .when(ready, |d| {
+                        d.child(
+                            Button::new("restart-update")
+                                .xsmall()
+                                .primary()
+                                .label("Restart to update")
+                                .on_click(cx.listener(|view, _, _, cx| view.restart_to_update(cx))),
+                        )
+                    }),
+            )
+            .into_any_element()
     }
 
     /// Text size: a button per size, with the keys that change it.

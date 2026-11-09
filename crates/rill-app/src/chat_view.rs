@@ -47,6 +47,22 @@ pub(crate) fn color_keys() -> Vec<&'static str> {
     keys
 }
 
+/// Where updating stands.
+#[derive(Clone, Default)]
+pub(crate) enum UpdateStatus {
+    #[default]
+    Idle,
+    Checking,
+    /// A development run: only an installed Rill updates.
+    NotInstalled,
+    UpToDate,
+    Ready(crate::updates::Ready),
+    Failed(String),
+}
+
+/// How often an installed Rill looks for a new version.
+const UPDATE_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+
 /// The text sizes in Settings, in percent.
 pub const TEXT_SIZES: [u32; 5] = [90, 100, 115, 130, 150];
 
@@ -90,6 +106,10 @@ pub struct ChatView {
     pub(crate) highlights: rill_os::settings::Highlights,
     /// Text size in percent of normal.
     pub(crate) text_size: u32,
+    /// Look for new versions now and then.
+    pub(crate) auto_update: bool,
+    pub(crate) update: UpdateStatus,
+    update_task: Option<Task<()>>,
     /// The hex box for each highlight color in Settings, by key (see `color_keys`).
     pub(crate) color_inputs: Vec<(&'static str, Entity<gpui_component::input::InputState>)>,
     /// A failure to keep known chatters was shown once already.
@@ -228,6 +248,7 @@ impl ChatView {
             .map_or(100, |s| s.text_size)
             .clamp(TEXT_SIZES[0], TEXT_SIZES[TEXT_SIZES.len() - 1]);
         crate::row::set_scale(text_size);
+        let auto_update = saved.as_ref().is_none_or(|s| s.auto_update);
         let mut color_subscriptions = Vec::new();
         let color_inputs: Vec<_> = color_keys()
             .into_iter()
@@ -260,6 +281,9 @@ impl ChatView {
             link_previews,
             highlights,
             text_size,
+            auto_update,
+            update: UpdateStatus::Idle,
+            update_task: None,
             color_inputs,
             known_error_shown: false,
             previews: Default::default(),
@@ -302,7 +326,7 @@ impl ChatView {
             focus: cx.focus_handle(),
             stats: Stats::default(),
             started: Instant::now(),
-            _tasks: vec![pump],
+            _tasks: vec![pump, Self::update_loop(cx)],
             _subscriptions: {
                 let mut all = vec![subscription];
                 all.extend(color_subscriptions);
@@ -801,6 +825,90 @@ impl ChatView {
         (lines, y)
     }
 
+    /// Checks for an update shortly after starting, then every six hours, while it's turned on.
+    fn update_loop(cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |view, cx| {
+            let mut wait = Duration::from_secs(10);
+            loop {
+                cx.background_executor().timer(wait).await;
+                wait = UPDATE_EVERY;
+                let go = view.update(cx, |view, cx| {
+                    if view.auto_update && !matches!(view.update, UpdateStatus::Ready(_)) {
+                        view.check_for_update(cx);
+                    }
+                });
+                if go.is_err() {
+                    return;
+                }
+            }
+        })
+    }
+
+    /// Looks for a new version and downloads it, off the UI thread.
+    pub(crate) fn check_for_update(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.update, UpdateStatus::Checking) {
+            return;
+        }
+        self.update = UpdateStatus::Checking;
+        cx.notify();
+        self.update_task = Some(cx.spawn(async move |view, cx| {
+            let checked = cx
+                .background_executor()
+                .spawn(async { crate::updates::check() })
+                .await;
+            let _ = view.update(cx, |view, cx| {
+                view.update = match checked {
+                    Ok(crate::updates::Checked::NotInstalled) => UpdateStatus::NotInstalled,
+                    Ok(crate::updates::Checked::UpToDate) => UpdateStatus::UpToDate,
+                    Ok(crate::updates::Checked::Ready(ready)) => {
+                        let text = format!(
+                            "Rill {} is ready: it installs the next time Rill starts, or now with \
+                             Update in the header.",
+                            ready.version
+                        );
+                        view.session
+                            .notice(None, rill_core::Level::Info, &text, now_ms());
+                        view.sync_list();
+                        UpdateStatus::Ready(ready)
+                    }
+                    Err(e) => {
+                        tracing::warn!(err = %e, "update check failed");
+                        UpdateStatus::Failed(e)
+                    }
+                };
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Installs the downloaded update now: Rill closes and the new version opens.
+    pub(crate) fn restart_to_update(&mut self, cx: &mut Context<Self>) {
+        if let UpdateStatus::Ready(ready) = &self.update
+            && let Err(e) = ready.restart()
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+            cx.notify();
+        }
+    }
+
+    /// Turns automatic update checks on or off, and saves the choice.
+    pub(crate) fn set_auto_update(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.auto_update = on;
+        if self.platforms.saves()
+            && let Err(e) = rill_os::settings::update(|s| s.auto_update = on)
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+        }
+        if on && matches!(self.update, UpdateStatus::Idle) {
+            self.check_for_update(cx);
+        }
+        cx.notify();
+    }
+
     /// Sets the text size (emotes, icons and badges follow), and saves it.
     pub(crate) fn set_text_size(&mut self, pct: u32, cx: &mut Context<Self>) {
         let pct = pct.clamp(TEXT_SIZES[0], TEXT_SIZES[TEXT_SIZES.len() - 1]);
@@ -1063,6 +1171,15 @@ impl ChatView {
             .border_color(rgb(style::BORDER))
             .children(toggles)
             .child(div().flex_1())
+            .children(matches!(self.update, UpdateStatus::Ready(_)).then(|| {
+                header_toggle(
+                    "update",
+                    "Update",
+                    true,
+                    "A new version is ready: restart Rill to install it",
+                    cx.listener(|view, _, _, cx| view.restart_to_update(cx)),
+                )
+            }))
             .child(header_toggle(
                 "accounts",
                 "Accounts",

@@ -45,4 +45,5 @@ Rill's first release, in progress.
 - Keyboard use: F6 moves between the composer and the messages; arrow keys pick a message and Enter opens its user card; Tab and Shift+Tab move between buttons; Esc closes a card and returns to the composer, and Esc then Tab leaves the composer.
 - Rill reopens at the size and place it was closed (kept in `window.json` beside `settings.json`), unless that spot is no longer on a screen.
 - An app icon (a chat bubble with three streams in the platforms' colors) for the window, the taskbar and Explorer.
+- A Windows installer, and updates: an installed Rill checks for a new version when it starts and every six hours, downloads it in the background and installs it on the next start, or at once with Update in the header. Settings turns the checks off. Built with `scripts/package.ps1`.
 - `--sim` shows simulated chat, with options for rate, bursts, emotes, failures and dropped connections.

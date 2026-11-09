@@ -169,6 +169,28 @@ in `settings.json` (in `.dev/` for debug runs):
 Release builds can carry the IDs instead: set `RILL_TWITCH_CLIENT_ID`, `RILL_YOUTUBE_CLIENT_ID` and
 `RILL_YOUTUBE_CLIENT_SECRET` when building.
 
+## Installer and updates
+
+Rill installs and updates itself with [Velopack](https://velopack.io). An installed Rill checks
+`https://rill.mobasity.com/updates` when it starts and every six hours, downloads a new version
+in the background, and installs it the next time it starts; **Update** in the header installs it
+right away. Settings → Updates turns the checks off (`auto_update`). A copy run from source
+doesn't update.
+
+To build the installer, install the .NET 8 SDK and Velopack's packaging tool
+(`dotnet tool install -g vpk`), then in PowerShell from the repository folder:
+
+```powershell
+powershell -File scripts/package.ps1 -Version 0.1.0
+```
+
+It writes `Mobasity.Rill-win-Setup.exe`, a portable zip, and the update feed
+(`releases.win.json` and the packages) to `.dev\releases`. Packaging several versions into the
+same folder makes a feed that updates from one to the next. Setup installs to
+`%LocalAppData%\Mobasity.Rill`; settings and sign-ins stay in `%LocalAppData%\Rill` and survive
+an uninstall. To try an update without a server, point an installed Rill at the folder:
+`$env:RILL_UPDATE_SOURCE = "<path to .dev\releases>"` before starting it.
+
 ## Checks and measurements
 
 ```powershell
