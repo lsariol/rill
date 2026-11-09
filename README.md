@@ -153,6 +153,10 @@ to `%LocalAppData%\Rill` without asking for administrator rights, and adds Rill 
 the desktop and Windows' list of installed apps. Then open **Accounts** in Rill and connect your
 platforms.
 
+YouTube is limited for now: until Google finishes reviewing Rill, only Google accounts on Rill's
+test list can connect it, and its sign-in lasts 7 days. To be added, email
+[rill@mobasity.com](mailto:rill@mobasity.com) with the Google account you stream from.
+
 To run it from source instead, in PowerShell from the repository folder:
 
 ```powershell
