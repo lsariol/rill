@@ -246,6 +246,16 @@ the packages) to `.dev\releases`. Packaging several versions into the same folde
 that updates from one to the next. To try an update without a server, point an installed Rill
 at the folder: `$env:RILL_UPDATE_SOURCE = "<path to .dev\releases>"` before starting it.
 
+### Releases
+
+Each version's GitHub Release gets its files from `.github/workflows/release.yml`, which runs
+when the Release is published. On Windows, it checks that the tag matches the version in
+`Cargo.toml`, runs `scripts/check.ps1`, builds and packages with `scripts/package.ps1`, records
+build provenance, and adds the installer, the portable zip and the update files to the Release.
+The app IDs built in come from the repository's Actions variables `RILL_TWITCH_CLIENT_ID`,
+`RILL_YOUTUBE_CLIENT_ID`, `RILL_YOUTUBE_CLIENT_SECRET` and `RILL_KICK_CLIENT_ID`. Installed copies
+find these files through `https://rill.mobasity.com/updates`, which points at them.
+
 ### Layout
 
 | Crate | What it does |
