@@ -1,7 +1,7 @@
 //! Kick's chat events, which both of its sockets carry, turned into Rill events.
 
 use rill_core::{
-    Author, Badge, ChatMessage, Event, Fragment, MessageKind, Platform, ReplyRef, Roles,
+    Author, Badge, ChatMessage, Event, EventKind, Fragment, MessageKind, Platform, ReplyRef, Roles,
     merge_text, split_text,
 };
 use serde_json::Value;
@@ -56,7 +56,7 @@ pub fn to_event(event: &str, data: &Value, sub_badges: &SubBadges) -> Option<Eve
             } else {
                 "subscribed".into()
             };
-            happening(data, &s(&data["username"]), text)
+            happening(data, &s(&data["username"]), text, EventKind::Subscription)
         }
         "GiftedSubscriptionsEvent" => {
             let n = data["gifted_usernames"].as_array().map_or(1, Vec::len);
@@ -65,7 +65,12 @@ pub fn to_event(event: &str, data: &Value, sub_badges: &SubBadges) -> Option<Eve
             } else {
                 format!("{n} subs")
             };
-            happening(data, &s(&data["gifter_username"]), format!("gifted {subs}"))
+            happening(
+                data,
+                &s(&data["gifter_username"]),
+                format!("gifted {subs}"),
+                EventKind::Gift,
+            )
         }
         "StreamHostEvent" => {
             let viewers = data["number_viewers"].as_u64().unwrap_or(0);
@@ -73,14 +78,14 @@ pub fn to_event(event: &str, data: &Value, sub_badges: &SubBadges) -> Option<Eve
             if let Some(m) = data["optional_message"].as_str().filter(|m| !m.is_empty()) {
                 text.push_str(&format!(": {m}"));
             }
-            happening(data, &s(&data["host_username"]), text)
+            happening(data, &s(&data["host_username"]), text, EventKind::Raid)
         }
         "RewardRedeemedEvent" => {
             let mut text = format!("redeemed {}", s(&data["reward_title"]));
             if let Some(i) = data["user_input"].as_str().filter(|i| !i.is_empty()) {
                 text.push_str(&format!(": {i}"));
             }
-            happening(data, &s(&data["username"]), text)
+            happening(data, &s(&data["username"]), text, EventKind::Redemption)
         }
         _ => None,
     }
@@ -163,7 +168,7 @@ pub fn is_known(event: &str) -> bool {
 }
 
 /// A sub, gift, host or redemption as an event line by `name`.
-fn happening(data: &Value, name: &str, text: String) -> Option<Event> {
+fn happening(data: &Value, name: &str, text: String, kind: EventKind) -> Option<Event> {
     if name.is_empty() {
         return None;
     }
@@ -185,7 +190,7 @@ fn happening(data: &Value, name: &str, text: String) -> Option<Event> {
             ..Author::default()
         },
         fragments: split_text(&text),
-        kind: MessageKind::Event,
+        kind: MessageKind::Event(kind),
         sent_at_ms: rill_core::now_ms(),
         reply_to: None,
     }))
@@ -379,7 +384,7 @@ mod tests {
     fn subs_gifts_hosts_and_redemptions_read_as_event_lines() {
         let line = |event: &str, data: Value| match to_event(event, &data, &SubBadges::new()) {
             Some(Event::Message(m)) => {
-                assert_eq!(m.kind, MessageKind::Event);
+                assert!(m.kind.is_event());
                 format!("{} {}", m.author.display_name, m.plain_text())
             }
             other => panic!("{event}: {other:?}"),

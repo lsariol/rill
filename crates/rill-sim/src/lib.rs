@@ -11,8 +11,8 @@ use std::time::Duration;
 use rill_core::backoff::SmallRng;
 use rill_core::{
     Account, Action, Adapter, AdapterIo, Author, Badge, Capabilities, ChatMessage, Command,
-    ConnectionStatus, EmoteOption, EmoteSource, Event, EventSink, Fragment, Level, MessageKind,
-    Platform, Request, Roles, adapter::BoxFuture, merge_text, now_ms,
+    ConnectionStatus, EmoteOption, EmoteSource, Event, EventKind, EventSink, Fragment, Level,
+    MessageKind, Platform, Request, Roles, adapter::BoxFuture, merge_text, now_ms,
 };
 use tokio::time::{MissedTickBehavior, interval, sleep};
 
@@ -269,22 +269,32 @@ impl Sim {
             self.recent.pop_front();
         }
         let roll = self.rng.unit();
-        let kind = if roll < 0.01 {
+        let mut kind = if roll < 0.01 {
             MessageKind::Action
-        } else if roll < 0.025 {
-            MessageKind::Event
         } else {
             MessageKind::Chat
         };
         // Now and then a channel event, as the platforms send them.
-        if kind == MessageKind::Event {
+        if (0.01..0.025).contains(&roll) {
             let n = 1 + self.rng.below(24);
-            let what = match self.rng.below(3) {
-                0 => format!("subscribed for {n} months!"),
-                1 => format!("gifted {n} subs to the community!"),
-                _ => format!("is raiding with {} viewers!", n * 17),
+            let (what, event) = match self.rng.below(5) {
+                0 => (
+                    format!("subscribed for {n} months!"),
+                    EventKind::Subscription,
+                ),
+                1 => (
+                    format!("gifted {n} subs to the community!"),
+                    EventKind::Gift,
+                ),
+                2 => (
+                    format!("is raiding with {} viewers!", n * 17),
+                    EventKind::Raid,
+                ),
+                3 => (format!("cheered {} bits", n * 100), EventKind::Money),
+                _ => ("redeemed Hydrate".to_string(), EventKind::Redemption),
             };
             fragments = vec![Fragment::Text(what)];
+            kind = MessageKind::Event(event);
         }
         ChatMessage {
             platform: self.platform,

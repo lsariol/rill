@@ -232,6 +232,8 @@ fn main() -> ExitCode {
 
     let exit_after = options.exit_after;
     let history = options.history;
+    // Simulated chat (not the firehose) marks first-time chatters after a minute, to show them.
+    let simulated = options.sim && options.firehose.is_none();
     let stats_path = options.stats.clone();
     app.run(move |cx: &mut App| {
         gpui_component::init(cx);
@@ -269,7 +271,15 @@ fn main() -> ExitCode {
         let mut view_handle = None;
         let opened = cx.open_window(window_options, |window, cx| {
             let view = cx.new(|cx| {
-                chat_view::ChatView::new(hub, platforms, events, startup_errors, history, window, cx)
+                chat_view::ChatView::new(
+                    hub,
+                    platforms,
+                    events,
+                    startup_errors,
+                    chat_view::ViewOptions { history, simulated },
+                    window,
+                    cx,
+                )
             });
             view_handle = Some(view.clone());
             cx.new(|cx| Root::new(view, window, cx))

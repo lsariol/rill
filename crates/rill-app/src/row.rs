@@ -319,7 +319,7 @@ fn chat_parts(m: &ChatMessage, deleted: bool) -> Parts {
     }
     let action = m.kind == MessageKind::Action;
     // Actions and platform events read as one sentence: "Bob subscribed", not "Bob: subscribed".
-    let sentence = action || m.kind == MessageKind::Event;
+    let sentence = action || m.kind.is_event();
     parts.text(if sentence { " " } else { ": " }, None);
     let plain = action.then_some(HighlightStyle {
         color: Some(name_color),

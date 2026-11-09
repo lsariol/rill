@@ -1,7 +1,7 @@
 //! EventSub WebSocket messages and their conversion into Rill events.
 
 use rill_core::{
-    Author, Badge, ChatMessage, Event, Fragment, MessageKind, Platform, ReplyRef, Roles,
+    Author, Badge, ChatMessage, Event, EventKind, Fragment, MessageKind, Platform, ReplyRef, Roles,
     merge_text, split_text,
 };
 use serde::Deserialize;
@@ -92,7 +92,7 @@ fn redemption(kind: &str, timestamp: &str, e: &Value) -> Option<ChatMessage> {
             ..Author::default()
         },
         fragments: merge_text(fragments),
-        kind: MessageKind::Event,
+        kind: MessageKind::Event(EventKind::Redemption),
         sent_at_ms: chrono::DateTime::parse_from_rfc3339(timestamp)
             .map(|t| t.timestamp_millis())
             .unwrap_or_else(|_| rill_core::now_ms()),
@@ -228,7 +228,16 @@ fn notification(timestamp: &str, e: &Value, badges: &Badges) -> Option<ChatMessa
     }
     fragments.append(&mut m.fragments);
     m.fragments = merge_text(fragments);
-    m.kind = MessageKind::Event;
+    m.kind = MessageKind::Event(match e["notice_type"].as_str().unwrap_or_default() {
+        "sub" | "resub" | "prime_paid_upgrade" | "gift_paid_upgrade" | "pay_it_forward" => {
+            EventKind::Subscription
+        }
+        "sub_gift" | "community_sub_gift" => EventKind::Gift,
+        "raid" => EventKind::Raid,
+        "announcement" => EventKind::Announcement,
+        "charity_donation" | "bits_badge_tier" => EventKind::Money,
+        _ => EventKind::Other,
+    });
     (!m.plain_text().trim().is_empty()).then_some(m)
 }
 
@@ -356,7 +365,7 @@ mod tests {
         ) else {
             panic!("expected a message");
         };
-        assert_eq!(m.kind, MessageKind::Event);
+        assert!(m.kind.is_event());
         assert_eq!(m.plain_text(), "redeemed Hydrate: drink water");
         assert_eq!(m.author.display_name, "Foo");
         let auto = json!({"id": "r2", "user_name": "Bar", "reward": {"type": "send_highlighted_message"},
@@ -397,7 +406,7 @@ mod tests {
         else {
             panic!("expected a message");
         };
-        assert_eq!(m.kind, MessageKind::Event);
+        assert!(m.kind.is_event());
         assert_eq!(
             m.plain_text(),
             "subscribed at Tier 1. They've subscribed for 5 months! love it"

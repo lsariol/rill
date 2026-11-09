@@ -1,6 +1,8 @@
 //! Converts YouTube liveChatMessage resources into Rill events.
 
-use rill_core::{Author, Badge, ChatMessage, Event, MessageKind, Platform, Roles, split_text};
+use rill_core::{
+    Author, Badge, ChatMessage, Event, EventKind, MessageKind, Platform, Roles, split_text,
+};
 use serde_json::Value;
 
 /// One page of messages: the events, where to continue, and how long to wait.
@@ -95,10 +97,18 @@ pub fn to_event(item: &Value) -> Option<Event> {
             roles,
         },
         fragments: split_text(text),
-        kind: if kind == "textMessageEvent" {
-            MessageKind::Chat
-        } else {
-            MessageKind::Event
+        kind: match kind {
+            "textMessageEvent" => MessageKind::Chat,
+            "superChatEvent" | "superStickerEvent" | "fanFundingEvent" => {
+                MessageKind::Event(EventKind::Money)
+            }
+            "newSponsorEvent" | "memberMilestoneChatEvent" => {
+                MessageKind::Event(EventKind::Subscription)
+            }
+            "membershipGiftingEvent" | "giftMembershipReceivedEvent" => {
+                MessageKind::Event(EventKind::Gift)
+            }
+            _ => MessageKind::Event(EventKind::Other),
         },
         sent_at_ms: snippet["publishedAt"]
             .as_str()
@@ -130,7 +140,7 @@ mod tests {
         assert!(m.author.roles.moderator);
         assert_eq!(m.plain_text(), "hello @rill_dev");
         assert_eq!(m.sent_at_ms, 1_730_000_000_000);
-        assert!(matches!(&p.events[1], Event::Message(m) if m.kind == MessageKind::Event));
+        assert!(matches!(&p.events[1], Event::Message(m) if m.kind.is_event()));
         assert_eq!(
             p.events[2],
             Event::Deleted {

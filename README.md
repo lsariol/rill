@@ -114,12 +114,14 @@ folder; the benchmark scripts use `.dev\bench\data`.
   what you type, with a count of matches. Esc closes it.
 - **Scrolling:** scroll up (or press PgUp) to pause the feed, or drag the scrollbar on the right,
   which widens under the pointer; a button jumps back to live chat.
-- **Highlights:** messages that mention you get a red bar and tint, and events (subscriptions,
-  gifted subs, raids, Rants, redemptions and ad breaks) a purple one. Thin marks along the right
-  edge show where they are in the history, so a sub that scrolled away while you were gone is
-  easy to find with the scrollbar.
-  Settings → Highlights turns each on or off, picks their colors, and hides the marks
-  (`highlights` in `settings.json`).
+- **Highlights:** messages that mention you, first-time chatters, and events (subscriptions,
+  gifted subs, raids, Bits, Rants and Super Chats, redemptions, follows, announcements and ad
+  breaks) each get a colored bar and tint. Settings → Highlights turns each on or off and picks
+  its color from the swatches or any hex code (`#ff00aa`). Thin marks along the scrollbar show
+  where highlighted lines are, so a sub that scrolled away while you were gone is easy to find.
+  First-time chatters: no platform says when someone chats for the first time, so Rill keeps a
+  list of who has chatted in your channels (`known-chatters.txt` beside `settings.json`) and
+  starts marking first-timers once it has watched a platform's chat for a week.
 - **Keyboard:** F6 moves between the composer and the messages. In the messages, Up and Down (or
   Home and End) pick one, and Enter or Space opens its user card. Tab and Shift+Tab move between
   buttons, and Enter or Space presses one. In the composer, press Esc (with nothing to close),

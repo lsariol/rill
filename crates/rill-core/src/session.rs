@@ -125,6 +125,41 @@ pub struct Session {
     emotes: BTreeMap<(Platform, EmoteSource), Vec<EmoteOption>>,
     /// Everyone seen in chat, for `@` mentions and Tab.
     chatters: crate::chatters::Chatters,
+    /// Who has ever chatted, per platform, for first-time chatter highlights.
+    known: Known,
+}
+
+/// Who has chatted before, kept across runs by the app. A platform's first-time highlights wait
+/// until Rill has watched it for `learn_ms`, so day one doesn't mark everyone.
+#[derive(Debug)]
+struct Known {
+    ids: std::collections::HashSet<(Platform, String)>,
+    since: HashMap<Platform, i64>,
+    learn_ms: i64,
+    new_ids: Vec<(Platform, String)>,
+    new_since: Vec<(Platform, i64)>,
+}
+
+impl Default for Known {
+    fn default() -> Self {
+        Known {
+            ids: Default::default(),
+            since: HashMap::new(),
+            learn_ms: LEARN_MS,
+            new_ids: Vec::new(),
+            new_since: Vec::new(),
+        }
+    }
+}
+
+/// How long Rill watches a platform's chat before it marks first-time chatters: a week.
+pub const LEARN_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// Who has chatted before, and since when Rill has watched each platform, to keep.
+#[derive(Debug, Default, PartialEq)]
+pub struct KnownChanges {
+    pub since: Vec<(Platform, i64)>,
+    pub ids: Vec<(Platform, String)>,
 }
 
 impl Session {
@@ -226,10 +261,14 @@ impl Session {
                 if mine && self.is_own_echo(&m) {
                     return;
                 }
+                let mut first = false;
                 if !mine {
                     self.chatters.seen(m.platform, &m.author);
+                    if !m.kind.is_event() {
+                        first = self.first_message(m.platform, &m.author.id, now_ms);
+                    }
                 }
-                self.feed.push(Item::Chat(m), now_ms);
+                self.feed.push_line(Item::Chat(m), now_ms, first);
             }
             Event::Deleted {
                 platform,
@@ -645,6 +684,55 @@ impl Session {
         }
     }
 
+    /// Loads who has chatted before and since when each platform has been watched.
+    pub fn load_known(
+        &mut self,
+        since: impl IntoIterator<Item = (Platform, i64)>,
+        ids: impl IntoIterator<Item = (Platform, String)>,
+    ) {
+        self.known.since.extend(since);
+        self.known.ids.extend(ids);
+    }
+
+    /// Sets how long a platform is watched before first-time chatters are marked (0 marks
+    /// every new name at once, for simulated chat).
+    pub fn set_learning(&mut self, ms: i64) {
+        self.known.learn_ms = ms;
+    }
+
+    /// When first-time chatters start being marked on a platform; `None` before its first chat.
+    pub fn first_chatters_from(&self, platform: Platform) -> Option<i64> {
+        self.known
+            .since
+            .get(&platform)
+            .map(|t| t + self.known.learn_ms)
+    }
+
+    /// New names and newly watched platforms since the last call, for the app to keep.
+    pub fn take_known_changes(&mut self) -> KnownChanges {
+        KnownChanges {
+            since: std::mem::take(&mut self.known.new_since),
+            ids: std::mem::take(&mut self.known.new_ids),
+        }
+    }
+
+    /// Notes the author; true when they're new and the platform has been watched long enough.
+    fn first_message(&mut self, platform: Platform, user_id: &str, now_ms: i64) -> bool {
+        if user_id.is_empty() {
+            return false;
+        }
+        let k = &mut self.known;
+        let since = *k.since.entry(platform).or_insert_with(|| {
+            k.new_since.push((platform, now_ms));
+            now_ms
+        });
+        if !k.ids.insert((platform, user_id.to_string())) {
+            return false;
+        }
+        k.new_ids.push((platform, user_id.to_string()));
+        now_ms - since >= k.learn_ms
+    }
+
     /// Names seen in chat on the destination's platforms that start with `prefix`, ignoring
     /// case, alphabetically, each with the platforms it was seen on.
     pub fn user_choices(
@@ -879,6 +967,37 @@ mod tests {
             0,
         );
         assert_eq!(s.health(Platform::Twitch), (Health::SignedOut, vec![]));
+    }
+
+    #[test]
+    fn first_time_chatters_are_marked_once_the_platform_has_been_watched_a_while() {
+        let mut s = Session::new(100);
+        connect(&mut s, Platform::Twitch, ALL_CAPS);
+        let first = |s: &Session| s.feed.entries().last().map(|e| e.first);
+        // Day one: everyone is new to Rill, so nobody is marked yet.
+        s.apply(msg(Platform::Twitch, "1", "alice", "hi"), 0);
+        assert_eq!(first(&s), Some(false));
+        let changes = s.take_known_changes();
+        assert_eq!(changes.since, [(Platform::Twitch, 0)]);
+        assert_eq!(changes.ids, [(Platform::Twitch, "alice".to_string())]);
+        // A week on, a new name is a first-time chatter; a known one isn't.
+        let later = LEARN_MS + 1;
+        s.apply(msg(Platform::Twitch, "2", "bob", "hello"), later);
+        assert_eq!(first(&s), Some(true));
+        s.apply(msg(Platform::Twitch, "3", "alice", "again"), later);
+        assert_eq!(first(&s), Some(false));
+        s.apply(msg(Platform::Twitch, "4", "bob", "more"), later);
+        assert_eq!(first(&s), Some(false), "only the first message");
+        // What was kept before counts.
+        let mut t = Session::new(100);
+        connect(&mut t, Platform::Twitch, ALL_CAPS);
+        t.load_known(
+            [(Platform::Twitch, 0)],
+            [(Platform::Twitch, "carol".to_string())],
+        );
+        t.apply(msg(Platform::Twitch, "5", "carol", "back"), later);
+        assert_eq!(first(&t), Some(false));
+        assert_eq!(t.first_chatters_from(Platform::Twitch), Some(LEARN_MS));
     }
 
     #[test]
