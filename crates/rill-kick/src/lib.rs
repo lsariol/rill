@@ -1930,16 +1930,25 @@ mod official_api {
         assert_eq!(q["code_challenge_method"], "S256");
         assert!(q["scope"].contains("chat:write") && q["scope"].contains("moderation:ban"));
         let state = q["state"].clone();
+        // A browser that stops at the redirect to the website's page.
         let browser = tokio::spawn(async move {
-            reqwest::get(format!(
-                "{}?code=the-code&state={state}",
-                auth::REDIRECT_URI
-            ))
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap()
+            let client = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap();
+            let res = client
+                .get(format!(
+                    "{}?code=the-code&state={state}",
+                    auth::REDIRECT_URI
+                ))
+                .send()
+                .await
+                .unwrap();
+            format!(
+                "{} Location: {}",
+                res.status(),
+                res.headers()["location"].to_str().unwrap()
+            )
         });
         let token = auth::finish(
             &reqwest::Client::new(),
@@ -1953,7 +1962,12 @@ mod official_api {
             (token.access.as_str(), token.refresh.as_str()),
             ("fresh", "r2")
         );
-        assert!(browser.await.unwrap().contains("Signed in to Kick"));
+        assert!(
+            browser
+                .await
+                .unwrap()
+                .contains("Location: https://rill.mobasity.com/signed-in/kick")
+        );
         let log = log.lock().unwrap().clone();
         let form = &log.iter().find(|r| r.path == "/oauth/token").unwrap().body;
         for part in [

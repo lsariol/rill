@@ -26,6 +26,18 @@ pub use message::{
 pub use platform::Platform;
 pub use session::{Health, Outgoing, Plan, Session, Submitted};
 
+/// Rill's website: downloads, updates, and the pages a sign-in ends on.
+pub const WEBSITE: &str = "https://rill.mobasity.com";
+
+/// The reply a sign-in's local redirect gets: the browser goes on to the website's page for how
+/// it ended (`platform` as in its address, such as `kick`).
+pub fn sign_in_reply(platform: &str, ok: bool) -> String {
+    let page = if ok { "signed-in" } else { "sign-in-failed" };
+    format!(
+        "HTTP/1.1 303 See Other\r\nLocation: {WEBSITE}/{page}/{platform}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    )
+}
+
 /// The current time in Unix milliseconds.
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()

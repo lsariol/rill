@@ -177,26 +177,6 @@ async fn accept(listeners: &[TcpListener]) -> std::io::Result<TcpStream> {
     }
 }
 
-/// The page the browser shows after the redirect.
-fn page(ok: bool) -> String {
-    let (title, text) = if ok {
-        (
-            "Signed in to Kick",
-            "Rill can now send and moderate on Kick. You can close this tab.",
-        )
-    } else {
-        (
-            "Kick sign-in didn't finish",
-            "Go back to Rill and connect Kick again.",
-        )
-    };
-    format!(
-        "<!doctype html><meta charset=utf-8><title>Rill</title>\
-         <body style=\"font:16px system-ui;background:#18181b;color:#e4e4e7;display:grid;place-items:center;height:90vh\">\
-         <div><h2 style=\"color:#53fc18\">{title}</h2><p>{text}</p></div>"
-    )
-}
-
 /// Waits for Kick's redirect, then trades the code for tokens.
 pub async fn finish(
     http: &reqwest::Client,
@@ -212,14 +192,12 @@ pub async fn finish(
         let n = sock.read(&mut buf).await.unwrap_or(0);
         let request = String::from_utf8_lossy(&buf[..n]);
         let outcome = parse_redirect(&request, &pending.state);
-        let body = match &outcome {
-            Some(r) => page(r.is_ok()),
-            None => String::new(),
+        // The browser goes on to the website's page for how it ended.
+        let reply = match &outcome {
+            Some(r) => rill_core::sign_in_reply("kick", r.is_ok()),
+            None => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_string(),
         };
-        let reply = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
         let _ = sock.write_all(reply.as_bytes()).await;
         match outcome {
             Some(Ok(code)) => break code,
