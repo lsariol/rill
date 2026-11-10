@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.0.1 (unreleased)
+
+The first version of Rill with an installer. Everything listed under v0.0.0 is in it: v0.0.0 was
+never built, because the installer tool needs a version of 0.0.1 or later.
+
+### Fixed
+
+- Rill's installer and update files are built for this version; v0.0.0 has none.
+
 ## v0.0.0 (2026-11-09)
 
 The first release of Rill: Twitch, YouTube, Kick and Rumble chat in one fast window, with one
