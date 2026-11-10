@@ -195,7 +195,9 @@ pub struct ChatView {
     pub(crate) kick_channel: Entity<gpui_component::input::InputState>,
     /// The Rumble Live Stream API link box in Accounts; masked, since the link holds a key.
     pub(crate) rumble_link: Entity<gpui_component::input::InputState>,
-    pub(crate) compact: bool,
+    /// Each line's time and badges, unless the window is narrow.
+    pub(crate) show_times: bool,
+    pub(crate) show_badges: bool,
     effective_compact: bool,
     following: bool,
     unseen: usize,
@@ -231,6 +233,9 @@ impl ChatView {
             .flatten();
         let show_deleted = saved.as_ref().is_some_and(|s| s.show_deleted_messages);
         let link_previews = saved.as_ref().is_none_or(|s| s.link_previews);
+        let show_times = saved.as_ref().is_none_or(|s| s.show_times);
+        let show_badges = saved.as_ref().is_none_or(|s| s.show_badges);
+        let mentions_only = saved.as_ref().is_some_and(|s| s.mentions_only);
         input.update(cx, |state, cx| state.focus(window, cx));
 
         let list = ListState::new(0, ListAlignment::Bottom, px(400.));
@@ -366,7 +371,8 @@ impl ChatView {
                     .placeholder("Live Stream API link")
                     .masked(true)
             }),
-            compact: false,
+            show_times,
+            show_badges,
             effective_compact: false,
             following: true,
             unseen: 0,
@@ -385,6 +391,11 @@ impl ChatView {
         for (key, input) in view.color_inputs.clone() {
             let hex = style::to_hex(view.color_of(key));
             input.update(cx, |s, cx| s.set_value(hex, window, cx));
+        }
+        if mentions_only {
+            let mut filter = view.session.feed.filter().clone();
+            filter.mentions_only = true;
+            view.session.feed.set_filter(filter);
         }
         view.sync_list();
         view.apply_overlay();
@@ -1482,6 +1493,40 @@ impl ChatView {
         cx.notify();
     }
 
+    /// Changes how lines are drawn, redraws them all, and saves the choice.
+    pub(crate) fn set_display(
+        &mut self,
+        apply: impl FnOnce(&mut Self),
+        save: impl FnOnce(&mut rill_os::settings::Settings),
+        cx: &mut Context<Self>,
+    ) {
+        apply(self);
+        if self.platforms.saves()
+            && let Err(e) = rill_os::settings::update(save)
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+        }
+        self.list.remeasure();
+        cx.notify();
+    }
+
+    /// Shows only messages that mention the user, or everything, and saves the choice.
+    pub(crate) fn set_mentions_only(&mut self, on: bool, cx: &mut Context<Self>) {
+        let mut filter = self.session.feed.filter().clone();
+        filter.mentions_only = on;
+        self.set_filter(filter, cx);
+        if self.platforms.saves()
+            && let Err(e) = rill_os::settings::update(|s| s.mentions_only = on)
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+        }
+        cx.notify();
+    }
+
     /// Turns a platform on (connecting) or off (disconnecting and hiding it), keeping sign-ins.
     pub(crate) fn set_platform_on(&mut self, p: Platform, on: bool, cx: &mut Context<Self>) {
         if on == self.platforms.is_on(p) || (!on && self.platforms.on() == [p]) {
@@ -1606,8 +1651,6 @@ impl ChatView {
                     view.after_click(click, window, cx);
                 }))
         });
-        let mentions = filter.mentions_only;
-        let compact = self.compact;
         div()
             .flex()
             .items_center()
@@ -1650,28 +1693,6 @@ impl ChatView {
                         Panel::Settings => Panel::None,
                         _ => Panel::Settings,
                     };
-                    view.after_click(click, window, cx);
-                }),
-            ))
-            .child(header_toggle(
-                "mentions",
-                "@",
-                mentions,
-                "Show only messages that mention you",
-                cx.listener(move |view, click, window, cx| {
-                    let mut f = view.session.feed.filter().clone();
-                    f.mentions_only = !f.mentions_only;
-                    view.set_filter(f, cx);
-                    view.after_click(click, window, cx);
-                }),
-            ))
-            .child(header_toggle(
-                "compact",
-                "≡",
-                compact,
-                "Compact mode: hide times and badges",
-                cx.listener(|view, click, window, cx| {
-                    view.compact = !view.compact;
                     view.after_click(click, window, cx);
                 }),
             ))
@@ -1864,7 +1885,7 @@ impl Render for ChatView {
         // Text and spacing are in rems: the text size scales them all.
         window.set_rem_size(px(16. * self.text_size as f32 / 100.));
         self.stats.renders += 1;
-        let compact = self.compact || window.viewport_size().width < px(NARROW);
+        let compact = window.viewport_size().width < px(NARROW);
         if compact != self.effective_compact {
             self.effective_compact = compact;
             self.list.remeasure();
@@ -1900,8 +1921,18 @@ impl Render for ChatView {
 }
 
 impl ChatView {
-    /// Whether rows are drawn compact right now.
+    /// Whether rows are drawn compact right now (a narrow window).
     pub(crate) fn is_compact(&self) -> bool {
         self.effective_compact
+    }
+
+    /// Whether lines show their time right now.
+    pub(crate) fn times_shown(&self) -> bool {
+        self.show_times && !self.effective_compact
+    }
+
+    /// Whether lines show badges right now.
+    pub(crate) fn badges_shown(&self) -> bool {
+        self.show_badges && !self.effective_compact
     }
 }

@@ -1011,6 +1011,34 @@ impl ChatView {
                     .pt_2()
                     .child(div().font_bold().text_sm().child("Chat")),
             )
+            .child(switch_row(
+                "show-times",
+                "Show times",
+                "Each message's time. A narrow window hides times anyway.",
+                self.show_times,
+                cx.listener(|view, on: &bool, _, cx| {
+                    let on = *on;
+                    view.set_display(|v| v.show_times = on, |s| s.show_times = on, cx);
+                }),
+            ))
+            .child(switch_row(
+                "show-badges",
+                "Show badges",
+                "Badges such as moderator or subscriber before names. A narrow window hides \
+                 them anyway.",
+                self.show_badges,
+                cx.listener(|view, on: &bool, _, cx| {
+                    let on = *on;
+                    view.set_display(|v| v.show_badges = on, |s| s.show_badges = on, cx);
+                }),
+            ))
+            .child(switch_row(
+                "mentions-only",
+                "Only messages that mention you",
+                "Hide everything else until this is turned off.",
+                self.session.feed.filter().mentions_only,
+                cx.listener(|view, on: &bool, _, cx| view.set_mentions_only(*on, cx)),
+            ))
             .child(
                 div()
                     .flex()
@@ -2072,4 +2100,34 @@ fn field(input: impl IntoElement) -> gpui::Div {
         .border_color(rgb(style::FAINT))
         .bg(rgb(style::BACKGROUND))
         .child(input)
+}
+
+/// A Settings row: a name and a note on the left, a switch on the right.
+fn switch_row(
+    id: &'static str,
+    name: &'static str,
+    note: &'static str,
+    checked: bool,
+    on_click: impl Fn(&bool, &mut Window, &mut App) + 'static,
+) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(name)
+                .child(div().text_xs().text_color(rgb(style::FAINT)).child(note)),
+        )
+        .child(
+            Switch::new(id)
+                .small()
+                .checked(checked)
+                .accessibility_label(name)
+                .on_click(on_click),
+        )
 }
