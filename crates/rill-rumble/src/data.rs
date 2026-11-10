@@ -1,7 +1,4 @@
-//! Reads the Live Stream API's reply: the account, and the live stream's recent chat and Rants.
-//!
-//! The API returns the latest messages on every poll, without message IDs, so a message is known
-//! by its time, author, text and amount.
+//! Reads the Live Stream API's reply: the account, recent chat and Rants.
 
 use rill_core::{
     Account, Author, ChatMessage, EventKind, Fragment, MessageKind, Platform, Roles, split_text,

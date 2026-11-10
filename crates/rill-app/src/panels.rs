@@ -114,8 +114,7 @@ impl ChatView {
         cx.notify();
     }
 
-    /// The card for what the pointer is over: a link's preview, an emote shown bigger with its
-    /// name and source, or what a badge means.
+    /// The card for what the pointer is over: a link preview, a bigger emote, or a badge.
     pub(crate) fn render_hover(&self) -> Option<AnyElement> {
         use crate::chat_text::Hover;
         let (_, hover) = self.hover.clone()?;
@@ -178,8 +177,7 @@ impl ChatView {
         }
     }
 
-    /// A card floating by `at` (window coordinates): below it in the top half of the chat,
-    /// above it in the bottom half. `below` is how far down to start when it goes below.
+    /// A card floating by `at`: below it in the chat's top half, above it in the bottom half.
     fn hover_frame(
         &self,
         at: gpui::Point<gpui::Pixels>,
@@ -284,8 +282,7 @@ impl ChatView {
         Some(frame.into_any_element())
     }
 
-    /// The user card, floating over the chat just below (or above) the clicked name. Chat keeps
-    /// moving underneath; opened from the keyboard, it sits at the bottom.
+    /// The user card, by the clicked name, or at the bottom when opened from the keyboard.
     pub(crate) fn render_card(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let Panel::User(card) = &self.panel else {
             return None;
@@ -407,8 +404,7 @@ impl ChatView {
         self.focus_composer(window, cx);
     }
 
-    /// A moderation button on the user card: runs it and leaves everything where it is: the
-    /// card stays open and the chat doesn't jump to the newest message.
+    /// Runs a user card's moderation button, keeping the card open and the chat where it is.
     fn run_card_action(
         &mut self,
         platform: Platform,
@@ -594,8 +590,7 @@ impl ChatView {
                 )
                 .into_any_element(),
         };
-        // A tall panel (Settings) scrolls, with a scroll bar, rather than pushing the chat off
-        // the window. It grows with its content up to 70% of the window.
+        // A tall panel scrolls, up to 70% of the window, rather than pushing chat off.
         let max = window.viewport_size().height * 0.7;
         // Room on the right for the close button, which stays in the corner while this scrolls.
         let content = div().p_3().pr(px(44.)).child(body);
@@ -1080,8 +1075,7 @@ impl ChatView {
             .into_any_element()
     }
 
-    /// Highlights: mentions, first-time chatters and each kind of event, each on or off with its
-    /// color (a swatch or any hex code), and the scroll bar marks.
+    /// Highlight settings: mentions, first-time chatters, events, colors and scroll bar marks.
     fn render_highlight_settings(&self, cx: &mut Context<Self>) -> AnyElement {
         let events_on = self.highlight_on("events");
         let mut rows: Vec<AnyElement> = vec![
@@ -1132,8 +1126,7 @@ impl ChatView {
             .into_any_element()
     }
 
-    /// One highlight: its name, a switch, and with `colored` its swatches and hex box. `dimmed`
-    /// rows (event kinds while events are off) are shown faded.
+    /// One highlight row: name, switch, and with `colored` its swatches and hex box.
     fn highlight_row(
         &self,
         key: &'static str,
@@ -1431,8 +1424,7 @@ impl ChatView {
             .into_any_element()
     }
 
-    /// What turning on first-time chatters costs, how far along it is, and, while it's off, a
-    /// way to delete the list kept from before.
+    /// What first-time chatters cost and how far along they are, or a way to delete the old list.
     fn render_first_chatters_note(&self, cx: &mut Context<Self>) -> AnyElement {
         let on = self.highlight_on("first");
         let mut lines: Vec<String> = Vec::new();
@@ -1711,8 +1703,7 @@ impl ChatView {
             .into_any_element()
     }
 
-    /// Message history: how many chat lines to keep, with what each choice costs and how long it
-    /// lasts at the current pace of chat.
+    /// Message history: how many lines to keep, with each choice's cost and how long it lasts.
     fn render_history_choice(&self, cx: &mut Context<Self>) -> AnyElement {
         use crate::chat_view::HISTORY_CHOICES;
         let current = self.session.feed.capacity();

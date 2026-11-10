@@ -1,7 +1,4 @@
-//! Problems worth telling the Rill team about. A panic is written to the log and to `crash.txt`
-//! in the data folder; the next start offers to send it, with the end of the recent log, to
-//! rill.mobasity.com. Settings can send the log at any time. Nothing is sent unless the user
-//! chooses to.
+//! Crash reports and logs, sent to rill.mobasity.com only when the user chooses to.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -60,8 +57,7 @@ pub(crate) fn install_hook() {
     }));
 }
 
-/// The open-source license notices installed beside Rill, if they're there (an installed Rill;
-/// `scripts/package.ps1` writes them).
+/// The license notices installed beside Rill, when it's an installed copy.
 pub(crate) fn licences() -> Option<PathBuf> {
     let path = std::env::current_exe()
         .ok()?

@@ -26,7 +26,6 @@ use crate::panels::Panel;
 use crate::platforms::Platforms;
 use crate::style;
 
-/// Feed entries kept in memory.
 /// How the view starts: from the command line, not Settings.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ViewOptions {
@@ -41,8 +40,7 @@ pub struct ViewOptions {
 /// Highlighted lines' middles, in pixels from the top of the history, and their colors.
 type MarkLines = Rc<Vec<(f32, u32)>>;
 
-/// The highlight rows in Settings that have a color: mentions, first-time chatters, then each
-/// kind of event.
+/// The Settings highlight rows that have a color: mentions, first-time chatters, then events.
 pub(crate) fn color_keys() -> Vec<&'static str> {
     let mut keys = vec!["mention", "first"];
     keys.extend(rill_core::EventKind::ALL.iter().map(|k| k.key()));
@@ -55,8 +53,7 @@ pub(crate) fn color_keys() -> Vec<&'static str> {
     keys
 }
 
-/// The overlay's highlight row for a kind of event (`o.` and its key). Ad breaks aren't chat
-/// lines, so the overlay doesn't show them.
+/// The overlay's highlight row for a kind of event; ad breaks aren't shown there.
 pub(crate) fn overlay_key(kind: rill_core::EventKind) -> Option<&'static str> {
     use rill_core::EventKind::*;
     Some(match kind {
@@ -91,8 +88,7 @@ const UPDATE_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// The text sizes in Settings, in percent.
 pub const TEXT_SIZES: [u32; 5] = [90, 100, 115, 130, 150];
 
-/// The history choices in Settings: chat lines, a short note, and Rill's memory use with that
-/// history full (measured under simulated chat, so long messages use somewhat more).
+/// History choices for Settings: chat lines, a note, and Rill's memory use when full.
 pub const HISTORY_CHOICES: [(usize, &str, u32); 5] = [
     (1_000, "Lightest", 100),
     (5_000, "Recommended", 110),
@@ -270,8 +266,7 @@ impl ChatView {
             .as_ref()
             .map(|s| s.highlights.clone())
             .unwrap_or_default();
-        // Who has chatted before, only while first-time chatters are on. Simulated chat learns
-        // for a minute, then marks new names.
+        // Who has chatted before, kept only while first-time chatters are on.
         session.set_first_chatters(highlights.first_chatters);
         if platforms.saves() {
             if highlights.first_chatters {
@@ -479,8 +474,7 @@ impl ChatView {
         }
     }
 
-    /// Gives rows not drawn yet an estimated height, so the scroll bar spans the whole history
-    /// (and its marks line up). At most once a second: it touches every row.
+    /// Gives undrawn rows an estimated height, so the scroll bar spans the whole history.
     fn refresh_row_hints(&mut self) {
         if self.rows_need_hints && self.rows_hinted.elapsed() >= Duration::from_secs(1) {
             let estimate = self.row_height_estimate();
@@ -557,8 +551,7 @@ impl ChatView {
         self.set_filter(filter, cx);
     }
 
-    /// Keeps this many chat lines from now on, and saves the choice. A smaller number drops the
-    /// oldest lines at once.
+    /// Keeps this many chat lines from now on, dropping the oldest at once, and saves the choice.
     pub(crate) fn set_history(&mut self, lines: usize, cx: &mut Context<Self>) {
         self.session.feed.set_capacity(lines);
         if self.platforms.saves()
@@ -612,8 +605,7 @@ impl ChatView {
         self.line_color(entry.highlighted, entry.first, entry.event())
     }
 
-    /// A line's highlight: a mention first, then a first-time chatter, then its kind of event,
-    /// each only while it's turned on.
+    /// A line's highlight, if on: a mention, then a first-time chatter, then its kind of event.
     fn line_color(
         &self,
         mention: bool,
@@ -664,8 +656,7 @@ impl ChatView {
         chosen.and_then(|c| style::parse_hex(c)).unwrap_or(default)
     }
 
-    /// Whether a highlight row is on: `mention`, `first`, `events` (all events), `marks`, or a
-    /// kind of event.
+    /// Whether a highlight row (`mention`, `first`, `events`, `marks` or an event kind) is on.
     pub(crate) fn highlight_on(&self, key: &str) -> bool {
         if let Some(k) = key.strip_prefix("o.") {
             let h = &self.overlay_settings.highlights;
@@ -686,8 +677,7 @@ impl ChatView {
         }
     }
 
-    /// Turns a highlight row on or off, and saves it. First-time chatters also start or stop
-    /// keeping the list of who has chatted; off, the list leaves memory but stays on disk.
+    /// Turns a highlight row on or off, and saves it.
     pub(crate) fn set_highlight_on(&mut self, key: &'static str, on: bool, cx: &mut Context<Self>) {
         if let Some(k) = key.strip_prefix("o.") {
             self.set_overlay(
@@ -781,8 +771,7 @@ impl ChatView {
         }
     }
 
-    /// A row's hex box was confirmed (Enter or leaving it): a valid color is used, anything else
-    /// puts the current one back.
+    /// Uses a confirmed hex color, or puts the current one back if it isn't valid.
     fn on_color_input(
         &mut self,
         key: &'static str,
@@ -1163,8 +1152,7 @@ impl ChatView {
         cx.notify();
     }
 
-    /// Marks along the scroll bar where highlighted lines are, so a sub or mention that scrolled
-    /// off while you were away is easy to find.
+    /// Marks on the scroll bar where highlighted lines are.
     fn render_marks(&mut self) -> Option<AnyElement> {
         let h = &self.highlights;
         if !h.scrollbar_marks || !(h.mentions || h.events || h.first_chatters) {
@@ -1187,9 +1175,7 @@ impl ChatView {
         } else {
             track
         };
-        // Where the thumb is when the line is mid-screen (or as near as the ends allow), plus
-        // where the line then sits on screen, mapped into the thumb: the mark is level with the
-        // line whenever it's in view.
+        // Places the mark level with its line whenever that line is in view.
         let place = |y: f32| -> f32 {
             let y = if measured > 0. {
                 y / measured * content
@@ -1239,8 +1225,7 @@ impl ChatView {
         )
     }
 
-    /// Remembers the height of every row the list has measured from the top of the view down,
-    /// so marks can be placed by real heights rather than by counting lines.
+    /// Remembers the measured height of each row in view, so marks use real heights.
     fn record_row_heights(&mut self) {
         let top = self.list.logical_scroll_top().item_ix;
         let end = (top + 120).min(self.session.feed.visible_len());
@@ -1259,9 +1244,7 @@ impl ChatView {
         }
     }
 
-    /// Each highlighted line's middle, in pixels from the top of the history (real heights where
-    /// known, the estimate elsewhere), and the history's whole height. Recomputed a few times a
-    /// second at most: it walks every line.
+    /// Highlighted lines' middles in pixels from the history's top, and its whole height.
     fn mark_offsets(&mut self) -> (MarkLines, f32) {
         if let Some((at, lines, height)) = &self.mark_cache
             && at.elapsed() < Duration::from_millis(300)
@@ -1420,8 +1403,7 @@ impl ChatView {
         cx.notify();
     }
 
-    /// The pointer moved onto a link, emote or badge, or off one (`None`, which only clears
-    /// a card the same `source` showed). A link's preview is fetched after a short pause on it.
+    /// Shows or clears the hover card for a link, emote or badge; links preview after a pause.
     pub(crate) fn set_hover(
         &mut self,
         source: SharedString,
@@ -1500,8 +1482,7 @@ impl ChatView {
         cx.notify();
     }
 
-    /// Turns a platform on (connecting it) or off (disconnecting it and hiding it everywhere). Sign-ins
-    /// are kept either way. The last platform that's on stays on.
+    /// Turns a platform on (connecting) or off (disconnecting and hiding it), keeping sign-ins.
     pub(crate) fn set_platform_on(&mut self, p: Platform, on: bool, cx: &mut Context<Self>) {
         if on == self.platforms.is_on(p) || (!on && self.platforms.on() == [p]) {
             return;
@@ -1787,8 +1768,7 @@ fn load_known_chatters(session: &mut Session) {
     }
 }
 
-/// The dot on a platform's header icon: green working, a green ring waiting, pulsing yellow
-/// connecting, yellow needing attention, red broken, grey not signed in.
+/// The status dot on a platform's header icon.
 fn status_dot(p: Platform, health: Health) -> AnyElement {
     let (color, ring) = match health {
         Health::Good => (style::OK, false),

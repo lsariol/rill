@@ -1,5 +1,4 @@
-//! The window's last size and position, so Rill reopens where it was left. Kept apart from
-//! `settings.json`, which people edit by hand.
+//! The window's last size and position, kept apart from the hand-edited `settings.json`.
 
 use std::path::PathBuf;
 

@@ -1,5 +1,4 @@
-//! Link previews: a page's title, description and picture, fetched when a link is hovered (never
-//! when a message arrives, so only links you point at are visited).
+//! Link previews, fetched only when a link is hovered, never when a message arrives.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -9,8 +8,7 @@ use std::time::Duration;
 use futures::AsyncReadExt as _;
 use gpui::http_client::{AsyncBody, HttpClient, Url};
 
-/// How much of a page is read looking for its preview. Big sites put a lot before it (YouTube's
-/// tags are about 780 KB in).
+/// How much of a page is read for its preview; YouTube's tags are about 780 KB in.
 const MAX_BYTES: usize = 1024 * 1024;
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(5);
 /// Previews kept, newest last.
@@ -57,8 +55,7 @@ impl Previews {
     }
 }
 
-/// Whether a preview may be fetched: web addresses only, and nothing on this computer or the
-/// local network.
+/// Whether a preview may be fetched: web addresses only, never this computer or its network.
 pub(crate) fn may_fetch(url: &str) -> bool {
     let Ok(u) = Url::parse(url) else {
         return false;

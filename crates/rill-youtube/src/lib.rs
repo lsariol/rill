@@ -20,8 +20,7 @@ use tokio::time::{Instant, sleep_until};
 use crate::api::{Api, ApiError};
 use crate::auth::{AuthError, Client, Token};
 
-/// Google hasn't verified Rill's sign-in yet: only Google accounts on its test list can connect,
-/// and sign-ins last 7 days. Rill says so in Accounts and Settings while this is true.
+/// Google hasn't verified Rill yet, so YouTube is limited to test users and 7-day sign-ins.
 pub const LIMITED: bool = true;
 
 const BUILTIN_CLIENT_ID: Option<&str> = option_env!("RILL_YOUTUBE_CLIENT_ID");
@@ -511,8 +510,7 @@ enum StreamEnd {
     Stop(Outcome),
     /// The chat went offline or ended.
     ChatOver,
-    /// The stream closed (`error` is `None`) or failed. `healthy` when it carried chat or stayed
-    /// open a while first.
+    /// The stream closed (`error` is `None`) or failed; `healthy` if it had worked a while.
     Ended {
         error: Option<stream::StreamError>,
         healthy: bool,
@@ -905,8 +903,7 @@ mod sessions {
         )
     }
 
-    /// Starts a session whose chat stream sends one message from `@viewer`; returns its events, a
-    /// request sender, and whether it stopped cleanly.
+    /// Starts a session streaming one message from `@viewer`: its events, requests and outcome.
     async fn start(
         base: &str,
     ) -> (
@@ -1082,8 +1079,7 @@ mod sessions {
         V3DataLiveChatMessageService, V3DataLiveChatMessageServiceServer,
     };
 
-    /// A fake gRPC chat stream: its first `fails` calls fail with `fail`; others send `replies`,
-    /// then stay open.
+    /// A fake chat stream whose first `fails` calls fail with `fail`; then it sends `replies`.
     struct FakeStream {
         replies: Vec<pb::LiveChatMessageListResponse>,
         fail: Option<tonic::Code>,

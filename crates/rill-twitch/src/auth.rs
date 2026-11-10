@@ -4,8 +4,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// The scopes Rill asks for: read and send chat, moderate, run polls, change chat modes, post
-/// announcements and give shoutouts.
+/// The scopes Rill asks for: chat, moderation, polls, chat modes, announcements, shoutouts.
 pub const SCOPES: &str = "user:read:chat user:write:chat moderator:manage:banned_users \
 moderator:manage:chat_messages channel:manage:polls user:read:moderated_channels \
 moderator:manage:chat_settings moderator:manage:announcements moderator:manage:shoutouts \

@@ -1,6 +1,4 @@
-//! Puts Rill's icon and version details into the Windows executable: the icon for Explorer, the
-//! taskbar and the window; the name, publisher and version for the file's Properties and Task
-//! Manager.
+//! Puts Rill's icon, name, publisher and version into the Windows executable.
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/app/rill.ico");

@@ -7,10 +7,7 @@ pub mod window;
 
 use std::path::PathBuf;
 
-/// Where Rill keeps settings, logs and caches.
-///
-/// `RILL_DATA_DIR` overrides it (test scripts point it into `.dev/`). Otherwise debug builds use
-/// the repository's `.dev/` folder, so a local run touches nothing outside it.
+/// Where Rill keeps settings, logs and caches (`RILL_DATA_DIR`, or `.dev/` in debug builds).
 pub fn data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("RILL_DATA_DIR").filter(|d| !d.is_empty()) {
         return PathBuf::from(dir);

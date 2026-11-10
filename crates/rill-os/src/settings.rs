@@ -78,12 +78,10 @@ pub struct Highlights {
     pub event_color: String,
     /// Marks on the scroll bar where highlighted lines are.
     pub scrollbar_marks: bool,
-    /// A user's first message in the channel (once Rill has watched it a week). Off by default:
-    /// it keeps a list of everyone who chats in `known-chatters.txt`.
+    /// Highlights a user's first message in the channel; keeps a list of everyone who chats.
     pub first_chatters: bool,
     pub first_chatter_color: String,
-    /// Colors for each kind of event (`subscription`, `gift`, `raid`, `money`, `redemption`,
-    /// `follow`, `announcement`, `ad_break`, `other`); missing ones use Rill's.
+    /// Colors for each kind of event, by key; missing ones use Rill's.
     pub event_colors: std::collections::BTreeMap<String, String>,
     /// Kinds of event that aren't highlighted.
     pub events_off: Vec<String>,

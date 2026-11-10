@@ -1,6 +1,4 @@
-//! A load test with real chat: reads a public Twitch chat firehose (newline JSON in catquery's
-//! `jsonBasic` shape) and spreads its messages across the four platforms. Read-only, and nothing
-//! it receives is kept.
+//! A load test with real chat from a public Twitch firehose, spread across four platforms.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -119,16 +117,14 @@ fn platform_for(channel: &str) -> Platform {
 /// Badges by `set/version`: their title and image.
 type Badges = HashMap<String, (String, String)>;
 
-/// Where badge images come from without a Twitch sign-in: ivr.fi mirrors Twitch's global and
-/// channel badges (custom subscriber badges included).
+/// Badge images without a Twitch sign-in: ivr.fi mirrors Twitch's global and channel badges.
 const BADGES_API: &str = "https://api.ivr.fi/v2/twitch/badges";
 /// Channels' badge sets kept before starting over; the firehose covers thousands of channels.
 const CHANNELS_KEPT: usize = 3_000;
 /// The pause between channel lookups, so a busy firehose doesn't flood the service.
 const LOOKUP_GAP: Duration = Duration::from_millis(500);
 
-/// Badge images for the firehose: Twitch's global set, and each channel's own set, looked up
-/// the first time that channel is seen. Until then its badges use the global images.
+/// Badge images for the firehose: Twitch's global set, and each channel's once it's seen.
 #[derive(Clone)]
 struct BadgeImages {
     known: Arc<Mutex<Known>>,
@@ -245,8 +241,7 @@ fn badge_sets(v: &Value) -> Badges {
     out
 }
 
-/// One firehose line as a chat message and its channel's Twitch ID; `None` when it isn't a
-/// chat line.
+/// One firehose line as a chat message and its channel's Twitch ID, if it's a chat line.
 pub fn parse(line: &str) -> Option<(ChatMessage, String)> {
     let v: Value = serde_json::from_str(line).ok()?;
     let s = |v: &Value| v.as_str().unwrap_or_default().to_string();

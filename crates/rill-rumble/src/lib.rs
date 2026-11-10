@@ -1,5 +1,4 @@
-//! Rill's Rumble adapter. Reads live chat and Rants by polling Rumble's Live Stream API with the
-//! private link from the user's Rumble account; read-only, since the API can't send.
+//! Rill's Rumble adapter: reads chat and Rants by polling the Live Stream API; read-only.
 
 pub mod data;
 

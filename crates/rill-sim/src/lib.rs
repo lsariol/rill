@@ -1,5 +1,4 @@
-//! Simulated chat traffic: an adapter that behaves like a busy platform, for prototyping and benchmarks.
-//! [`FirehoseAdapter`] replays real chat from a public firehose instead, for load tests.
+//! Simulated chat for prototyping and benchmarks, and a firehose replay for load tests.
 
 mod firehose;
 

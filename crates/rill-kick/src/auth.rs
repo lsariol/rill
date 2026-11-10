@@ -1,5 +1,4 @@
-//! Kick sign-in: browser consent with PKCE and a fixed loopback redirect, then a token exchange
-//! either directly (with the app's client secret) or through Rill's sign-in helper.
+//! Kick sign-in: browser consent with PKCE, then a token exchange, direct or via Rill's website.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;

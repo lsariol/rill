@@ -129,9 +129,7 @@ pub struct Session {
     known: Known,
 }
 
-/// Who has chatted before, kept across runs by the app. A platform's first-time highlights wait
-/// until Rill has watched it for `learn_ms`, so day one doesn't mark everyone. Nothing is noted
-/// unless `tracking` is on.
+/// Who has chatted before, for first-time chatter highlights.
 #[derive(Debug)]
 struct Known {
     tracking: bool,
@@ -388,8 +386,7 @@ impl Session {
         }
     }
 
-    /// Whether an incoming message of ours echoes a send; marks the send delivered if so, and
-    /// takes the echo's emotes when it shows more than Rill found.
+    /// Whether a message of ours echoes a send, marking it delivered and taking its emotes if so.
     fn is_own_echo(&mut self, m: &ChatMessage) -> bool {
         let (platform, id) = (m.platform, m.id.as_str());
         if let Some(&seq) = self.suppress.get(&(platform, id.to_string())) {
@@ -516,8 +513,7 @@ impl Session {
         }
     }
 
-    /// Handles the composer while replying to a message: text goes to that platform as a reply;
-    /// commands run as usual there.
+    /// Submits while replying: text goes as a reply to that message; commands run as usual.
     pub fn submit_reply(
         &mut self,
         input: &str,
@@ -717,8 +713,7 @@ impl Session {
         self.known.ids.len()
     }
 
-    /// Sets how long a platform is watched before first-time chatters are marked (0 marks
-    /// every new name at once, for simulated chat).
+    /// How long a platform is watched before first-time chatters are marked (0 marks at once).
     pub fn set_learning(&mut self, ms: i64) {
         self.known.learn_ms = ms;
     }
@@ -756,8 +751,7 @@ impl Session {
         now_ms - since >= k.learn_ms
     }
 
-    /// Names seen in chat on the destination's platforms that start with `prefix`, ignoring
-    /// case, alphabetically, each with the platforms it was seen on.
+    /// Chatters' names on the destination's platforms starting with `prefix`, alphabetically.
     pub fn user_choices(
         &self,
         destination: Destination,
@@ -768,9 +762,7 @@ impl Session {
         self.chatters.starting_with(&platforms, prefix, limit)
     }
 
-    /// Emotes whose names start with `prefix` (any case) on the destination's platforms: every
-    /// platform you can send to for All. A platform's own emotes come before 7TV's and the like,
-    /// then shorter names; each name once, with every platform it works on.
+    /// Emotes starting with `prefix` on the destination's platforms, platform emotes first.
     pub fn emote_choices(
         &self,
         destination: Destination,

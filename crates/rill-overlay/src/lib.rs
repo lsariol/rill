@@ -1,5 +1,4 @@
-//! The chat overlay: a page on 127.0.0.1 that OBS shows as a Browser source. Rill pushes each
-//! chat line to it over a WebSocket. Only this computer can reach it, and nothing leaves it.
+//! The chat overlay: a page on 127.0.0.1 for OBS, fed chat lines over a WebSocket.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -171,8 +170,7 @@ fn lock(shared: &Mutex<Shared>) -> MutexGuard<'_, Shared> {
     shared.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The page's settings: the look, and the color of each highlight that's on (`mention`,
-/// `first`, or a kind of event), as `#rrggbb`.
+/// The page's settings: the look, and each enabled highlight's `#rrggbb` color.
 pub fn config(settings: &Settings, highlights: &[(String, String)]) -> String {
     let hl: serde_json::Map<String, Value> = highlights
         .iter()
@@ -190,9 +188,7 @@ pub fn config(settings: &Settings, highlights: &[(String, String)]) -> String {
     .to_string()
 }
 
-/// The overlay's copy of a feed line, or `None` when the overlay leaves it out (notices,
-/// and commands or bots when those are hidden). `own` names the signed-in account on a platform,
-/// for the user's own messages.
+/// The overlay's copy of a feed line, or `None` when the overlay leaves it out.
 pub fn line(
     entry: &Entry,
     settings: &Settings,
@@ -377,8 +373,7 @@ async fn handle(
     let _ = sock.shutdown().await;
 }
 
-/// The request's head, read without taking it off the socket (the WebSocket handshake reads it
-/// again). `None` for anything that isn't a small HTTP request.
+/// Reads the request's head without taking it off the socket; `None` unless a small HTTP request.
 async fn peek_head(sock: &TcpStream) -> Option<String> {
     let mut buf = [0u8; 8192];
     for _ in 0..200 {

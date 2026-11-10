@@ -1,5 +1,4 @@
-//! Generates the gRPC client for YouTube's live chat stream from the vendored proto, with protox
-//! (a Rust protobuf compiler), so building needs no `protoc`. The server half is for tests only.
+//! Generates the gRPC client for YouTube's live chat from the vendored proto, without `protoc`.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proto = "proto/stream_list.proto";

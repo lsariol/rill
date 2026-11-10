@@ -152,8 +152,7 @@ impl EventSink {
     }
 }
 
-/// Runs adapters, each on its own Tokio runtime so stopping one ends everything it started, and
-/// routes requests to them.
+/// Runs each adapter on its own Tokio runtime and routes requests to them.
 pub struct Hub {
     /// For work that isn't a platform's, such as the image HTTP client.
     runtime: Runtime,
@@ -205,8 +204,7 @@ impl Hub {
         Ok(())
     }
 
-    /// Stops a platform's adapter and every task it started, without waiting. Events it had
-    /// already queued may still arrive.
+    /// Stops a platform's adapter and all its tasks, without waiting.
     pub fn stop(&mut self, platform: Platform) -> bool {
         match self.running.remove(&platform) {
             Some(r) => {

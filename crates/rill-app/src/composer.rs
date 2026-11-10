@@ -1,5 +1,4 @@
-//! The composer: destination outline and label, Tab cycling, `/`, `:` and `@` autocomplete and
-//! submitting.
+//! The composer: destination, Tab cycling, autocomplete and submitting.
 
 use std::ops::Range;
 
@@ -54,8 +53,7 @@ pub(crate) enum Suggestion {
     User(Vec<Platform>, String),
 }
 
-/// The `:name` being typed just before the cursor: its byte range and the name so far, which is
-/// empty for a `:` alone.
+/// The `:name` being typed before the cursor: its byte range and the name so far.
 pub(crate) fn emote_token(text: &str, cursor: usize) -> Option<(Range<usize>, &str)> {
     token(text, cursor, ':')
 }
@@ -110,8 +108,7 @@ fn position_at(head: &str) -> Position {
     Position::new(line, column)
 }
 
-/// The plain word just before the cursor, for Tab completion: not a `:name`, `/command` or
-/// `@mention`, and with nothing but space after the cursor.
+/// The plain word before the cursor for Tab completion, if only space follows the cursor.
 pub(crate) fn tab_word(text: &str, cursor: usize) -> Option<(usize, &str)> {
     if !text.is_char_boundary(cursor.min(text.len())) {
         return None;
@@ -172,8 +169,7 @@ pub fn init(cx: &mut App) {
 }
 
 impl ChatView {
-    /// Commands matching the composer text, emotes for a `:name` or people for an `@name` before
-    /// the cursor, unless dismissed with Esc.
+    /// Commands, emotes or people matching the composer text, unless dismissed with Esc.
     fn completions(&self, cx: &App) -> Vec<Suggestion> {
         let state = self.input.read(cx);
         let text = state.value();
@@ -291,8 +287,7 @@ impl ChatView {
         cx.notify();
     }
 
-    /// Tab on a word: puts in the next (or previous) emote or name starting with it,
-    /// alphabetically. Returns false when there's no word or nothing to put in.
+    /// Tab on a word: puts in the next or previous matching emote or name; false if none.
     fn cycle_word(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let (text, cursor) = {
             let state = self.input.read(cx);

@@ -1,5 +1,4 @@
-//! BetterTTV and FrankerFaceZ: global sets and Twitch channels' sets. Neither changes live here;
-//! they load when a chat connects.
+//! BetterTTV and FrankerFaceZ global and channel sets, loaded when a chat connects.
 
 use std::collections::HashMap;
 
