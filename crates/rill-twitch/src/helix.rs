@@ -550,6 +550,24 @@ impl Helix {
             .map(|_| ())
     }
 
+    /// Subscribes to every moderation action in the channel, by anyone (`channel.moderate` v2).
+    pub async fn subscribe_moderate(
+        &self,
+        session_id: &str,
+        broadcaster: &str,
+        moderator: &str,
+    ) -> Result<(), HelixError> {
+        let body = json!({
+            "type": "channel.moderate",
+            "version": "2",
+            "condition": {"broadcaster_user_id": broadcaster, "moderator_user_id": moderator},
+            "transport": {"method": "websocket", "session_id": session_id},
+        });
+        self.call(Method::POST, "/eventsub/subscriptions", &[], Some(body))
+            .await
+            .map(|_| ())
+    }
+
     /// Subscribes an EventSub WebSocket session to one event type.
     pub async fn subscribe(
         &self,

@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use crate::command::format_duration;
 use crate::{ChatMessage, Platform};
 
 /// An action a platform may support.
@@ -297,6 +298,83 @@ pub enum Event {
         source: EmoteSource,
         emotes: Vec<EmoteOption>,
     },
+    /// A moderation action the platform carried out, by anyone.
+    Moderation {
+        platform: Platform,
+        moderation: Moderation,
+    },
+}
+
+/// Who did what to whom: a ban, a timeout, a new moderator and the like.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Moderation {
+    /// Who did it, as shown; `None` when the platform doesn't say.
+    pub moderator: Option<String>,
+    /// The user acted on, as shown, and their login and ID where known.
+    pub user: String,
+    pub user_login: String,
+    pub user_id: String,
+    pub action: ModAction,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModAction {
+    Ban,
+    Unban,
+    Timeout { seconds: u32 },
+    Untimeout,
+    Mod,
+    Unmod,
+    Vip,
+    Unvip,
+}
+
+impl Moderation {
+    /// The chat line for it, such as `Mobasity banned Foo. Reason: spam`.
+    pub fn line(&self) -> String {
+        let user = &self.user;
+        let mut line = match &self.moderator {
+            Some(who) => match self.action {
+                ModAction::Ban => format!("{who} banned {user}."),
+                ModAction::Unban => format!("{who} unbanned {user}."),
+                ModAction::Timeout { seconds } => {
+                    format!("{who} timed out {user} for {}.", format_duration(seconds))
+                }
+                ModAction::Untimeout => format!("{who} removed {user}'s timeout."),
+                ModAction::Mod => format!("{who} modded {user}."),
+                ModAction::Unmod => format!("{who} unmodded {user}."),
+                ModAction::Vip => format!("{who} VIP'd {user}."),
+                ModAction::Unvip => format!("{who} unVIP'd {user}."),
+            },
+            None => match self.action {
+                ModAction::Ban => format!("{user} was banned."),
+                ModAction::Unban => format!("{user} was unbanned."),
+                ModAction::Timeout { seconds } => {
+                    format!("{user} was timed out for {}.", format_duration(seconds))
+                }
+                ModAction::Untimeout => format!("{user}'s timeout was removed."),
+                ModAction::Mod => format!("{user} was modded."),
+                ModAction::Unmod => format!("{user} was unmodded."),
+                ModAction::Vip => format!("{user} was VIP'd."),
+                ModAction::Unvip => format!("{user} was unVIP'd."),
+            },
+        };
+        if let Some(r) = self
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+        {
+            line.push_str(&format!(" Reason: {r}"));
+        }
+        line
+    }
+
+    /// Whether it removes the user's messages.
+    pub fn clears(&self) -> bool {
+        matches!(self.action, ModAction::Ban | ModAction::Timeout { .. })
+    }
 }
 
 impl Event {
@@ -312,7 +390,8 @@ impl Event {
             | Event::Notice { platform, .. }
             | Event::Done { platform, .. }
             | Event::Attention { platform, .. }
-            | Event::Emotes { platform, .. } => *platform,
+            | Event::Emotes { platform, .. }
+            | Event::Moderation { platform, .. } => *platform,
         }
     }
 }

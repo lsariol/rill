@@ -16,7 +16,7 @@ pub use adapter::{Adapter, AdapterIo, Enrich, EventSink, Hub};
 pub use destination::Destination;
 pub use event::{
     Account, Action, Capabilities, ChatMode, Command, ConnectionStatus, EmoteOption, EmoteSource,
-    Event, Level, Request, RequestId, SignInPrompt, UserRef,
+    Event, Level, ModAction, Moderation, Request, RequestId, SignInPrompt, UserRef,
 };
 pub use feed::{Entry, Feed, Filter, Item};
 pub use message::{

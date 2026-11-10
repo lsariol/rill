@@ -4,12 +4,13 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// The scopes Rill asks for: chat, moderation, polls, chat modes, announcements, shoutouts.
+/// The scopes Rill asks for: chat, moderation and its events, polls, modes, announcements, shoutouts.
 pub const SCOPES: &str = "user:read:chat user:write:chat moderator:manage:banned_users \
 moderator:manage:chat_messages channel:manage:polls user:read:moderated_channels \
 moderator:manage:chat_settings moderator:manage:announcements moderator:manage:shoutouts \
 channel:manage:broadcast channel:edit:commercial channel:read:ads channel:read:redemptions \
-user:read:emotes";
+user:read:emotes moderator:read:blocked_terms moderator:read:unban_requests \
+moderator:read:warnings moderator:read:moderators moderator:read:vips";
 
 const DEVICE_URL: &str = "https://id.twitch.tv/oauth2/device";
 const TOKEN_URL: &str = "https://id.twitch.tv/oauth2/token";

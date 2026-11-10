@@ -12,7 +12,8 @@ use std::time::Duration;
 use rill_core::backoff::Backoff;
 use rill_core::{
     Account, Action, Adapter, AdapterIo, Capabilities, Command, ConnectionStatus, Event, EventSink,
-    Level, Platform, Request, SignInPrompt, UserRef, adapter::BoxFuture, now_ms,
+    Level, ModAction, Moderation, Platform, Request, SignInPrompt, UserRef, adapter::BoxFuture,
+    now_ms,
 };
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Instant, sleep_until};
@@ -116,9 +117,16 @@ struct Live {
     chat: Arc<Mutex<Option<String>>>,
     /// Lowercased name → channel ID, for `/ban name`.
     authors: Arc<Mutex<HashMap<String, String>>>,
-    /// Channel ID → ban ID, to unban.
-    bans: Arc<Mutex<HashMap<String, String>>>,
+    /// Channel ID → ban ID and whether it's a timeout, to lift it.
+    bans: Arc<Mutex<HashMap<String, (String, bool)>>>,
+    /// The signed-in channel's name, for lines about its own actions.
+    me: Arc<Mutex<String>>,
+    /// Channels Rill banned or timed out lately; YouTube's later event about them adds no line.
+    told: Arc<Mutex<HashMap<String, Instant>>>,
 }
+
+/// How long YouTube's own event about Rill's ban is expected to take.
+const TOLD_FOR: Duration = Duration::from_secs(600);
 
 async fn run(adapter: YouTubeAdapter, io: AdapterIo) {
     let AdapterIo {
@@ -294,6 +302,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
     let account = loop {
         match api.my_channel().await {
             Ok((id, title)) => {
+                *live.me.lock().await = title.clone();
                 break Account {
                     id,
                     login: title.clone(),
@@ -560,6 +569,7 @@ async fn stream_chat(ctx: &mut Ctx, api: &Api, live: &Live, f: &mut Follow) -> S
                     got_chat |= !page.events.is_empty();
                     remember_authors(live, &page.events).await;
                     for e in page.events {
+                        let e = already_told(live, e).await;
                         if !ctx.events.send(e).await {
                             return StreamEnd::Stop(Outcome::Stop);
                         }
@@ -609,6 +619,54 @@ async fn quota_pause(ctx: &mut Ctx, api: &Api, live: &Live, account: &Account) -
         .notice(Level::Error, ApiError::Quota.message())
         .await;
     pause(ctx, api, live, Instant::now() + QUOTA_WAIT).await
+}
+
+/// YouTube's ban event for a ban Rill just reported only removes the messages, with no second line.
+async fn already_told(live: &Live, e: Event) -> Event {
+    let Event::Moderation {
+        platform,
+        moderation,
+    } = e
+    else {
+        return e;
+    };
+    let mut told = live.told.lock().await;
+    told.retain(|_, at| at.elapsed() < TOLD_FOR);
+    if told.remove(&moderation.user_id).is_some() {
+        return Event::UserCleared {
+            platform,
+            user_id: moderation.user_id,
+        };
+    }
+    Event::Moderation {
+        platform,
+        moderation,
+    }
+}
+
+/// Reports a moderation action Rill carried out, since YouTube doesn't say who did it.
+async fn tell(live: &Live, events: &EventSink, user: &UserRef, id: &str, action: ModAction) {
+    let name = user.login.trim_start_matches('@').to_string();
+    if matches!(action, ModAction::Ban | ModAction::Timeout { .. }) {
+        live.told
+            .lock()
+            .await
+            .insert(id.to_string(), Instant::now());
+    }
+    let me = live.me.lock().await.clone();
+    events
+        .send(Event::Moderation {
+            platform: Platform::YouTube,
+            moderation: Moderation {
+                moderator: (!me.is_empty()).then_some(me),
+                user_login: name.to_lowercase(),
+                user: name,
+                user_id: id.to_string(),
+                action,
+                reason: None,
+            },
+        })
+        .await;
 }
 
 async fn remember_authors(live: &Live, events: &[Event]) {
@@ -687,24 +745,42 @@ async fn run_request(
         Command::Delete { message_id } => api.delete(&message_id).await.map(|_| None),
         Command::Timeout { user, seconds, .. } => {
             let id = resolve(live, &user).await?;
-            api.ban(&chat, &id, Some(seconds)).await.map(|_| None)
+            let ban = api.ban(&chat, &id, Some(seconds)).await;
+            if let Ok(ban_id) = &ban {
+                live.bans
+                    .lock()
+                    .await
+                    .insert(id.clone(), (ban_id.clone(), true));
+                tell(live, events, &user, &id, ModAction::Timeout { seconds }).await;
+            }
+            ban.map(|_| None)
         }
         Command::Ban { user, .. } => {
             let id = resolve(live, &user).await?;
             let ban = api.ban(&chat, &id, None).await;
             if let Ok(ban_id) = &ban {
-                live.bans.lock().await.insert(id, ban_id.clone());
+                live.bans
+                    .lock()
+                    .await
+                    .insert(id.clone(), (ban_id.clone(), false));
+                tell(live, events, &user, &id, ModAction::Ban).await;
             }
             ban.map(|_| None)
         }
         Command::Unban { user } => {
             let id = resolve(live, &user).await?;
-            let Some(ban_id) = live.bans.lock().await.get(&id).cloned() else {
-                return Err("YouTube: Rill can only unban users it banned this session. Unban others in YouTube Studio.".into());
+            let Some((ban_id, timeout)) = live.bans.lock().await.get(&id).cloned() else {
+                return Err("YouTube: Rill can only lift bans and timeouts it gave this session. Lift others in YouTube Studio.".into());
             };
             let r = api.unban(&ban_id).await;
             if r.is_ok() {
                 live.bans.lock().await.remove(&id);
+                let action = if timeout {
+                    ModAction::Untimeout
+                } else {
+                    ModAction::Unban
+                };
+                tell(live, events, &user, &id, action).await;
             }
             r.map(|_| None)
         }
@@ -1029,6 +1105,13 @@ mod sessions {
             ),
             "{seen:#?}"
         );
+        // YouTube doesn't say who banned whom, so Rill tells its own actions.
+        let said = |seen: &[Event], want: &str| {
+            seen.iter().any(
+                |e| matches!(e, Event::Moderation { moderation, .. } if moderation.line() == want),
+            )
+        };
+        assert!(said(&seen, "Me banned Viewer."), "{seen:#?}");
         request(&tx, 3, Command::Unban { user: viewer }).await;
         let seen = until(&mut rx, |e| done(e, 3)).await;
         assert!(
@@ -1041,6 +1124,7 @@ mod sessions {
             ),
             "{seen:#?}"
         );
+        assert!(said(&seen, "Me unbanned Viewer."), "{seen:#?}");
 
         drop(tx);
         assert!(

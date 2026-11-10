@@ -181,12 +181,17 @@ fn plan(s: &mut Session, inv: &Invocation, args: Args) -> Submitted {
     } else {
         format!("{n} users")
     };
+    let people = if n == 1 {
+        "1 person".to_string()
+    } else {
+        format!("{n} people")
+    };
     let (ask, done) = match args.seconds {
         Some(secs) => (
             format!("Time out {users} for {}", format_duration(secs)),
-            format!("Timed out {users} for {}", format_duration(secs)),
+            format!("timed out {people} for {}", format_duration(secs)),
         ),
-        None => (format!("Ban {users}"), format!("Banned {users}")),
+        None => (format!("Ban {users}"), format!("banned {people}")),
     };
     let mut prompt = format!(
         "{ask} who said \"{}\" in the last {window}? {}.",
@@ -282,7 +287,7 @@ pub(super) fn unnuke(s: &mut Session, _: &Invocation) -> Submitted {
     Submitted::Confirm {
         prompt,
         batch: Batch {
-            label: format!("Lifted the last nuke for {users}"),
+            label: format!("lifted the last nuke for {users}"),
             items,
             undoable: false,
         },

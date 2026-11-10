@@ -10,7 +10,8 @@ use futures_util::{SinkExt, StreamExt};
 use rill_core::backoff::Backoff;
 use rill_core::{
     Account, Action, Adapter, AdapterIo, Capabilities, Command, ConnectionStatus, Event, EventSink,
-    Level, Platform, Request, SignInPrompt, UserRef, adapter::BoxFuture, now_ms,
+    Level, ModAction, Moderation, Platform, Request, SignInPrompt, UserRef, adapter::BoxFuture,
+    now_ms,
 };
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
@@ -93,6 +94,8 @@ struct Ctx {
     http: reqwest::Client,
     client_id: String,
     channel: Option<String>,
+    /// Twitch reports moderation actions; otherwise Rill tells its own.
+    moderate_events: bool,
 }
 
 /// Why a connected session ended.
@@ -146,6 +149,7 @@ async fn run(adapter: TwitchAdapter, io: AdapterIo) {
         http,
         client_id,
         channel: adapter.channel,
+        moderate_events: false,
     };
 
     let mut failure: Option<String> = None;
@@ -536,12 +540,16 @@ async fn answer(ctx: &mut Ctx, live: Option<(&Helix, &Identity)>, req: Request) 
             None
         }
         (_, Some((helix, id))) => {
+            let tell = (!ctx.moderate_events)
+                .then(|| own_moderation(&req.command, &id.me.display_name))
+                .flatten();
             spawn_request(
                 ctx.events.clone(),
                 helix.clone(),
                 id.channel.id.clone(),
                 id.me.id.clone(),
                 req,
+                tell,
             );
             None
         }
@@ -557,12 +565,55 @@ async fn answer(ctx: &mut Ctx, live: Option<(&Helix, &Identity)>, req: Request) 
     }
 }
 
-/// Runs a Helix request in its own task so chat keeps flowing.
-fn spawn_request(events: EventSink, helix: Helix, channel: String, me: String, req: Request) {
+/// A ban, timeout or unban by the signed-in account, as its line, for when Twitch won't report it.
+fn own_moderation(command: &Command, me: &str) -> Option<Moderation> {
+    let (user, action, reason) = match command {
+        Command::Ban { user, reason } => (user, ModAction::Ban, reason.clone()),
+        Command::Timeout {
+            user,
+            seconds,
+            reason,
+        } => (
+            user,
+            ModAction::Timeout { seconds: *seconds },
+            reason.clone(),
+        ),
+        Command::Unban { user } => (user, ModAction::Unban, None),
+        _ => return None,
+    };
+    Some(Moderation {
+        moderator: Some(me.to_string()),
+        user: user.login.clone(),
+        user_login: user.login.to_lowercase(),
+        user_id: user.id.clone().unwrap_or_default(),
+        action,
+        reason,
+    })
+}
+
+/// Runs a Helix request in its own task so chat keeps flowing; `tell` is its line once it works.
+fn spawn_request(
+    events: EventSink,
+    helix: Helix,
+    channel: String,
+    me: String,
+    req: Request,
+    tell: Option<Moderation>,
+) {
     tokio::spawn(async move {
         let result = run_request(&helix, &channel, &me, req.command).await;
-        if let Err(e) = &result {
-            tracing::warn!(err = %e, "Twitch request failed");
+        match &result {
+            Err(e) => tracing::warn!(err = %e, "Twitch request failed"),
+            Ok(_) => {
+                if let Some(moderation) = tell {
+                    events
+                        .send(Event::Moderation {
+                            platform: Platform::Twitch,
+                            moderation,
+                        })
+                        .await;
+                }
+            }
         }
         events.done(req.id, result).await;
     });
@@ -727,6 +778,18 @@ async fn connection(
                 Err(e) => tracing::warn!(kind, err = %e.message(), "Twitch subscription failed"),
             }
         }
+        // Moderation lines need scopes older sign-ins lack; without them Rill tells its own.
+        ctx.moderate_events = match helix
+            .subscribe_moderate(&session_id, &id.channel.id, &id.me.id)
+            .await
+        {
+            Ok(()) => true,
+            Err(HelixError::Unauthorized) => return Ws::Expired,
+            Err(e) => {
+                tracing::warn!(err = %e.message(), "Twitch moderation events unavailable");
+                false
+            }
+        };
         // Ad breaks and redemptions are only for the broadcaster's own channel.
         if id.me.id == id.channel.id {
             for (kind, version) in eventsub::BROADCASTER_SUBSCRIPTIONS {
@@ -992,6 +1055,7 @@ mod sessions {
             http,
             client_id: "client".into(),
             channel: None,
+            moderate_events: false,
         };
         (ctx, helix, rx, tx)
     }
@@ -1053,9 +1117,11 @@ mod sessions {
         assert!(matches!(end, Ws::Moved));
         assert_eq!(url, second);
         let subs = subscriptions(&seen);
+        let mut want = eventsub::SUBSCRIPTIONS.to_vec();
+        want.push("channel.moderate");
         assert_eq!(
             subs.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
-            eventsub::SUBSCRIPTIONS
+            want
         );
         assert!(subs.iter().all(|(_, s)| s == "s1"));
         let events = drained(&mut rx);
@@ -1091,7 +1157,7 @@ mod sessions {
         assert!(matches!(end, Ws::Lost(_)));
         assert_eq!(
             subscriptions(&seen).len(),
-            eventsub::SUBSCRIPTIONS.len(),
+            eventsub::SUBSCRIPTIONS.len() + 1,
             "a moved session keeps its subscriptions"
         );
         let sent: Vec<Value> = seen
