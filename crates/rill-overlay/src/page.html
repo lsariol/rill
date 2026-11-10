@@ -5,7 +5,7 @@
 <title>Rill chat overlay</title>
 <style>
 /* Change the look with Custom CSS in the OBS source's properties: .line, .name, .text,
-   .badge, .icon, .emote, .mention, and .hl for highlighted lines (their color is --hl). */
+   .badge, .chip, .icon, .emote, .mention, and .hl for highlighted lines (their color is --hl). */
 :root { --font: 18px; --backing: rgba(18, 18, 22, 0.72); }
 html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
 body { font: 600 var(--font)/1.45 "Segoe UI", system-ui, -apple-system, sans-serif; color: #fff; }
@@ -17,7 +17,10 @@ body.backing .line { background: var(--backing); text-shadow: none; }
 body.backing .line.hl { background: color-mix(in srgb, var(--hl) 30%, var(--backing)); }
 .line.gone { opacity: 0; }
 .icon, .badge { height: 1em; vertical-align: -0.12em; margin-right: 0.3em; }
-body.no-icons .icon, body.no-badges .badge { display: none; }
+.chip { display: inline-flex; align-items: center; justify-content: center; width: 1em; height: 1em;
+  border-radius: 0.18em; vertical-align: -0.12em; margin-right: 0.3em; color: #fff; text-shadow: none; }
+.chip b { font-size: 0.62em; font-weight: 800; }
+body.no-icons .icon, body.no-badges .badge, body.no-badges .chip { display: none; }
 .name { font-weight: 700; }
 .action .text, .event .text { font-style: italic; }
 .mention { font-weight: 700; }
@@ -69,9 +72,21 @@ function add(m) {
   line.dataset.kinds = (m.kinds || []).join(" ");
   for (const p of m.p || []) line.append(image("/icons/" + p + ".svg", "icon", p));
   for (const b of m.badges || []) {
-    const img = image(b.u, "badge", b.t);
-    img.title = b.t;
-    line.append(img);
+    if (b.u) {
+      const img = image(b.u, "badge", b.t);
+      img.title = b.t;
+      line.append(img);
+    } else if (b.l) {
+      // A role without an image, such as Kick's: a lettered square like Rill's.
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.title = b.t || "";
+      if (/^#[0-9a-f]{6}$/i.test(b.c || "")) chip.style.background = b.c;
+      const letter = document.createElement("b");
+      letter.textContent = String(b.l).slice(0, 1);
+      chip.append(letter);
+      line.append(chip);
+    }
   }
   if (m.name) {
     const name = document.createElement("span");
