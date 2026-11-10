@@ -5550,7 +5550,7 @@ dependencies = [
 
 [[package]]
 name = "rill-app"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "chrono",
  "embed-resource",
@@ -5580,7 +5580,7 @@ dependencies = [
 
 [[package]]
 name = "rill-core"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "tokio",
  "tracing",
@@ -5588,7 +5588,7 @@ dependencies = [
 
 [[package]]
 name = "rill-emotes"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "futures-util",
  "reqwest",
@@ -5603,7 +5603,7 @@ dependencies = [
 
 [[package]]
 name = "rill-kick"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -5624,7 +5624,7 @@ dependencies = [
 
 [[package]]
 name = "rill-os"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "keyring",
  "serde",
@@ -5634,7 +5634,7 @@ dependencies = [
 
 [[package]]
 name = "rill-overlay"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "futures-util",
  "rill-core",
@@ -5647,7 +5647,7 @@ dependencies = [
 
 [[package]]
 name = "rill-rumble"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "chrono",
  "reqwest",
@@ -5662,7 +5662,7 @@ dependencies = [
 
 [[package]]
 name = "rill-sim"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "futures-util",
  "reqwest",
@@ -5676,7 +5676,7 @@ dependencies = [
 
 [[package]]
 name = "rill-twitch"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "chrono",
  "futures-util",
@@ -5693,7 +5693,7 @@ dependencies = [
 
 [[package]]
 name = "rill-youtube"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
