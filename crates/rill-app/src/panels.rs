@@ -1843,60 +1843,79 @@ impl ChatView {
             n => format!("{n} messages in the feed"),
         };
         let can = |action| self.session.can(p, action);
-        let mut actions: Vec<(SharedString, Plan, bool)> = Vec::new();
-        if let Some(id) = card
-            .message_id
-            .clone()
-            .filter(|_| !deleted && can(Action::Delete))
-        {
-            actions.push((
-                "Delete message".into(),
-                Plan::Run {
-                    label: format!("Delete {name}'s message"),
-                    command: Command::Delete { message_id: id },
-                },
-                false,
-            ));
+        let run = |label: String, command: Command| Plan::Run { label, command };
+        // Unban, the timeouts and Ban in one row, as moderators know it from other chat tools.
+        let mut moderation: Vec<gpui::AnyElement> = Vec::new();
+        if can(Action::Unban) {
+            let plan = run(
+                format!("Unban {name}"),
+                Command::Unban { user: user.clone() },
+            );
+            moderation.push(
+                mod_button("unban", "Unban", style::OK)
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new("Lift a ban or a timeout")
+                            .build(window, cx)
+                    })
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.run_card_action(p, plan.clone(), window, cx);
+                    }))
+                    .into_any_element(),
+            );
         }
         if can(Action::Timeout) {
-            for secs in [60, 600, 3600] {
-                actions.push((
-                    format!("Timeout {}", format_duration(secs)).into(),
-                    Plan::Run {
-                        label: format!("Time out {name} for {}", format_duration(secs)),
-                        command: Command::Timeout {
-                            user: user.clone(),
-                            seconds: secs,
-                            reason: None,
-                        },
+            // Kick's shortest timeout is a minute.
+            let shortest = if p == Platform::Kick { 60 } else { 1 };
+            for secs in CARD_TIMEOUTS.into_iter().filter(|s| *s >= shortest) {
+                let label = format_duration(secs);
+                let plan = run(
+                    format!("Time out {name} for {label}"),
+                    Command::Timeout {
+                        user: user.clone(),
+                        seconds: secs,
+                        reason: None,
                     },
-                    false,
-                ));
+                );
+                moderation.push(
+                    mod_button(("timeout", secs as usize), label, style::TEXT)
+                        .on_click(cx.listener(move |view, _, window, cx| {
+                            view.run_card_action(p, plan.clone(), window, cx);
+                        }))
+                        .into_any_element(),
+                );
             }
         }
         if can(Action::Ban) {
-            actions.push((
-                "Ban".into(),
-                Plan::Run {
-                    label: format!("Ban {name}"),
-                    command: Command::Ban {
-                        user: user.clone(),
-                        reason: None,
+            let plan = run(
+                format!("Ban {name}"),
+                Command::Ban {
+                    user: user.clone(),
+                    reason: None,
+                },
+            );
+            moderation.push(
+                mod_button("ban", "Ban", style::ERROR)
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.run_card_action(p, plan.clone(), window, cx);
+                    }))
+                    .into_any_element(),
+            );
+        }
+        let delete = card
+            .message_id
+            .clone()
+            .filter(|_| !deleted && can(Action::Delete))
+            .map(|id| {
+                let plan = run(
+                    format!("Delete {name}'s message"),
+                    Command::Delete { message_id: id },
+                );
+                mod_button("delete", "Delete message", style::TEXT).on_click(cx.listener(
+                    move |view, _, window, cx| {
+                        view.run_card_action(p, plan.clone(), window, cx);
                     },
-                },
-                true,
-            ));
-        }
-        if can(Action::Unban) {
-            actions.push((
-                "Unban".into(),
-                Plan::Run {
-                    label: format!("Unban {name}"),
-                    command: Command::Unban { user: user.clone() },
-                },
-                false,
-            ));
-        }
+                ))
+            });
         let reply = card
             .message_id
             .clone()
@@ -1908,26 +1927,16 @@ impl ChatView {
                     author: a.display_name.clone(),
                     text: card.text.clone(),
                 };
-                Button::new("reply")
-                    .xsmall()
-                    .primary()
-                    .label("Reply")
-                    .on_click(cx.listener(move |view, _, window, cx| {
+                mod_button("reply", "Reply", style::LINK).on_click(cx.listener(
+                    move |view, _, window, cx| {
                         view.start_reply(replying.clone(), window, cx);
-                    }))
+                    },
+                ))
             });
-        let no_actions =
-            actions.is_empty() && reply.is_none() && self.session.connected().contains(&p);
-        let buttons = actions
-            .into_iter()
-            .enumerate()
-            .map(|(i, (label, plan, danger))| {
-                let b = Button::new(("mod", i)).xsmall().label(label);
-                let b = if danger { b.danger() } else { b.outline() };
-                b.on_click(cx.listener(move |view, _, window, cx| {
-                    view.run_card_action(p, plan.clone(), window, cx);
-                }))
-            });
+        let no_actions = moderation.is_empty()
+            && reply.is_none()
+            && delete.is_none()
+            && self.session.connected().contains(&p);
         let login =
             (!a.login.eq_ignore_ascii_case(&a.display_name)).then(|| format!("({})", a.login));
         div()
@@ -1947,6 +1956,7 @@ impl ChatView {
                             .child(name.clone()),
                     )
                     .children(login.map(|l| div().text_color(rgb(style::MUTED)).child(l)))
+                    .child(self.copy_button("copy-name", "Copy name", a.display_name.clone(), cx))
                     .when(!roles.is_empty(), |d| {
                         d.child(
                             div()
@@ -1956,13 +1966,28 @@ impl ChatView {
                         )
                     }),
             )
+            .when(!a.id.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(rgb(style::MUTED))
+                        .child(format!("ID: {}", a.id))
+                        .child(self.copy_button("copy-id", "Copy ID", a.id.clone(), cx)),
+                )
+            })
+            .when(!moderation.is_empty(), |d| {
+                d.child(div().flex().flex_wrap().gap_1().children(moderation))
+            })
             .child(
                 div()
                     .flex()
                     .flex_wrap()
                     .gap_1()
                     .children(reply)
-                    .children(buttons)
+                    .children(delete)
                     .when(!self.session.connected().contains(&p), |d| {
                         d.child(
                             div().text_xs().text_color(rgb(style::FAINT)).child(format!(
@@ -2116,4 +2141,28 @@ fn switch_row(
                 .accessibility_label(name)
                 .on_click(on_click),
         )
+}
+
+/// The timeouts the user card offers, in seconds.
+const CARD_TIMEOUTS: [u32; 8] = [1, 30, 60, 300, 1800, 3600, 86_400, 604_800];
+
+/// A user card button in `color`, lighter under the pointer and lighter still while pressed.
+fn mod_button(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+    color: u32,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .px_2()
+        .py_0p5()
+        .rounded_sm()
+        .border_1()
+        .border_color(style::hsla_alpha(color, 0.6))
+        .text_xs()
+        .text_color(rgb(color))
+        .cursor_pointer()
+        .hover(|s| s.bg(style::hsla_alpha(color, 0.18)))
+        .active(|s| s.bg(style::hsla_alpha(color, 0.38)))
+        .child(label.into())
 }
