@@ -1,5 +1,4 @@
-//! `/set title`, `/set category` (and `/title`, `/category`): change the stream's details on every
-//! platform that can, or only the composer's destination, with one summary line.
+//! `/set title` and `/set category`: change the stream's details on one or every platform.
 
 use super::usage;
 use crate::command::Invocation;

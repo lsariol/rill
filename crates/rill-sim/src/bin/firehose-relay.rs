@@ -1,8 +1,4 @@
-//! Splits one chat firehose connection into any number of local ones, so several load tests can
-//! run at once against a source that allows one connection per address.
-//!
-//! Usage: firehose-relay [--upstream <wss url>] [--port <n>]
-//! Each test connects to ws://127.0.0.1:<port> (any path) and gets every message from then on.
+//! Splits one chat firehose connection into many local ones, for parallel load tests.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

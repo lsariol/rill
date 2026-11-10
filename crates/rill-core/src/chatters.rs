@@ -37,8 +37,7 @@ impl Chatters {
         self.names.retain(|(p, _), _| *p != platform);
     }
 
-    /// Names on the platforms that start with `prefix` (ignoring case), alphabetically, each
-    /// once with every platform it was seen on.
+    /// Names starting with `prefix`, any case, alphabetically, with their platforms.
     pub fn starting_with(
         &self,
         platforms: &[Platform],
@@ -84,8 +83,7 @@ impl Chatters {
     }
 }
 
-/// The name a mention uses: the display name when it's just the login in other capitals,
-/// otherwise the login (a display name in another script can't be typed as a mention).
+/// The name a mention uses: the display name if it's the login in other capitals, else the login.
 fn mention_name(a: &Author) -> &str {
     if a.display_name.to_lowercase() == a.login.to_lowercase() || a.login.is_empty() {
         a.display_name.trim()

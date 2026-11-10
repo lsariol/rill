@@ -1,5 +1,4 @@
-//! `/nuke`, `/meganuke` and `/unnuke`: act on everyone who said a phrase recently, such as a bot
-//! raid, after one confirmation.
+//! `/nuke`, `/meganuke` and `/unnuke`: act on everyone who recently said a phrase.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -44,7 +43,6 @@ fn unit_duration(w: &str) -> Option<u32> {
 }
 
 /// Reads `[platform] <phrase> [duration] [lookback]`; a ban takes only a lookback.
-/// A phrase in quotes may contain anything, including a platform name or a duration.
 fn parse(args: &str, timed: bool) -> Option<Args> {
     let mut rest = args.trim();
     let mut platform = None;
@@ -211,8 +209,7 @@ fn plan(s: &mut Session, inv: &Invocation, args: Args) -> Submitted {
     }
 }
 
-/// Everyone who said `phrase` (any case) since `since_ms`, per platform, leaving out the
-/// broadcaster, moderators, VIPs and the signed-in account.
+/// Who said `phrase` since `since_ms`, per platform, except broadcaster, mods, VIPs and self.
 fn said(
     s: &Session,
     platforms: &[Platform],

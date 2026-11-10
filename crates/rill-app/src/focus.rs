@@ -1,6 +1,4 @@
-//! Keyboard focus: Tab moves between controls, F6 jumps between the composer and the rest of the
-//! window, Esc comes back to the composer. In the composer Tab switches the destination, so Esc
-//! with nothing to close, then Tab, leaves it.
+//! Keyboard focus: Tab between controls, F6 between the composer and the rest, Esc back.
 
 use gpui::{App, Context, Focusable, KeyBinding, Window, actions};
 
@@ -112,8 +110,7 @@ impl ChatView {
         }
     }
 
-    /// Esc: closes the search bar when in it; else back to the composer, or, already there with
-    /// nothing to close, lets Tab leave it.
+    /// Esc: closes search, or goes back to the composer, or lets Tab leave the composer.
     pub(crate) fn on_to_composer(
         &mut self,
         _: &ToComposer,

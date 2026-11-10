@@ -1,7 +1,4 @@
-//! Slash commands: parsing, autocomplete and the command table.
-//!
-//! Each command is one [`CommandSpec`] in [`COMMANDS`](crate::commands::COMMANDS): its name, help
-//! text, the platform permission it needs, and the function that runs it.
+//! Slash commands: parsing, autocomplete and the command table ([`CommandSpec`]).
 
 use crate::Action;
 use crate::destination::Destination;

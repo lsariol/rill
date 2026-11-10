@@ -1,5 +1,4 @@
-//! Keyboard access to messages: F6 moves into the feed, the arrow keys pick a message, and Enter
-//! opens its user card.
+//! Keyboard access to messages: F6 into the feed, arrows to pick, Enter for the user card.
 
 use gpui::{App, Context, KeyBinding, Window, actions};
 use rill_core::Item;

@@ -1,6 +1,4 @@
-//! YouTube's streaming live chat (`liveChatMessages.streamList`), over gRPC. One call costs the
-//! same quota as one poll but stays open and delivers every message, so a stream-hour costs a few
-//! calls instead of hundreds. Replies are turned into the REST shape [`crate::chat`] reads.
+//! YouTube's streaming live chat (`streamList`) over gRPC, in the shape [`crate::chat`] reads.
 
 use std::time::Duration;
 
@@ -262,8 +260,7 @@ mod tests {
         assert!(chat::page(&to_json(&r)).offline);
     }
 
-    /// Against YouTube itself, with a token it must refuse:
-    /// `cargo test -p rill-youtube live_endpoint -- --ignored`.
+    /// Against YouTube itself, with a token it must refuse; run with `--ignored`.
     #[tokio::test]
     #[ignore = "talks to youtube.googleapis.com"]
     async fn live_endpoint_answers_and_refuses_a_bad_token() {

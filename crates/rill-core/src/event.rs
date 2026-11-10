@@ -88,8 +88,7 @@ pub enum ConnectionStatus {
     },
     /// Stopped trying; the reason says how to fix it.
     Failed(String),
-    /// Signed in, but there's nothing to read yet (YouTube before you go live); the reason says
-    /// what it's waiting for.
+    /// Signed in, with nothing to read yet; the reason says what it's waiting for.
     Waiting(String),
 }
 
@@ -287,14 +286,12 @@ pub enum Event {
         request: RequestId,
         result: Result<Option<String>, String>,
     },
-    /// The connection works but something needs the user: an older sign-in without newer
-    /// permissions, for example. `None` clears it.
+    /// Something needs the user though the connection works; `None` clears it.
     Attention {
         platform: Platform,
         text: Option<String>,
     },
-    /// Emotes the signed-in user can use on a platform, from one source; replaces that source's
-    /// last list.
+    /// Emotes the user can use from one source on a platform, replacing that source's last list.
     Emotes {
         platform: Platform,
         source: EmoteSource,

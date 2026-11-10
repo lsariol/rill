@@ -1,5 +1,4 @@
-//! Rill's Kick adapter. Reads a channel's chat from Kick's unofficial socket (Centrifugo or Pusher,
-//! whichever Kick offers), and, once signed in, sends and moderates through Kick's official API.
+//! Rill's Kick adapter: reads chat from Kick's unofficial socket, sends through the official API.
 
 pub mod api;
 pub mod auth;
@@ -38,8 +37,7 @@ const NO_APP: &str = "Kick: sign-in isn't set up in this build. Add kick.client_
 const BUILTIN_CLIENT_ID: Option<&str> = option_env!("RILL_KICK_CLIENT_ID");
 const BUILTIN_AUTH_HELPER: Option<&str> = option_env!("RILL_KICK_AUTH_HELPER");
 
-/// What a signed-in account can do on Kick. Moderation is offered on any channel; Kick refuses it
-/// (with a clear message) where the account isn't a moderator.
+/// What a signed-in Kick account can do; Kick refuses moderation where it isn't a moderator.
 const SIGNED_IN: Capabilities = Capabilities::of(&[
     Action::Ads,
     Action::Title,
@@ -953,8 +951,7 @@ async fn deliver(ctx: &Ctx, channel: &Channel, event: &str, data: &Value) -> boo
     }
 }
 
-/// Channels besides the chatroom that carry subs, gifts, hosts and redemptions, as Kick's own
-/// website follows them. A refusal on one of these never ends the chat connection.
+/// Channels with subs, gifts, hosts and redemptions; a refusal on one never ends the chat.
 fn event_channels(channel: &Channel) -> Vec<String> {
     let mut out = vec![format!("chatroom_{}", channel.chatroom_id)];
     if let Some(id) = channel.channel_id {
@@ -1599,8 +1596,7 @@ mod official_api {
 
     type Log = Arc<StdMutex<Vec<Seen>>>;
 
-    /// A fake Kick API. The first /users call gets a 401 and the first ban a 429, to exercise
-    /// refresh and rate-limit waits.
+    /// A fake Kick API whose first /users call gets a 401 and first ban a 429.
     async fn kick_server() -> (String, Log) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

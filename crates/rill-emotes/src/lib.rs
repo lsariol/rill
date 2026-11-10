@@ -1,5 +1,4 @@
-//! Third-party emotes for chat: loads 7TV's global set and a channel's set, keeps the channel's
-//! set current over 7TV's event socket, and swaps emote names in messages for images.
+//! Third-party emotes: 7TV's global and channel sets, kept current, swapped into messages.
 
 mod live;
 mod others;
@@ -20,8 +19,7 @@ use tokio::task::JoinHandle;
 pub use others::RoomBadges;
 pub use seven_tv::Config;
 
-/// A Twitch channel's custom moderator and VIP badges, from FrankerFaceZ. None when it has none
-/// or FrankerFaceZ can't be reached.
+/// A Twitch channel's custom moderator and VIP badges from FrankerFaceZ, if any.
 pub async fn room_badges(http: &reqwest::Client, twitch_id: &str) -> RoomBadges {
     let base = Config::default().ffz;
     others::ffz_room_badges(http, &base, twitch_id)
@@ -194,8 +192,7 @@ impl Drop for Follow {
     }
 }
 
-/// Starts loading global emotes, and a channel's when given. With `events`, the usable list goes
-/// to the composer whenever it changes. Call on a Tokio runtime.
+/// Starts loading global and channel emotes, sending the usable list to `events` as it changes.
 pub fn follow(
     http: reqwest::Client,
     cfg: Config,

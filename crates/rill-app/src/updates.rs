@@ -1,6 +1,4 @@
-//! Rill updating itself, with Velopack: it checks the update feed now and then, downloads a new
-//! version in the background, and installs it the next time Rill starts (or right away with
-//! "Restart to update"). Only an installed Rill updates; a development run says so and stops.
+//! Rill updating itself with Velopack: downloads in the background, installs on restart.
 
 use std::sync::Arc;
 
@@ -10,8 +8,7 @@ use velopack::{UpdateCheck, UpdateInfo, UpdateManager, VelopackApp};
 /// Where releases are published.
 pub const FEED: &str = "https://rill.mobasity.com/updates";
 
-/// Lets Velopack handle install, update and uninstall steps it starts Rill for (it exits then),
-/// and installs an update downloaded last time. Must be the first thing `main` does.
+/// Runs Velopack's install and update hooks; must be the first thing `main` does.
 pub fn hooks() {
     VelopackApp::build().run();
 }

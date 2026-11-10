@@ -258,8 +258,7 @@ fn main() -> ExitCode {
         search::init(cx);
         navigate::init(cx);
 
-        // Reopen where the window was left, if that's still on a screen; simulated runs (and
-        // benchmarks) always start the same way.
+        // Reopen where the window was left; simulated runs always start the same way.
         let saved = (!options.sim)
             .then(rill_os::window::load)
             .flatten()

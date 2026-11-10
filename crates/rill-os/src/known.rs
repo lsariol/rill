@@ -1,6 +1,4 @@
-//! `known-chatters.txt` in the data folder: who has chatted in the user's channels before, for
-//! first-time chatter highlights. One line per user (`twitch<TAB>12345`), plus when Rill
-//! started watching each platform (`since<TAB>twitch<TAB>1731100000000`). Lines are only added.
+//! `known-chatters.txt`: who has chatted before, and when Rill started watching each platform.
 
 use std::io::Write;
 use std::path::PathBuf;

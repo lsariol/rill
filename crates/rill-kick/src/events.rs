@@ -91,9 +91,7 @@ pub fn to_event(event: &str, data: &Value, sub_badges: &SubBadges) -> Option<Eve
     }
 }
 
-/// The emotes in Kick's emote list for a channel (kick.com/emotes/<channel>): the channel's own,
-/// Kick's global ones and its emoji, by name with their IDs. Read loosely: any object with a
-/// numeric `id` and a `name` inside an `emotes` list counts.
+/// The emotes in a channel's Kick emote list, by name with their IDs, read loosely.
 pub fn emote_list(v: &Value) -> Vec<(String, u64)> {
     fn walk(v: &Value, inside_emotes: bool, out: &mut Vec<(String, u64)>) {
         match v {

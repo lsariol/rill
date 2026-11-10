@@ -465,9 +465,7 @@ impl Helix {
         Ok(out)
     }
 
-    /// Subscribes an EventSub WebSocket session to one event type.
-    /// The emotes the user can use in `channel`: global, subscriptions, follower emotes and the
-    /// like. Pages through Twitch's list, up to a few thousand.
+    /// The emotes the user can use in `channel`, paged through Twitch's list.
     pub async fn user_emotes(
         &self,
         user: &str,
@@ -552,6 +550,7 @@ impl Helix {
             .map(|_| ())
     }
 
+    /// Subscribes an EventSub WebSocket session to one event type.
     pub async fn subscribe(
         &self,
         session_id: &str,

@@ -1,6 +1,4 @@
-//! A chat line's text as one selectable run. Names and links are clickable, and emote images are
-//! drawn over space kept for them in the text, so selecting and copying run straight through them
-//! (an emote copies as its name).
+//! A chat line as one selectable run of text, with clickable names and links, and emotes.
 
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
@@ -28,8 +26,7 @@ pub(crate) enum Target {
     Emote(usize),
 }
 
-/// What the pointer is over, for the card that floats beside it. `at` is where the thing
-/// starts, in window coordinates.
+/// What the pointer is over, and where it starts (`at`, in window coordinates).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Hover {
     Link {
@@ -53,8 +50,7 @@ pub(crate) enum Hover {
 
 /// Called with what was clicked and where, in window coordinates.
 pub(crate) type ClickFn = Rc<dyn Fn(&Target, Point<Pixels>, &mut Window, &mut App)>;
-/// Called when the pointer moves onto something with a hover card, or off it (`None`). The
-/// first argument names where it came from, so leaving one thing can't hide the next one's card.
+/// Shows (`Some`) or clears (`None`) the hover card of the thing named by the first argument.
 pub(crate) type HoverFn = Rc<dyn Fn(SharedString, Option<Hover>, &mut Window, &mut App)>;
 
 /// A piece of the line.
@@ -141,8 +137,7 @@ impl Parts {
     }
 }
 
-/// The address a word links to, and how much of the word is the link (trailing punctuation
-/// isn't). Only web addresses: `http://`, `https://` or `www.`.
+/// The web address in a word, and how much of the word it covers (not trailing punctuation).
 pub(crate) fn link_in(word: &str) -> Option<(String, usize)> {
     let lower = word.to_ascii_lowercase();
     let web = lower.starts_with("https://") || lower.starts_with("http://");
@@ -553,8 +548,7 @@ impl Element for ChatText {
         let line = layout.line_height();
         let mut images = Vec::new();
         for image in &self.built.images {
-            // The slot's second character, so a slot starting a wrapped line isn't placed at the
-            // end of the line before.
+            // The slot's second character, so a slot that starts a wrapped line stays on that line.
             let Some(next) = layout.position_for_index(image.at.start + 1) else {
                 continue;
             };

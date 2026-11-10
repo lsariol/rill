@@ -29,8 +29,7 @@ pub use session::{Health, Outgoing, Plan, Session, Submitted};
 /// Rill's website: downloads, updates, and the pages a sign-in ends on.
 pub const WEBSITE: &str = "https://rill.mobasity.com";
 
-/// The reply a sign-in's local redirect gets: the browser goes on to the website's page for how
-/// it ended (`platform` as in its address, such as `kick`).
+/// The reply to a sign-in's local redirect: on to the website's page for how it ended.
 pub fn sign_in_reply(platform: &str, ok: bool) -> String {
     let page = if ok { "signed-in" } else { "sign-in-failed" };
     format!(
