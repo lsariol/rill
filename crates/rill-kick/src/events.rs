@@ -1,8 +1,8 @@
 //! Kick's chat events, which both of its sockets carry, turned into Rill events.
 
 use rill_core::{
-    Author, Badge, ChatMessage, Event, EventKind, Fragment, MessageKind, Platform, ReplyRef, Roles,
-    merge_text, split_text,
+    Author, Badge, ChatMessage, Event, EventKind, Fragment, MessageKind, ModAction, Moderation,
+    Platform, ReplyRef, Roles, merge_text, split_text,
 };
 use serde_json::Value;
 
@@ -44,10 +44,22 @@ pub fn to_event(event: &str, data: &Value, sub_badges: &SubBadges) -> Option<Eve
                 message_id: id,
             })
         }
-        "UserBannedEvent" => Some(Event::UserCleared {
-            platform,
-            user_id: s(&data["user"]["id"]),
-        }),
+        "UserBannedEvent" => {
+            let action = match data["duration"].as_u64() {
+                Some(minutes) if data["permanent"].as_bool() != Some(true) => ModAction::Timeout {
+                    seconds: (minutes * 60).min(u32::MAX as u64) as u32,
+                },
+                _ => ModAction::Ban,
+            };
+            Some(moderation(data, "banned_by", action))
+        }
+        "UserUnbannedEvent" => {
+            let action = match data["permanent"].as_bool() {
+                Some(false) => ModAction::Untimeout,
+                _ => ModAction::Unban,
+            };
+            Some(moderation(data, "unbanned_by", action))
+        }
         "ChatroomClearEvent" => Some(Event::Cleared { platform }),
         "SubscriptionEvent" | "ChannelSubscriptionEvent" => {
             let months = data["months"].as_u64().unwrap_or(0);
@@ -136,7 +148,6 @@ const QUIET: &[&str] = &[
     "LuckyUsersWhoGotGiftSubscriptionsEvent",
     "PinnedMessageCreatedEvent",
     "PinnedMessageDeletedEvent",
-    "UserUnbannedEvent",
     "ChatroomUpdatedEvent",
     "StreamerIsLive",
     "StopStreamBroadcast",
@@ -156,6 +167,7 @@ pub fn is_known(event: &str) -> bool {
                 | "MessageDeletedEvent"
                 | "ChatMessageDeletedEvent"
                 | "UserBannedEvent"
+                | "UserUnbannedEvent"
                 | "ChatroomClearEvent"
                 | "SubscriptionEvent"
                 | "ChannelSubscriptionEvent"
@@ -163,6 +175,32 @@ pub fn is_known(event: &str) -> bool {
                 | "StreamHostEvent"
                 | "RewardRedeemedEvent"
         )
+}
+
+/// A ban or unban: `user` is who it was done to, `by` names the field with who did it.
+fn moderation(data: &Value, by: &str, action: ModAction) -> Event {
+    let text = |v: &Value| match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        _ => String::new(),
+    };
+    let user = &data["user"];
+    let name = text(&user["username"]);
+    let moderator = text(&data[by]["username"]);
+    Event::Moderation {
+        platform: Platform::Kick,
+        moderation: Moderation {
+            moderator: (!moderator.is_empty()).then_some(moderator),
+            user_login: [text(&user["slug"]), name.to_lowercase()]
+                .into_iter()
+                .find(|l| !l.is_empty())
+                .unwrap_or_default(),
+            user: name,
+            user_id: text(&user["id"]),
+            action,
+            reason: data["reason"].as_str().map(str::to_string),
+        },
+    }
 }
 
 /// A sub, gift, host or redemption as an event line by `name`.
@@ -349,14 +387,24 @@ mod tests {
                 message_id: "m1".into()
             })
         );
-        let ban = json!({"id": "x", "user": {"id": 42, "username": "b"}, "permanent": true});
-        assert_eq!(
-            to_event("App\\Events\\UserBannedEvent", &ban, &Vec::new()),
-            Some(Event::UserCleared {
-                platform: Platform::Kick,
-                user_id: "42".into()
-            })
-        );
+        let ban = json!({"id": "x", "user": {"id": 42, "username": "B", "slug": "b"},
+            "banned_by": {"id": 7, "username": "ModFoo"}, "permanent": false, "duration": 10});
+        let Some(Event::Moderation { moderation, .. }) =
+            to_event("App\\Events\\UserBannedEvent", &ban, &Vec::new())
+        else {
+            panic!("expected a moderation event");
+        };
+        assert_eq!(moderation.user_id, "42");
+        assert_eq!(moderation.user_login, "b");
+        assert_eq!(moderation.line(), "ModFoo timed out B for 10m.");
+        let unban = json!({"id": "x", "user": {"id": 42, "username": "B"},
+            "unbanned_by": {"username": "ModFoo"}, "permanent": true});
+        let Some(Event::Moderation { moderation, .. }) =
+            to_event("App\\Events\\UserUnbannedEvent", &unban, &Vec::new())
+        else {
+            panic!("expected a moderation event");
+        };
+        assert_eq!(moderation.line(), "ModFoo unbanned B.");
     }
     #[test]
     fn reads_the_emote_list_and_encodes_names_when_sending() {

@@ -1,6 +1,6 @@
 //! The chat core: applies adapter events to the feed and turns composer input into requests.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use crate::command::{self, Invocation, Parsed};
 use crate::event::SignInPrompt;
@@ -95,6 +95,7 @@ pub struct Batch {
 #[derive(Debug, Clone)]
 struct BatchState {
     label: String,
+    platforms: BTreeSet<Platform>,
     remaining: usize,
     failed: usize,
     first_error: Option<String>,
@@ -102,10 +103,57 @@ struct BatchState {
 
 #[derive(Debug, Clone)]
 enum Pending {
-    Send { seq: u64 },
-    Action { label: String },
-    Batch { id: u64 },
+    Send {
+        seq: u64,
+    },
+    Action {
+        label: String,
+        then: Then,
+    },
+    Batch {
+        id: u64,
+        /// A user whose messages go once the platform confirms.
+        clears: Option<String>,
+    },
 }
+
+/// What a finished action shows.
+#[derive(Debug, Clone)]
+enum Then {
+    /// A ✓ line.
+    Notice,
+    /// Nothing: the platform's moderation event tells it. Removes a user's or one message.
+    Quiet {
+        clears: Option<String>,
+        deletes: Option<String>,
+    },
+    /// A ✓ line, and the sign-in prompt goes.
+    SignedIn,
+}
+
+impl Then {
+    fn of(command: &Command) -> Then {
+        match command {
+            Command::Ban { user, .. } | Command::Timeout { user, .. } => Then::Quiet {
+                clears: user.id.clone(),
+                deletes: None,
+            },
+            Command::Unban { .. } => Then::Quiet {
+                clears: None,
+                deletes: None,
+            },
+            Command::Delete { message_id } => Then::Quiet {
+                clears: None,
+                deletes: Some(message_id.clone()),
+            },
+            Command::SignIn => Then::SignedIn,
+            _ => Then::Notice,
+        }
+    }
+}
+
+/// How long a nuke's users stay out of moderation lines, so one line tells the whole nuke.
+const QUIET_MS: i64 = 5 * 60_000;
 
 /// The chat core's state.
 #[derive(Debug, Default)]
@@ -121,6 +169,8 @@ pub struct Session {
     next_batch: u64,
     /// The users the last nuke hit, for `/unnuke`.
     pub(crate) last_nuke: Vec<(Platform, UserRef)>,
+    /// Users in a recent nuke, by platform and `id:…` or lowercase `login:…`, until when.
+    quiet: HashMap<(Platform, String), i64>,
     /// Emotes the user can use, by platform and source.
     emotes: BTreeMap<(Platform, EmoteSource), Vec<EmoteOption>>,
     /// Everyone seen in chat, for `@` mentions and Tab.
@@ -301,7 +351,28 @@ impl Session {
             } => {
                 self.emotes.insert((platform, source), emotes);
             }
+            Event::Moderation {
+                platform,
+                moderation,
+            } => self.apply_moderation(platform, moderation, now_ms),
         }
+    }
+
+    /// Removes a banned or timed-out user's messages, and tells it in one line unless a nuke
+    /// already does.
+    fn apply_moderation(&mut self, platform: Platform, m: crate::Moderation, now_ms: i64) {
+        if m.clears() && !m.user_id.is_empty() {
+            self.feed.mark_user_deleted(platform, &m.user_id);
+        }
+        self.quiet.retain(|_, until| *until > now_ms);
+        let id = format!("id:{}", m.user_id);
+        let login = format!("login:{}", m.user_login.to_lowercase());
+        let nuked = (!m.user_id.is_empty() && self.quiet.contains_key(&(platform, id)))
+            || (!m.user_login.is_empty() && self.quiet.contains_key(&(platform, login)));
+        if nuked {
+            return;
+        }
+        self.notice(Some(platform), Level::Info, &m.line(), now_ms);
     }
 
     fn apply_status(
@@ -314,12 +385,8 @@ impl Session {
     ) {
         let link = self.links.entry(platform).or_default();
         let before = std::mem::replace(&mut link.status, status.clone());
-        if matches!(
-            status,
-            ConnectionStatus::Connected
-                | ConnectionStatus::Failed(_)
-                | ConnectionStatus::Disconnected
-        ) {
+        // Anything but still connecting means the sign-in page is done with.
+        if status != ConnectionStatus::Connecting {
             link.sign_in = None;
         }
         link.capabilities = capabilities;
@@ -372,16 +439,37 @@ impl Session {
                     }
                 });
             }
-            Some(Pending::Action { label }) => match result {
-                Ok(_) => self.notice(Some(platform), Level::Info, &format!("✓ {label}"), now_ms),
-                Err(e) => self.notice(
+            Some(Pending::Action { label, then }) => match (result, then) {
+                (Ok(_), Then::Quiet { clears, deletes }) => {
+                    // Gone at once, though the platform's own event may come later.
+                    if let Some(user) = clears {
+                        self.feed.mark_user_deleted(platform, &user);
+                    }
+                    if let Some(id) = deletes {
+                        self.feed.mark_deleted(platform, &id);
+                    }
+                }
+                (Ok(_), then) => {
+                    if matches!(then, Then::SignedIn) {
+                        self.links.entry(platform).or_default().sign_in = None;
+                    }
+                    self.notice(Some(platform), Level::Info, &format!("✓ {label}"), now_ms);
+                }
+                (Err(e), _) => self.notice(
                     Some(platform),
                     Level::Error,
                     &format!("✗ {label}: {e}"),
                     now_ms,
                 ),
             },
-            Some(Pending::Batch { id }) => self.batch_done(id, result.map(|_| ()), now_ms),
+            Some(Pending::Batch { id, clears }) => {
+                if result.is_ok()
+                    && let Some(user) = clears
+                {
+                    self.feed.mark_user_deleted(platform, &user);
+                }
+                self.batch_done(id, result.map(|_| ()), now_ms)
+            }
             None => {}
         }
     }
@@ -674,8 +762,9 @@ impl Session {
             Plan::PollDialog => Submitted::PollDialog(platform),
             Plan::Run { command, label } => {
                 let id = self.request_id();
+                let then = Then::of(&command);
                 self.pending
-                    .insert((platform, id), Pending::Action { label });
+                    .insert((platform, id), Pending::Action { label, then });
                 Submitted::Send(vec![Outgoing {
                     platform,
                     request: Request { id, command },
@@ -818,11 +907,25 @@ impl Session {
             id,
             BatchState {
                 label: batch.label.clone(),
+                platforms: batch.items.iter().map(|(p, _)| *p).collect(),
                 remaining: batch.items.len(),
                 failed: 0,
                 first_error: None,
             },
         );
+        for (p, c) in &batch.items {
+            if let Command::Timeout { user, .. }
+            | Command::Ban { user, .. }
+            | Command::Unban { user } = c
+            {
+                if let Some(id) = &user.id {
+                    self.quiet
+                        .insert((*p, format!("id:{id}")), now_ms + QUIET_MS);
+                }
+                let login = format!("login:{}", user.login.to_lowercase());
+                self.quiet.insert((*p, login), now_ms + QUIET_MS);
+            }
+        }
         if batch.undoable {
             self.last_nuke = batch
                 .items
@@ -835,13 +938,17 @@ impl Session {
                 })
                 .collect();
         }
-        self.notice(None, Level::Info, &format!("{}…", batch.label), now_ms);
         let out = batch
             .items
             .into_iter()
             .map(|(platform, command)| {
                 let rid = self.request_id();
-                self.pending.insert((platform, rid), Pending::Batch { id });
+                let clears = match &command {
+                    Command::Timeout { user, .. } | Command::Ban { user, .. } => user.id.clone(),
+                    _ => None,
+                };
+                self.pending
+                    .insert((platform, rid), Pending::Batch { id, clears });
                 Outgoing {
                     platform,
                     request: Request { id: rid, command },
@@ -866,12 +973,28 @@ impl Session {
         let Some(b) = self.batches.remove(&id) else {
             return;
         };
+        // One platform's icon, or Rill's when it spanned several.
+        let platform = match b.platforms.iter().collect::<Vec<_>>()[..] {
+            [only] => Some(*only),
+            _ => None,
+        };
+        let who = b
+            .platforms
+            .iter()
+            .find_map(|p| self.links.get(p)?.account.as_ref())
+            .map(|a| a.display_name.clone())
+            .unwrap_or_else(|| "You".into());
         match b.first_error {
-            None => self.notice(None, Level::Info, &format!("✓ {}", b.label), now_ms),
+            None => self.notice(
+                platform,
+                Level::Info,
+                &format!("{who} {}.", b.label),
+                now_ms,
+            ),
             Some(e) => self.notice(
-                None,
+                platform,
                 Level::Warn,
-                &format!("! {}: {} failed. First error: {e}", b.label, b.failed),
+                &format!("{who} {}. {} failed: {e}", b.label, b.failed),
                 now_ms,
             ),
         }
@@ -896,6 +1019,86 @@ mod tests {
         Action::Unban,
         Action::Poll,
     ]);
+
+    fn ban(moderator: &str, user: &str) -> crate::Moderation {
+        crate::Moderation {
+            moderator: Some(moderator.into()),
+            user: user.into(),
+            user_login: user.into(),
+            user_id: user.into(),
+            action: crate::ModAction::Ban,
+            reason: None,
+        }
+    }
+
+    #[test]
+    fn moderation_is_one_line_from_the_platform() {
+        use crate::ModAction;
+        let mut s = Session::default();
+        connect(&mut s, Platform::Kick, ALL_CAPS);
+        s.apply(msg(Platform::Kick, "m1", "spammer", "buy followers"), 0);
+        let mut timeout = ban("ModFoo", "spammer");
+        timeout.action = ModAction::Timeout { seconds: 600 };
+        timeout.reason = Some("spam".into());
+        s.apply(
+            Event::Moderation {
+                platform: Platform::Kick,
+                moderation: timeout,
+            },
+            1,
+        );
+        assert_eq!(
+            last_notice(&s),
+            (
+                Level::Info,
+                "ModFoo timed out spammer for 10m. Reason: spam".to_string()
+            )
+        );
+        assert!(
+            s.feed
+                .entries()
+                .any(|e| matches!(e.item, Item::Chat(_)) && e.deleted),
+            "its messages go"
+        );
+
+        let mut unknown = ban("x", "Bar");
+        unknown.moderator = None;
+        unknown.action = ModAction::Unvip;
+        assert_eq!(unknown.line(), "Bar was unVIP'd.");
+        let mut vip = ban("Mobasity", "Bar");
+        vip.action = ModAction::Vip;
+        assert_eq!(vip.line(), "Mobasity VIP'd Bar.");
+    }
+
+    #[test]
+    fn a_ban_that_worked_says_nothing_but_removes_the_messages() {
+        let mut s = Session::default();
+        connect(&mut s, Platform::Twitch, ALL_CAPS);
+        s.apply(msg(Platform::Twitch, "m1", "u1", "spam"), 0);
+        let lines = s.feed.len();
+        let Submitted::Send(out) = s.execute(
+            Platform::Twitch,
+            Plan::Run {
+                command: Command::Ban {
+                    user: UserRef {
+                        id: Some("u1".into()),
+                        login: "u1".into(),
+                    },
+                    reason: None,
+                },
+                label: "Ban u1".into(),
+            },
+        ) else {
+            panic!("expected a request");
+        };
+        done(&mut s, &out, 0, 1);
+        assert_eq!(s.feed.len(), lines, "no ✓ line");
+        assert!(
+            s.feed
+                .entries()
+                .any(|e| matches!(e.item, Item::Chat(_)) && e.deleted)
+        );
+    }
 
     fn connect(s: &mut Session, p: Platform, caps: Capabilities) {
         s.apply(
@@ -1159,9 +1362,19 @@ mod tests {
             last_notice(&s),
             (
                 Level::Info,
-                "✓ Banned 2 users who said \"haha\"".to_string()
+                "Rill_Dev banned 2 people who said \"haha\".".to_string()
             )
         );
+        // The platform's own event for a nuked user adds no line of its own.
+        let lines = s.feed.len();
+        s.apply(
+            Event::Moderation {
+                platform: Platform::Twitch,
+                moderation: ban("Rill_Dev", "a"),
+            },
+            now,
+        );
+        assert_eq!(s.feed.len(), lines, "a nuke tells its users in one line");
 
         let Submitted::Confirm { batch, .. } = s.submit("/unnuke", Destination::All, now) else {
             panic!("expected a confirmation");

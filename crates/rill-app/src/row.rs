@@ -222,13 +222,16 @@ fn row_frame(seq: u64, highlight: Option<u32>, compact: bool) -> gpui::Stateful<
         .hover(|s| s.bg(rgb(style::PANEL)))
 }
 
-/// The platform icon column, aligned with the first line of text.
+/// The icon column, aligned with the first line: the platform's, or Rill's for several or none.
 fn gutter(platform: Option<Platform>) -> impl IntoElement {
     div()
         .pt(px(3.))
         .w(px(icon_px()))
         .flex_none()
-        .children(platform.map(|p| style::platform_icon(p, icon_px())))
+        .child(match platform {
+            Some(p) => style::platform_icon(p, icon_px()).into_any_element(),
+            None => style::rill_icon(icon_px()).into_any_element(),
+        })
 }
 
 /// A time as the row shows it.

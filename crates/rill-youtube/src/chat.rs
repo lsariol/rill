@@ -1,7 +1,8 @@
 //! Converts YouTube liveChatMessage resources into Rill events.
 
 use rill_core::{
-    Author, Badge, ChatMessage, Event, EventKind, MessageKind, Platform, Roles, split_text,
+    Author, Badge, ChatMessage, Event, EventKind, MessageKind, ModAction, Moderation, Platform,
+    Roles, split_text,
 };
 use serde_json::Value;
 
@@ -43,9 +44,33 @@ pub fn to_event(item: &Value) -> Option<Event> {
             });
         }
         "userBannedEvent" => {
-            return Some(Event::UserCleared {
+            // YouTube doesn't say who banned them.
+            let details = &snippet["userBannedDetails"];
+            let user = &details["bannedUserDetails"];
+            let name = s(&user["displayName"]);
+            let seconds = details["banDurationSeconds"]
+                .as_u64()
+                .or_else(|| details["banDurationSeconds"].as_str()?.parse().ok());
+            let action = match (details["banType"].as_str(), seconds) {
+                (Some("temporary"), Some(secs)) => ModAction::Timeout {
+                    seconds: secs.min(u32::MAX as u64) as u32,
+                },
+                _ => ModAction::Ban,
+            };
+            return Some(Event::Moderation {
                 platform,
-                user_id: s(&snippet["userBannedDetails"]["bannedUserDetails"]["channelId"]),
+                moderation: Moderation {
+                    moderator: None,
+                    user_login: name.to_lowercase(),
+                    user: if name.is_empty() {
+                        "Someone".into()
+                    } else {
+                        name
+                    },
+                    user_id: s(&user["channelId"]),
+                    action,
+                    reason: None,
+                },
             });
         }
         "textMessageEvent"

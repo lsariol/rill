@@ -146,11 +146,18 @@ fn item(m: &pb::LiveChatMessage) -> Value {
                 snippet["textMessageDetails"] = json!({"messageText": d.message_text});
             }
             Some(DisplayedContent::UserBannedDetails(d)) => {
-                let channel = d
-                    .banned_user_details
-                    .as_ref()
-                    .and_then(|u| u.channel_id.clone());
-                snippet["userBannedDetails"] = json!({"bannedUserDetails": {"channelId": channel}});
+                let user = d.banned_user_details.as_ref();
+                snippet["userBannedDetails"] = json!({
+                    "bannedUserDetails": {
+                        "channelId": user.and_then(|u| u.channel_id.clone()),
+                        "displayName": user.and_then(|u| u.display_name.clone()),
+                    },
+                    "banType": match d.ban_type {
+                        Some(2) => "temporary",
+                        _ => "permanent",
+                    },
+                    "banDurationSeconds": d.ban_duration_seconds,
+                });
             }
             Some(DisplayedContent::SuperChatDetails(d)) => {
                 snippet["superChatDetails"] = json!({

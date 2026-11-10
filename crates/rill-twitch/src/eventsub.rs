@@ -1,8 +1,8 @@
 //! EventSub WebSocket messages and their conversion into Rill events.
 
 use rill_core::{
-    Author, Badge, ChatMessage, EmoteScope, Event, EventKind, Fragment, MessageKind, Platform,
-    ReplyRef, Roles, merge_text, split_text,
+    Author, Badge, ChatMessage, EmoteScope, Event, EventKind, Fragment, MessageKind, ModAction,
+    Moderation, Platform, ReplyRef, Roles, merge_text, split_text,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -193,11 +193,56 @@ pub fn to_event(kind: &str, timestamp: &str, event: &Value, badges: &Badges) -> 
         }),
         "channel.chat.clear" => Some(Event::Cleared { platform }),
         "channel.chat.notification" => notification(timestamp, event, badges).map(Event::Message),
+        "channel.moderate" => moderation(timestamp, event).map(|moderation| Event::Moderation {
+            platform,
+            moderation,
+        }),
         k if k.starts_with("channel.channel_points_") => {
             redemption(k, timestamp, event).map(Event::Message)
         }
         _ => None,
     }
+}
+
+/// A ban, timeout, unban, mod or VIP change by anyone; other moderation actions are left out.
+pub fn moderation(timestamp: &str, e: &Value) -> Option<Moderation> {
+    let action_name = e["action"].as_str()?;
+    // Twitch names the object after the action.
+    let target = &e[action_name];
+    let action = match action_name {
+        "ban" => ModAction::Ban,
+        "unban" => ModAction::Unban,
+        "timeout" => {
+            let ends = chrono::DateTime::parse_from_rfc3339(target["expires_at"].as_str()?).ok()?;
+            let at = chrono::DateTime::parse_from_rfc3339(timestamp).ok()?;
+            let secs = (ends - at).num_seconds().max(1);
+            // Twitch's two times are a moment apart: 599 s is a 10m timeout.
+            let secs = if secs >= 60 {
+                (secs + 30) / 60 * 60
+            } else {
+                secs
+            };
+            ModAction::Timeout {
+                seconds: secs.min(u32::MAX as i64) as u32,
+            }
+        }
+        "untimeout" => ModAction::Untimeout,
+        "mod" => ModAction::Mod,
+        "unmod" => ModAction::Unmod,
+        "vip" => ModAction::Vip,
+        "unvip" => ModAction::Unvip,
+        _ => return None,
+    };
+    let s = |v: &Value| v.as_str().unwrap_or_default().to_string();
+    let moderator = s(&e["moderator_user_name"]);
+    Some(Moderation {
+        moderator: (!moderator.is_empty()).then_some(moderator),
+        user: s(&target["user_name"]),
+        user_login: s(&target["user_login"]),
+        user_id: s(&target["user_id"]),
+        action,
+        reason: target["reason"].as_str().map(str::to_string),
+    })
 }
 
 /// Subs, resubs, gifts, raids, announcements and the like: the system line, then any message.
@@ -551,5 +596,26 @@ mod tests {
         let mut f = vec![Fragment::Text("\u{1}ACTION waves\u{1}".into())];
         assert_eq!(strip_action(&mut f), MessageKind::Action);
         assert_eq!(f, vec![Fragment::Text("waves".into())]);
+    }
+
+    #[test]
+    fn reads_moderation_by_anyone() {
+        let e = json!({
+            "moderator_user_name": "ModFoo",
+            "action": "timeout",
+            "timeout": {"user_id": "9", "user_login": "bar", "user_name": "Bar",
+                "reason": "spam", "expires_at": "2026-11-10T20:10:00.2Z"}
+        });
+        let m = moderation("2026-11-10T20:00:00.5Z", &e).unwrap();
+        assert_eq!(m.line(), "ModFoo timed out Bar for 10m. Reason: spam");
+        assert_eq!((m.user_login.as_str(), m.user_id.as_str()), ("bar", "9"));
+        let e = json!({"moderator_user_name": "ModFoo", "action": "vip",
+            "vip": {"user_id": "9", "user_login": "bar", "user_name": "Bar"}});
+        assert_eq!(moderation("", &e).unwrap().line(), "ModFoo VIP'd Bar.");
+        let e = json!({"moderator_user_name": "ModFoo", "action": "slow", "slow": {}});
+        assert!(
+            moderation("", &e).is_none(),
+            "chat modes aren't moderation lines"
+        );
     }
 }
