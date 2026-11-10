@@ -328,7 +328,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
         ctx.events.attention(None).await;
     } else {
         tracing::info!(missing = %id.missing.join(" "), "Twitch sign-in lacks newer scopes");
-        const OLDER: &str = "Twitch: this sign-in is from an older Rill. To use /slow, /announce, /shoutout and the other new commands, open Accounts, disconnect Twitch and connect it again.";
+        const OLDER: &str = "Twitch: this sign-in is from an older Rill. To get everything this version does, such as other moderators' bans in chat, open Accounts, disconnect Twitch and connect it again.";
         ctx.events.notice(Level::Warn, OLDER).await;
         ctx.events.attention(Some(OLDER.into())).await;
     }

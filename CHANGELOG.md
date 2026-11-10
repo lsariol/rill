@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.0.2 (unreleased)
+
+Fixes and polish from the first test stream.
+
+### Changed
+
+- Moderation reads as one line per action, once the platform has done it, such as
+  `Mobasity banned Foo. Reason: spam`, `ModFoo timed out Bar for 10m.` or `Mobasity VIP'd Bar.`
+  Other moderators' actions show too where the platform reports them (Twitch and Kick), and the
+  "working" and ✓ lines are gone. A `/nuke` or `/meganuke` is one line for everyone it caught.
+  The overlay never shows these lines; it only removes the messages.
+- Twitch asks for five more read permissions, for moderation events. A Twitch sign-in from an
+  earlier version keeps working, and Rill asks once to reconnect Twitch to get them.
+- A banned or timed-out user's messages disappear as soon as the platform confirms, instead of
+  when its own event arrives, which on YouTube took a while.
+- The user card has Unban, a row of timeouts from 1 second to 1 week, and Ban, always shown, with
+  buttons that light up under the pointer and when pressed. Unban lifts timeouts too. The card
+  also copies the user's name and ID.
+- Times, badges and "only messages that mention you" are switches in Settings instead of header
+  buttons, and they're remembered. A narrow window still hides times and badges by itself.
+- Rumble is off until turned on in Settings.
+- Messages sent to every platform, and lines about several platforms or none, show Rill's logo.
+
+### Fixed
+
+- After signing in to YouTube while not live, Accounts kept saying to finish signing in.
+- After approving Twitch's sign-in code, Accounts showed the sign-in prompt until Twitch connected.
+- Copy buttons say "Copied" for a moment, so a click shows.
+- The overlay drew no broadcaster, moderator or VIP badge on Kick, and no badges on messages sent
+  from Rill.
+- Hovering a command in the `/` list shows its whole description when the window cuts it short.
+- Settings explains how to size the overlay in OBS: dragging the source's corners only stretches
+  it, while its Width and Height give chat more room.
+
 ## v0.0.1 (2026-11-09)
 
 The first version of Rill with an installer. Everything listed under v0.0.0 is in it: v0.0.0 was
