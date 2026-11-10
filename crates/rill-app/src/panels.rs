@@ -884,28 +884,20 @@ impl ChatView {
                                     .label("Open page")
                                     .on_click(move |_, _, cx| cx.open_url(&url)),
                             )
-                            .child(
-                                // For signing in with a browser other than the default one.
-                                Button::new(SharedString::from(format!("copy-link-{p}")))
-                                    .xsmall()
-                                    .outline()
-                                    .label("Copy link")
-                                    .on_click(move |_, _, cx| {
-                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                            link.to_string(),
-                                        ));
-                                    }),
-                            )
+                            // For signing in with a browser other than the default one.
+                            .child(self.copy_button(
+                                format!("copy-link-{p}"),
+                                "Copy link",
+                                link.to_string(),
+                                cx,
+                            ))
                             .children(code.map(|c| {
-                                Button::new(SharedString::from(format!("copy-{p}")))
-                                    .xsmall()
-                                    .outline()
-                                    .label("Copy code")
-                                    .on_click(move |_, _, cx| {
-                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                            c.clone(),
-                                        ));
-                                    })
+                                self.copy_button(
+                                    format!("copy-{p}"),
+                                    "Copy code",
+                                    c.to_string(),
+                                    cx,
+                                )
                             })),
                     )
             });
@@ -1277,21 +1269,15 @@ impl ChatView {
                             .font_family("monospace")
                             .child(url.clone()),
                     )
-                    .child(
-                        Button::new("overlay-copy")
-                            .xsmall()
-                            .outline()
-                            .label("Copy link")
-                            .on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
-                            }),
-                    ),
+                    .child(self.copy_button("overlay-copy", "Copy link", url.to_string(), cx)),
             );
         }
         col = col.child(faint(
             "In OBS, add a Browser source (Sources, +, Browser), paste the link, and set its \
-             width and height, such as 400 by 600. Chat sits at the bottom and older lines move \
-             up. For a look of your own, add CSS in the source's Custom CSS box."
+             Width and Height to the space chat should fill, such as 400 by 900. Chat sits at the \
+             bottom and older lines move up. To make it bigger later, change Width and Height in \
+             the source's properties: dragging its corners only stretches it, so no more lines \
+             fit. For a look of your own, add CSS in the source's Custom CSS box."
                 .into(),
         ));
         let choices = |label: &'static str,

@@ -195,6 +195,8 @@ pub struct ChatView {
     pub(crate) kick_channel: Entity<gpui_component::input::InputState>,
     /// The Rumble Live Stream API link box in Accounts; masked, since the link holds a key.
     pub(crate) rumble_link: Entity<gpui_component::input::InputState>,
+    /// The Copy button pressed last, which says "Copied" for a moment.
+    copied: Option<(SharedString, Task<()>)>,
     /// Each line's time and badges, unless the window is narrow.
     pub(crate) show_times: bool,
     pub(crate) show_badges: bool,
@@ -373,6 +375,7 @@ impl ChatView {
             }),
             show_times,
             show_badges,
+            copied: None,
             effective_compact: false,
             following: true,
             unseen: 0,
@@ -1041,25 +1044,17 @@ impl ChatView {
         let buttons = div().flex().flex_wrap().gap_1().map(|d| match &sent {
             Some(id) => {
                 let id = id.clone();
-                d.child(
-                    Button::new("crash-copy-id")
-                        .xsmall()
-                        .outline()
-                        .label("Copy ID")
-                        .on_click(move |_, _, cx| {
-                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(id.clone()));
-                        }),
-                )
-                .child(
-                    Button::new("crash-close")
-                        .xsmall()
-                        .ghost()
-                        .label("Close")
-                        .on_click(cx.listener(|view, _, _, cx| {
-                            view.report_sending = Default::default();
-                            cx.notify();
-                        })),
-                )
+                d.child(self.copy_button("crash-copy-id", "Copy ID", id.to_string(), cx))
+                    .child(
+                        Button::new("crash-close")
+                            .xsmall()
+                            .ghost()
+                            .label("Close")
+                            .on_click(cx.listener(|view, _, _, cx| {
+                                view.report_sending = Default::default();
+                                cx.notify();
+                            })),
+                    )
             }
             None => d
                 .child(
@@ -1510,6 +1505,36 @@ impl ChatView {
         }
         self.list.remeasure();
         cx.notify();
+    }
+
+    /// A button that copies `text` and says "Copied" for a moment, so the click shows.
+    pub(crate) fn copy_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: &'static str,
+        text: String,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        let id: SharedString = id.into();
+        let done = self.copied.as_ref().is_some_and(|(c, _)| *c == id);
+        Button::new(id.clone())
+            .xsmall()
+            .outline()
+            .label(if done { "Copied ✓" } else { label })
+            .on_click(cx.listener(move |view, _, _, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+                let task = cx.spawn(async move |view, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = view.update(cx, |view, cx| {
+                        view.copied = None;
+                        cx.notify();
+                    });
+                });
+                view.copied = Some((id.clone(), task));
+                cx.notify();
+            }))
     }
 
     /// Shows only messages that mention the user, or everything, and saves the choice.
