@@ -358,8 +358,7 @@ impl Session {
         }
     }
 
-    /// Removes a banned or timed-out user's messages, and tells it in one line unless a nuke
-    /// already does.
+    /// Removes a banned user's messages and tells it in one line, unless a nuke already does.
     fn apply_moderation(&mut self, platform: Platform, m: crate::Moderation, now_ms: i64) {
         if m.clears() && !m.user_id.is_empty() {
             self.feed.mark_user_deleted(platform, &m.user_id);
