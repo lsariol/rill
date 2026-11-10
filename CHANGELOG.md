@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.0 (unreleased)
+## v0.0.0 (2026-11-09)
 
 The first release of Rill: Twitch, YouTube, Kick and Rumble chat in one fast window, with one
 message box that sends to every platform or just one. For Windows 10 and 11.
