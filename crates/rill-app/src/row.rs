@@ -529,27 +529,13 @@ fn sent_row(
     // One mark in the icon column, like received messages, so the text lines up with them.
     let mark = match s.deliveries.as_slice() {
         [one] => style::platform_icon(one.platform, icon_px()).into_any_element(),
-        _ => all_mark().into_any_element(),
+        _ => style::rill_icon(icon_px()).into_any_element(),
     };
     row_frame(entry.seq, None, compact)
         .when(times, |d| d.child(time(entry.seq, entry.received_ms)))
         .child(div().pt(px(3.)).w(px(icon_px())).flex_none().child(mark))
         .child(div().flex_1().min_w_0().child(body).children(failures))
         .child(div().flex().flex_none().gap_1().pt(px(1.)).children(marks))
-}
-
-/// A small rainbow square: sent to every platform.
-fn all_mark() -> impl IntoElement {
-    div()
-        .size(px(icon_px()))
-        .rounded_sm()
-        .overflow_hidden()
-        .flex()
-        .children(
-            style::RAINBOW
-                .iter()
-                .map(|c| div().flex_1().h_full().bg(rgb(*c))),
-        )
 }
 
 fn notice_row(
