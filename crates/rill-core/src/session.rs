@@ -516,10 +516,11 @@ impl Session {
         };
         let theirs = count(&echo.fragments);
         self.feed.update(seq, |e| {
-            if let Item::Sent(s) = &mut e.item
-                && theirs > count(&s.fragments)
-            {
-                s.fragments = echo.fragments.clone();
+            if let Item::Sent(s) = &mut e.item {
+                if theirs > count(&s.fragments) {
+                    s.fragments = echo.fragments.clone();
+                }
+                s.author.get_or_insert_with(|| echo.author.clone());
             }
         });
     }
@@ -676,6 +677,7 @@ impl Session {
         let seq = self.feed.push(
             Item::Sent(SentMessage {
                 fragments: self.emote_fragments(&text, &targets),
+                author: None,
                 text: text.clone(),
                 deliveries: targets
                     .iter()

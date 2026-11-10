@@ -199,9 +199,13 @@ pub fn line(
         Item::Sent(s) => {
             let platforms: Vec<Platform> = s.deliveries.iter().map(|d| d.platform).collect();
             let name = platforms.iter().find_map(|&p| own(p)).unwrap_or_default();
+            // Badges and color come from the platform's echo, so they match received lines.
+            let author = s.author.as_ref();
             json!({
                 "p": platforms.iter().map(|p| key(*p)).collect::<Vec<_>>(),
                 "name": name,
+                "color": author.and_then(|a| a.color).map(|c| format!("#{c:06x}")),
+                "badges": author.map(|a| badges(&a.badges)).unwrap_or_default(),
                 "parts": parts(&s.fragments),
             })
         }
@@ -236,15 +240,7 @@ fn chat_line(m: &ChatMessage, entry: &Entry, settings: &Settings) -> Option<Valu
     if let MessageKind::Event(k) = m.kind {
         kinds.push(k.key());
     }
-    let badges: Vec<Value> = m
-        .author
-        .badges
-        .iter()
-        .filter_map(|b| {
-            let url = b.image_url.as_deref()?;
-            Some(json!({ "u": bigger_image(url), "t": b.title }))
-        })
-        .collect();
+    let badges = badges(&m.author.badges);
     Some(json!({
         "p": [key(m.platform)],
         "name": m.author.display_name,
@@ -255,6 +251,27 @@ fn chat_line(m: &ChatMessage, entry: &Entry, settings: &Settings) -> Option<Valu
         "ev": event,
         "kinds": kinds,
     }))
+}
+
+/// Badges as the page draws them: an image, or a lettered square for one without (Kick's roles).
+fn badges(badges: &[rill_core::Badge]) -> Vec<Value> {
+    badges
+        .iter()
+        .take(4)
+        .filter_map(|b| match b.image_url.as_deref() {
+            Some(url) => Some(json!({ "u": bigger_image(url), "t": b.title })),
+            None => {
+                let (letter, color) = match b.id.split('/').next().unwrap_or("") {
+                    "broadcaster" => ("B", "#e91916"),
+                    "moderator" => ("M", "#00ad03"),
+                    "vip" => ("V", "#e005b9"),
+                    "subscriber" | "founder" => ("S", "#8205b4"),
+                    _ => return None,
+                };
+                Some(json!({ "l": letter, "c": color, "t": b.title }))
+            }
+        })
+        .collect()
 }
 
 /// A message's pieces: `{x}` for text (`m` marks a mention), `{e, n, h, o}` for an emote.
@@ -542,6 +559,43 @@ mod tests {
             v["parts"][1]["e"],
             "https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/3.0"
         );
+    }
+
+    #[test]
+    fn a_badge_without_an_image_is_a_lettered_square_and_own_lines_have_badges() {
+        let mut entry = chat("Foo", "hi", MessageKind::Chat);
+        let Item::Chat(m) = &mut entry.item else {
+            unreachable!()
+        };
+        let author = Author {
+            badges: vec![Badge {
+                id: "broadcaster/1".into(),
+                title: "Broadcaster".into(),
+                image_url: None,
+            }],
+            ..m.author.clone()
+        };
+        m.author = author.clone();
+        let v: Value =
+            serde_json::from_str(&line(&entry, &Settings::default(), |_| None).unwrap()).unwrap();
+        assert_eq!(v["badges"][0]["l"], "B");
+
+        // A message sent from Rill takes its badges from the platform's echo.
+        entry.item = Item::Sent(rill_core::feed::SentMessage {
+            text: "hi".into(),
+            fragments: vec![Fragment::Text("hi".into())],
+            deliveries: vec![rill_core::feed::Delivery {
+                platform: Platform::Kick,
+                state: rill_core::feed::DeliveryState::Sent,
+            }],
+            author: Some(author),
+        });
+        let v: Value = serde_json::from_str(
+            &line(&entry, &Settings::default(), |_| Some("Mobasity".into())).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["name"], "Mobasity");
+        assert_eq!(v["badges"][0]["l"], "B");
     }
 
     #[test]

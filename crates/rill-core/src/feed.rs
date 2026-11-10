@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
-use crate::{ChatMessage, EventKind, Fragment, Level, Platform};
+use crate::{Author, ChatMessage, EventKind, Fragment, Level, Platform};
 
 /// The default number of entries kept.
 pub const DEFAULT_CAPACITY: usize = 5_000;
@@ -68,6 +68,8 @@ pub struct SentMessage {
     /// The text with emotes picked out, from the emote lists, then from a platform's echo.
     pub fragments: Vec<Fragment>,
     pub deliveries: Vec<Delivery>,
+    /// The user as the first platform to echo it shows them: badges and name color.
+    pub author: Option<Author>,
 }
 
 /// A sent message's state on one platform.

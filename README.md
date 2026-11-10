@@ -125,7 +125,7 @@ next, from the same code.
   shows plain chat until you choose otherwise. Deleted messages leave the overlay too. Only this
   computer can open the page, and it runs only while the setting is on and Rill is open; the
   source's Custom CSS box in OBS changes the look further (`.line`, `.name`, `.text`, `.badge`,
-  `.icon`, `.emote`, and `.hl` for highlighted lines). The port is `overlay.port` in
+  `.chip` for a badge drawn as a letter, `.icon`, `.emote`, and `.hl` for highlighted lines). The port is `overlay.port` in
   `settings.json`, and `--overlay <port>` turns it on for one run.
 - **Problems and logs:** if Rill hits a problem, it records it, and the next start offers to send
   a report to the Rill team: what went wrong and the end of Rill's recent log, never chat
