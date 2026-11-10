@@ -21,6 +21,12 @@ jobs:
     timeout-minutes: 120
     env:
       TAG: ${{ github.event.release.tag_name }}
+      # Built into the app; repository variables, since anyone can read them from it.
+      RILL_TWITCH_CLIENT_ID: ${{ vars.RILL_TWITCH_CLIENT_ID }}
+      RILL_YOUTUBE_CLIENT_ID: ${{ vars.RILL_YOUTUBE_CLIENT_ID }}
+      RILL_YOUTUBE_CLIENT_SECRET: ${{ vars.RILL_YOUTUBE_CLIENT_SECRET }}
+      RILL_KICK_CLIENT_ID: ${{ vars.RILL_KICK_CLIENT_ID }}
+      RILL_KICK_AUTH_HELPER: https://rill.mobasity.com/api/auth
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,6 +45,17 @@ jobs:
           }
           "VERSION=$version" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
+      - name: The build values are set
+        shell: pwsh
+        run: |
+          # Without one, the build succeeds but that platform's sign-in fails for every user.
+          $names = 'RILL_TWITCH_CLIENT_ID', 'RILL_YOUTUBE_CLIENT_ID', 'RILL_YOUTUBE_CLIENT_SECRET', 'RILL_KICK_CLIENT_ID'
+          $missing = $names | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
+          if ($missing) {
+            Write-Host "Not set: $($missing -join ', '). Add them under Settings > Secrets and variables > Actions > Variables, then re-run this workflow."
+            exit 1
+          }
+
       - name: Tools
         shell: pwsh
         run: |
@@ -52,12 +69,6 @@ jobs:
 
       - name: Build and package
         shell: pwsh
-        env:
-          RILL_TWITCH_CLIENT_ID: ${{ vars.RILL_TWITCH_CLIENT_ID }}
-          RILL_YOUTUBE_CLIENT_ID: ${{ vars.RILL_YOUTUBE_CLIENT_ID }}
-          RILL_YOUTUBE_CLIENT_SECRET: ${{ vars.RILL_YOUTUBE_CLIENT_SECRET }}
-          RILL_KICK_CLIENT_ID: ${{ vars.RILL_KICK_CLIENT_ID }}
-          RILL_KICK_AUTH_HELPER: https://rill.mobasity.com/api/auth
         run: powershell -File scripts/package.ps1 -Version $env:VERSION -Out "$env:GITHUB_WORKSPACE\.dev\releases"
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
