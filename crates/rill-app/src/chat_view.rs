@@ -195,7 +195,11 @@ pub struct ChatView {
     pub(crate) kick_channel: Entity<gpui_component::input::InputState>,
     /// The Rumble Live Stream API link box in Accounts; masked, since the link holds a key.
     pub(crate) rumble_link: Entity<gpui_component::input::InputState>,
-    pub(crate) compact: bool,
+    /// The Copy button pressed last, which says "Copied" for a moment.
+    copied: Option<(SharedString, Task<()>)>,
+    /// Each line's time and badges, unless the window is narrow.
+    pub(crate) show_times: bool,
+    pub(crate) show_badges: bool,
     effective_compact: bool,
     following: bool,
     unseen: usize,
@@ -231,6 +235,9 @@ impl ChatView {
             .flatten();
         let show_deleted = saved.as_ref().is_some_and(|s| s.show_deleted_messages);
         let link_previews = saved.as_ref().is_none_or(|s| s.link_previews);
+        let show_times = saved.as_ref().is_none_or(|s| s.show_times);
+        let show_badges = saved.as_ref().is_none_or(|s| s.show_badges);
+        let mentions_only = saved.as_ref().is_some_and(|s| s.mentions_only);
         input.update(cx, |state, cx| state.focus(window, cx));
 
         let list = ListState::new(0, ListAlignment::Bottom, px(400.));
@@ -366,7 +373,9 @@ impl ChatView {
                     .placeholder("Live Stream API link")
                     .masked(true)
             }),
-            compact: false,
+            show_times,
+            show_badges,
+            copied: None,
             effective_compact: false,
             following: true,
             unseen: 0,
@@ -385,6 +394,11 @@ impl ChatView {
         for (key, input) in view.color_inputs.clone() {
             let hex = style::to_hex(view.color_of(key));
             input.update(cx, |s, cx| s.set_value(hex, window, cx));
+        }
+        if mentions_only {
+            let mut filter = view.session.feed.filter().clone();
+            filter.mentions_only = true;
+            view.session.feed.set_filter(filter);
         }
         view.sync_list();
         view.apply_overlay();
@@ -1030,25 +1044,17 @@ impl ChatView {
         let buttons = div().flex().flex_wrap().gap_1().map(|d| match &sent {
             Some(id) => {
                 let id = id.clone();
-                d.child(
-                    Button::new("crash-copy-id")
-                        .xsmall()
-                        .outline()
-                        .label("Copy ID")
-                        .on_click(move |_, _, cx| {
-                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(id.clone()));
-                        }),
-                )
-                .child(
-                    Button::new("crash-close")
-                        .xsmall()
-                        .ghost()
-                        .label("Close")
-                        .on_click(cx.listener(|view, _, _, cx| {
-                            view.report_sending = Default::default();
-                            cx.notify();
-                        })),
-                )
+                d.child(self.copy_button("crash-copy-id", "Copy ID", id.to_string(), cx))
+                    .child(
+                        Button::new("crash-close")
+                            .xsmall()
+                            .ghost()
+                            .label("Close")
+                            .on_click(cx.listener(|view, _, _, cx| {
+                                view.report_sending = Default::default();
+                                cx.notify();
+                            })),
+                    )
             }
             None => d
                 .child(
@@ -1482,6 +1488,70 @@ impl ChatView {
         cx.notify();
     }
 
+    /// Changes how lines are drawn, redraws them all, and saves the choice.
+    pub(crate) fn set_display(
+        &mut self,
+        apply: impl FnOnce(&mut Self),
+        save: impl FnOnce(&mut rill_os::settings::Settings),
+        cx: &mut Context<Self>,
+    ) {
+        apply(self);
+        if self.platforms.saves()
+            && let Err(e) = rill_os::settings::update(save)
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+        }
+        self.list.remeasure();
+        cx.notify();
+    }
+
+    /// A button that copies `text` and says "Copied" for a moment, so the click shows.
+    pub(crate) fn copy_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: &'static str,
+        text: String,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        let id: SharedString = id.into();
+        let done = self.copied.as_ref().is_some_and(|(c, _)| *c == id);
+        Button::new(id.clone())
+            .xsmall()
+            .outline()
+            .label(if done { "Copied ✓" } else { label })
+            .on_click(cx.listener(move |view, _, _, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+                let task = cx.spawn(async move |view, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = view.update(cx, |view, cx| {
+                        view.copied = None;
+                        cx.notify();
+                    });
+                });
+                view.copied = Some((id.clone(), task));
+                cx.notify();
+            }))
+    }
+
+    /// Shows only messages that mention the user, or everything, and saves the choice.
+    pub(crate) fn set_mentions_only(&mut self, on: bool, cx: &mut Context<Self>) {
+        let mut filter = self.session.feed.filter().clone();
+        filter.mentions_only = on;
+        self.set_filter(filter, cx);
+        if self.platforms.saves()
+            && let Err(e) = rill_os::settings::update(|s| s.mentions_only = on)
+        {
+            self.session
+                .notice(None, rill_core::Level::Error, &e, now_ms());
+            self.sync_list();
+        }
+        cx.notify();
+    }
+
     /// Turns a platform on (connecting) or off (disconnecting and hiding it), keeping sign-ins.
     pub(crate) fn set_platform_on(&mut self, p: Platform, on: bool, cx: &mut Context<Self>) {
         if on == self.platforms.is_on(p) || (!on && self.platforms.on() == [p]) {
@@ -1606,8 +1676,6 @@ impl ChatView {
                     view.after_click(click, window, cx);
                 }))
         });
-        let mentions = filter.mentions_only;
-        let compact = self.compact;
         div()
             .flex()
             .items_center()
@@ -1650,28 +1718,6 @@ impl ChatView {
                         Panel::Settings => Panel::None,
                         _ => Panel::Settings,
                     };
-                    view.after_click(click, window, cx);
-                }),
-            ))
-            .child(header_toggle(
-                "mentions",
-                "@",
-                mentions,
-                "Show only messages that mention you",
-                cx.listener(move |view, click, window, cx| {
-                    let mut f = view.session.feed.filter().clone();
-                    f.mentions_only = !f.mentions_only;
-                    view.set_filter(f, cx);
-                    view.after_click(click, window, cx);
-                }),
-            ))
-            .child(header_toggle(
-                "compact",
-                "≡",
-                compact,
-                "Compact mode: hide times and badges",
-                cx.listener(|view, click, window, cx| {
-                    view.compact = !view.compact;
                     view.after_click(click, window, cx);
                 }),
             ))
@@ -1864,7 +1910,7 @@ impl Render for ChatView {
         // Text and spacing are in rems: the text size scales them all.
         window.set_rem_size(px(16. * self.text_size as f32 / 100.));
         self.stats.renders += 1;
-        let compact = self.compact || window.viewport_size().width < px(NARROW);
+        let compact = window.viewport_size().width < px(NARROW);
         if compact != self.effective_compact {
             self.effective_compact = compact;
             self.list.remeasure();
@@ -1900,8 +1946,18 @@ impl Render for ChatView {
 }
 
 impl ChatView {
-    /// Whether rows are drawn compact right now.
+    /// Whether rows are drawn compact right now (a narrow window).
     pub(crate) fn is_compact(&self) -> bool {
         self.effective_compact
+    }
+
+    /// Whether lines show their time right now.
+    pub(crate) fn times_shown(&self) -> bool {
+        self.show_times && !self.effective_compact
+    }
+
+    /// Whether lines show badges right now.
+    pub(crate) fn badges_shown(&self) -> bool {
+        self.show_badges && !self.effective_compact
     }
 }

@@ -116,7 +116,9 @@ next, from the same code.
   puts it back.
 - **OBS overlay:** Settings → OBS overlay shows your chat on stream. Turned on, Rill serves a
   page at `http://127.0.0.1:47832/` (Copy link is beside it); in OBS, add a Browser source with
-  that address and a size such as 400 by 600. Lines sit at the bottom and move up, with
+  that address, and set its Width and Height to the space chat should fill, such as 400 by 900.
+  To resize it later, change Width and Height in the source's properties: dragging its corners
+  only stretches the picture, so no more lines fit. Lines sit at the bottom and move up, with
   emotes, badges and platform icons. Settings picks the text size, whether lines fade after a
   while, badges and icons, a dark backing, and hiding commands (`!uptime`) and well-known bots.
   The overlay's highlights are its own, separate from Rill's and all off at first, so the stream

@@ -138,6 +138,7 @@ impl ChatView {
     fn row_element(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         self.stats.rows += 1;
         let compact = self.is_compact();
+        let times = self.times_shown();
         let Some(entry) = self.session.feed.visible(ix) else {
             return div().into_any_element();
         };
@@ -170,9 +171,9 @@ impl ChatView {
                     if c.platform == m.platform && c.message_id.as_deref() == Some(m.id.as_str()));
                 row_frame(entry.seq, self.highlight_color(entry), compact)
                     .when(carded, |d| d.bg(rgb(style::RAISED)))
-                    .when(!compact, |d| d.child(time(entry.seq, entry.received_ms)))
+                    .when(times, |d| d.child(time(entry.seq, entry.received_ms)))
                     .child(gutter(Some(m.platform)))
-                    .when(!compact && !m.author.badges.is_empty(), |d| {
+                    .when(self.badges_shown() && !m.author.badges.is_empty(), |d| {
                         d.child(badges(entry.seq, &m.author.badges, self.link_hover_fn(cx)))
                     })
                     .child(
@@ -190,12 +191,13 @@ impl ChatView {
                     .iter()
                     .find_map(|d| me(d.platform))
                     .unwrap_or_else(|| "You".into());
-                sent_row(entry, s, &name, compact, self.link_hover_fn(cx)).into_any_element()
+                sent_row(entry, s, &name, compact, times, self.link_hover_fn(cx)).into_any_element()
             }
             Item::Notice(n) => notice_row(
                 entry,
                 n,
                 compact,
+                times,
                 self.highlight_color(entry),
                 self.link_hover_fn(cx),
             )
@@ -485,6 +487,7 @@ fn sent_row(
     s: &SentMessage,
     name: &str,
     compact: bool,
+    times: bool,
     hover: HoverFn,
 ) -> impl IntoElement {
     let marks = s.deliveries.iter().map(|d| {
@@ -526,38 +529,25 @@ fn sent_row(
     // One mark in the icon column, like received messages, so the text lines up with them.
     let mark = match s.deliveries.as_slice() {
         [one] => style::platform_icon(one.platform, icon_px()).into_any_element(),
-        _ => all_mark().into_any_element(),
+        _ => style::rill_icon(icon_px()).into_any_element(),
     };
     row_frame(entry.seq, None, compact)
-        .when(!compact, |d| d.child(time(entry.seq, entry.received_ms)))
+        .when(times, |d| d.child(time(entry.seq, entry.received_ms)))
         .child(div().pt(px(3.)).w(px(icon_px())).flex_none().child(mark))
         .child(div().flex_1().min_w_0().child(body).children(failures))
         .child(div().flex().flex_none().gap_1().pt(px(1.)).children(marks))
-}
-
-/// A small rainbow square: sent to every platform.
-fn all_mark() -> impl IntoElement {
-    div()
-        .size(px(icon_px()))
-        .rounded_sm()
-        .overflow_hidden()
-        .flex()
-        .children(
-            style::RAINBOW
-                .iter()
-                .map(|c| div().flex_1().h_full().bg(rgb(*c))),
-        )
 }
 
 fn notice_row(
     entry: &Entry,
     n: &Notice,
     compact: bool,
+    times: bool,
     highlight: Option<u32>,
     hover: HoverFn,
 ) -> impl IntoElement {
     row_frame(entry.seq, highlight, compact)
-        .when(!compact, |d| d.child(time(entry.seq, entry.received_ms)))
+        .when(times, |d| d.child(time(entry.seq, entry.received_ms)))
         .child(gutter(n.platform))
         .child(
             div()

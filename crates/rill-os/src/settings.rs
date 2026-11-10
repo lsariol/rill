@@ -10,12 +10,18 @@ use crate::data_dir;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// Platforms turned off in Settings, by name ("rumble"): not connected and not shown.
+    /// Platforms turned off in Settings, by name: not connected and not shown. Rumble starts off.
     pub disabled_platforms: Vec<String>,
     /// Deleted messages keep their text, faded and struck through, instead of "message deleted".
     pub show_deleted_messages: bool,
     /// Hovering a link shows the page's title, description and picture (fetched on hover).
     pub link_previews: bool,
+    /// Each line's time; a narrow window hides it anyway.
+    pub show_times: bool,
+    /// Badges before names; a narrow window hides them anyway.
+    pub show_badges: bool,
+    /// Show only messages that mention you.
+    pub mentions_only: bool,
     /// How many chat lines Rill keeps for scrolling back, searching and user cards.
     pub message_history: usize,
     pub highlights: Highlights,
@@ -33,9 +39,12 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            disabled_platforms: Vec::new(),
+            disabled_platforms: vec!["rumble".into()],
             show_deleted_messages: false,
             link_previews: true,
+            show_times: true,
+            show_badges: true,
+            mentions_only: false,
             message_history: 5_000,
             highlights: Highlights::default(),
             text_size: 100,
@@ -237,7 +246,8 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"kick":{"channel":"xqc"}}"#).unwrap();
         assert_eq!(s.kick.channel.as_deref(), Some("xqc"));
         assert!(s.twitch.client_id.is_none());
-        assert!(s.disabled_platforms.is_empty());
+        assert_eq!(s.disabled_platforms, ["rumble"], "Rumble starts off");
+        assert!(s.show_times && s.show_badges && !s.mentions_only);
         assert!(!s.show_deleted_messages);
         assert!(s.link_previews, "previews are on unless turned off");
         assert_eq!(s.message_history, 5_000);

@@ -46,6 +46,11 @@ pub fn platform_icon(p: Platform, size: f32) -> Svg {
         .text_color(platform_color(p))
 }
 
+/// Rill's logo in its own colors: something that went to every platform.
+pub fn rill_icon(size: f32) -> gpui::Img {
+    gpui::img("icons/rill.svg").size(px(size)).flex_none()
+}
+
 /// The color for a notice level.
 pub fn level_color(level: Level) -> Rgba {
     rgb(match level {

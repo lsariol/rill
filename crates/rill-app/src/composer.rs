@@ -624,22 +624,33 @@ impl ChatView {
                                         false => "Rill",
                                         true => "Platform",
                                     };
-                                    row.child(div().flex_none().child(spec.usage))
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .truncate()
-                                                .text_color(rgb(style::MUTED))
-                                                .child(spec.summary),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_none()
-                                                .text_xs()
-                                                .text_color(rgb(style::FAINT))
-                                                .child(kind),
-                                        )
+                                    // The summary is cut short in a narrow window; hovering shows it whole.
+                                    let mut tip = format!("{}\n{}", spec.usage, spec.summary);
+                                    if !spec.aliases.is_empty() {
+                                        let names: Vec<_> =
+                                            spec.aliases.iter().map(|a| format!("/{a}")).collect();
+                                        tip.push_str(&format!("\nAlso {}", names.join(", ")));
+                                    }
+                                    row.tooltip(move |window, cx| {
+                                        gpui_component::tooltip::Tooltip::new(tip.clone())
+                                            .build(window, cx)
+                                    })
+                                    .child(div().flex_none().child(spec.usage))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_color(rgb(style::MUTED))
+                                            .child(spec.summary),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .text_xs()
+                                            .text_color(rgb(style::FAINT))
+                                            .child(kind),
+                                    )
                                 }
                                 Suggestion::Emote(platforms, emote) => row
                                     .child(
