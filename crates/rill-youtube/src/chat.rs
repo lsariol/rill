@@ -128,7 +128,7 @@ pub fn to_event(item: &Value) -> Option<Event> {
             badges,
             roles,
         },
-        fragments: split_text(text),
+        fragments: crate::emoji::emojify(split_text(text)),
         kind: match kind {
             "textMessageEvent" => MessageKind::Chat,
             "superChatEvent" | "superStickerEvent" | "fanFundingEvent" => {

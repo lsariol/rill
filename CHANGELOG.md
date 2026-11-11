@@ -33,6 +33,8 @@ Fixes and polish from the first test stream.
 
 ### Fixed
 
+- YouTube's own emoji, such as `:hand-pink-waving:`, show as pictures instead of their names.
+  A channel's member emoji still show as text: YouTube doesn't give apps their pictures.
 - After signing in to YouTube while not live, Accounts kept saying to finish signing in.
 - After approving Twitch's sign-in code, Accounts showed the sign-in prompt until Twitch connected.
 - Copy buttons say "Copied" for a moment, so a click shows.
