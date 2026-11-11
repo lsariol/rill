@@ -59,9 +59,9 @@ next, from the same code.
   channel sets on FrankerFaceZ.
 - **Copying:** drag across messages to select them and press Ctrl+C. Each message copies as a
   line with its time (`15:44 name: message`), and emotes copy as their names.
-- **Links:** links open in the default browser. Hovering one shows the page's title, description
-  and picture; **Link previews** in Settings turns that off (`link_previews`), and hovering then
-  shows only the address. Rill fetches a preview only for the link you're hovering, and never for
+- **Links:** web addresses, with or without `https://` (`mobasity.com` too), open in the default
+  browser. Hovering one shows the page's title, description and picture; **Link previews** in
+  Settings turns that off (`link_previews`), and hovering then shows only the address. Rill fetches a preview only for the link you're hovering, and never for
   addresses on your computer or local network.
 - **Emotes:** hovering an emote in chat shows it bigger, with its name and where it comes from
   (such as "7TV channel emote" or "Twitch emote from another channel").

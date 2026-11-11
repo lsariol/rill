@@ -37,6 +37,7 @@ Fixes and polish from the first test stream.
   lifted in YouTube Studio.
 - Unbanning someone who isn't banned says so in a plain line instead of an error.
 - When a YouTube stream ends, Rill no longer also says to go live.
+- Web addresses written without `https://`, such as `mobasity.com`, are links too.
 - Rumble is off until turned on in Settings.
 - Messages sent to every platform, and lines about several platforms or none, show Rill's logo.
 
