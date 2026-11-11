@@ -985,7 +985,7 @@ impl ChatView {
                         .text_color(rgb(style::MUTED))
                         .child(what),
                 )
-                .child(
+                .child(style::switch(
                     Switch::new(SharedString::from(format!("use-{p}")))
                         .small()
                         .checked(on)
@@ -995,7 +995,7 @@ impl ChatView {
                         .on_click(cx.listener(move |view, on: &bool, _, cx| {
                             view.set_platform_on(p, *on, cx);
                         })),
-                )
+                ))
         });
         div()
             .flex()
@@ -1064,13 +1064,13 @@ impl ChatView {
                             )),
                     )
                     .child(
-                        Switch::new("show-deleted")
+                        style::switch(Switch::new("show-deleted")
                             .small()
                             .checked(self.show_deleted)
                             .accessibility_label("Show deleted messages")
                             .on_click(cx.listener(|view, on: &bool, _, cx| {
                                 view.set_show_deleted(*on, cx);
-                            })),
+                            })),)
                     ),
             )
             .child(
@@ -1092,13 +1092,13 @@ impl ChatView {
                             )),
                     )
                     .child(
-                        Switch::new("link-previews")
+                        style::switch(Switch::new("link-previews")
                             .small()
                             .checked(self.link_previews)
                             .accessibility_label("Link previews")
                             .on_click(cx.listener(|view, on: &bool, _, cx| {
                                 view.set_link_previews(*on, cx);
-                            })),
+                            })),)
                     ),
             )
             .child(self.render_text_size(cx))
@@ -1236,6 +1236,8 @@ impl ChatView {
                     .bg(rgb(c))
                     .border_2()
                     .border_color(rgb(if c == current { 0xffffff } else { style::PANEL }))
+                    // Under the pointer, an unchosen color draws in as a smaller dot.
+                    .when(c != current, |d| d.hover(|s| s.border_4()))
                     .on_click(cx.listener(move |view, _, window, cx| {
                         view.set_color(key, c, window, cx);
                     }))
@@ -1290,7 +1292,7 @@ impl ChatView {
                     })
                     .children(colors),
             )
-            .child(
+            .child(style::switch(
                 Switch::new(SharedString::from(format!("highlight-{key}")))
                     .small()
                     .checked(on)
@@ -1298,7 +1300,7 @@ impl ChatView {
                     .on_click(cx.listener(move |view, on: &bool, _, cx| {
                         view.set_highlight_on(key, *on, cx);
                     })),
-            )
+            ))
             .into_any_element()
     }
 
@@ -1504,7 +1506,7 @@ impl ChatView {
                         d.child(div().text_xs().text_color(rgb(style::FAINT)).child(what))
                     }),
             )
-            .child(
+            .child(style::switch(
                 Switch::new(id)
                     .small()
                     .checked(on)
@@ -1513,7 +1515,7 @@ impl ChatView {
                         let on = *on;
                         view.set_overlay(move |o| set(o, on), cx);
                     })),
-            )
+            ))
             .into_any_element()
     }
 
@@ -1645,7 +1647,7 @@ impl ChatView {
                                  it starts. It never restarts on its own.",
                             )),
                     )
-                    .child(
+                    .child(style::switch(
                         Switch::new("auto-update")
                             .small()
                             .checked(self.auto_update)
@@ -1653,7 +1655,7 @@ impl ChatView {
                             .on_click(cx.listener(|view, on: &bool, _, cx| {
                                 view.set_auto_update(*on, cx);
                             })),
-                    ),
+                    )),
             )
             .child(div().text_xs().text_color(rgb(style::MUTED)).child(status))
             .child(
@@ -2213,13 +2215,13 @@ fn switch_row(
                 .child(name)
                 .child(div().text_xs().text_color(rgb(style::FAINT)).child(note)),
         )
-        .child(
+        .child(style::switch(
             Switch::new(id)
                 .small()
                 .checked(checked)
                 .accessibility_label(name)
                 .on_click(on_click),
-        )
+        ))
 }
 
 /// The timeouts the user card offers, in seconds.
