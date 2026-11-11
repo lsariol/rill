@@ -77,6 +77,11 @@ pub const HIGHLIGHT_COLORS: [u32; 10] = [
     0x949ba4,
 ];
 
+/// Name colors to choose from for Simple view.
+pub const NAME_COLORS: [u32; 9] = [
+    0xffffff, 0x5cb8ff, 0xff3b3b, 0xff6a2b, 0xff7ad9, 0xffd600, 0x3ddc84, 0xb57cff, 0xaab0b8,
+];
+
 /// Reads `#rrggbb` or `#rgb` (the `#` is optional).
 pub fn parse_hex(s: &str) -> Option<u32> {
     let hex = s.trim().trim_start_matches('#');

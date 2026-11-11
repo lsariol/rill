@@ -19,8 +19,9 @@ body.backing .line.hl { background: color-mix(in srgb, var(--hl) 30%, var(--back
 .icon, .badge { height: 1em; vertical-align: -0.12em; margin-right: 0.3em; }
 .chip { display: inline-flex; align-items: center; justify-content: center; width: 1em; height: 1em;
   border-radius: 0.18em; vertical-align: -0.12em; margin-right: 0.3em; color: #fff; text-shadow: none; }
-.chip b { font-size: 0.62em; font-weight: 800; }
-body.no-icons .icon, body.no-badges .badge, body.no-badges .chip { display: none; }
+.chip i { width: 0.72em; height: 0.72em; background: #fff; -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat; }
+body.no-icons .icon { display: none; }
 .name { font-weight: 700; }
 .action .text, .event .text { font-style: italic; }
 .mention { font-weight: 700; }
@@ -36,12 +37,11 @@ body.no-icons .icon, body.no-badges .badge, body.no-badges .chip { display: none
 const feed = document.getElementById("feed");
 const MAX_LINES = 100;
 const NAME_COLOR = "#9b9bff";
-let config = { font: 18, fade: 0, badges: true, icons: true, background: false, hl: {} };
+let config = { font: 18, fade: 0, icons: true, background: false, hl: {} };
 
 function applyConfig() {
   document.documentElement.style.setProperty("--font", config.font + "px");
   document.body.classList.toggle("backing", !!config.background);
-  document.body.classList.toggle("no-badges", !config.badges);
   document.body.classList.toggle("no-icons", !config.icons);
   for (const line of feed.children) paint(line);
 }
@@ -76,15 +76,15 @@ function add(m) {
       const img = image(b.u, "badge", b.t);
       img.title = b.t;
       line.append(img);
-    } else if (b.l) {
-      // A role without an image, such as Kick's: a lettered square like Rill's.
+    } else if (/^[a-z]+$/.test(b.k || "")) {
+      // A role the platform sends no image for, such as Kick's: Rill's own icon on a colored square.
       const chip = document.createElement("span");
       chip.className = "chip";
       chip.title = b.t || "";
       if (/^#[0-9a-f]{6}$/i.test(b.c || "")) chip.style.background = b.c;
-      const letter = document.createElement("b");
-      letter.textContent = String(b.l).slice(0, 1);
-      chip.append(letter);
+      const icon = document.createElement("i");
+      icon.style.setProperty("--icon", "url(/icons/badge-" + b.k + ".svg)");
+      chip.append(icon);
       line.append(chip);
     }
   }

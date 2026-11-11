@@ -14,6 +14,7 @@ use gpui_component::{Disableable, Sizable, StyledExt as _};
 use rill_core::command::format_duration;
 use rill_core::session::Batch;
 use rill_core::{Action, Author, Command, ConnectionStatus, Plan, Platform, UserRef, now_ms};
+use rill_os::settings::NameStyle;
 
 use crate::chat_view::ChatView;
 use crate::composer::Replying;
@@ -1013,17 +1014,17 @@ impl ChatView {
                     view.set_display(|v| v.show_times = on, |s| s.show_times = on, cx);
                 }),
             ))
-            .child(switch_row(
-                "show-badges",
-                "Show badges",
-                "Badges such as moderator or subscriber before names. A narrow window hides \
-                 them anyway.",
-                self.show_badges,
-                cx.listener(|view, on: &bool, _, cx| {
-                    let on = *on;
-                    view.set_display(|v| v.show_badges = on, |s| s.show_badges = on, cx);
-                }),
+            .child(self.names_choice(
+                "names",
+                "Names",
+                "Simple colors each name by role and shows no badges but the platform's icon. \
+                 Badges shows owner, moderator, VIP and subscriber badges and each name's own \
+                 color; a narrow window hides the badges.",
+                self.names,
+                |view, style, cx| view.set_display(|v| v.names = style, |s| s.names = style, cx),
+                cx,
             ))
+            .child(self.render_name_colors(cx))
             .child(switch_row(
                 "mentions-only",
                 "Only messages that mention you",
@@ -1146,6 +1147,102 @@ impl ChatView {
             .into_any_element()
     }
 
+    /// A Simple or Badges choice for how names look.
+    fn names_choice(
+        &self,
+        id: &'static str,
+        title: &'static str,
+        what: &'static str,
+        current: NameStyle,
+        pick: fn(&mut Self, NameStyle, &mut Context<Self>),
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let buttons = [(NameStyle::Simple, "Simple"), (NameStyle::Badges, "Badges")].map(
+            |(choice, label)| {
+                let b = Button::new((id, choice as usize)).xsmall().label(label);
+                let b = if choice == current {
+                    b.primary()
+                } else {
+                    b.outline()
+                };
+                b.on_click(cx.listener(move |view, _, _, cx| pick(view, choice, cx)))
+            },
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(title)
+            .child(div().text_xs().text_color(rgb(style::FAINT)).child(what))
+            .child(div().flex().gap_1().children(buttons))
+            .into_any_element()
+    }
+
+    /// Simple view's name colors, one row per role.
+    fn render_name_colors(&self, cx: &mut Context<Self>) -> AnyElement {
+        let rows = rill_core::Rank::ALL.map(|rank| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .pl_4()
+                .child(rank.label())
+                .child(self.color_picker(crate::chat_view::name_key(rank), &style::NAME_COLORS, cx))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(style::FAINT))
+                    .child("Simple's colors, here and on the overlay:"),
+            )
+            .children(rows)
+            .into_any_element()
+    }
+
+    /// Color swatches and a hex box for a color setting.
+    fn color_picker(
+        &self,
+        key: &'static str,
+        palette: &[u32],
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let current = self.color_of(key);
+        let swatches: Vec<_> = palette
+            .iter()
+            .map(|&c| {
+                div()
+                    .id(SharedString::from(format!("{key}-{c:06x}")))
+                    .size(px(16.))
+                    .rounded_full()
+                    .cursor_pointer()
+                    .bg(rgb(c))
+                    .border_2()
+                    .border_color(rgb(if c == current { 0xffffff } else { style::PANEL }))
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.set_color(key, c, window, cx);
+                    }))
+            })
+            .collect();
+        let hex = self
+            .color_inputs
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, input)| div().w(px(84.)).child(Input::new(input).xsmall()));
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_1()
+            // The color in use, even when it isn't one of the swatches.
+            .child(div().w(px(4.)).h(px(16.)).rounded_sm().bg(rgb(current)))
+            .children(swatches)
+            .children(hex)
+    }
+
     /// One highlight row: name, switch, and with `colored` its swatches and hex box.
     fn highlight_row(
         &self,
@@ -1157,44 +1254,9 @@ impl ChatView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let on = self.highlight_on(key);
-        let current = self.color_of(key);
         let bare = key.strip_prefix("o.").unwrap_or(key);
         let is_kind = rill_core::EventKind::ALL.iter().any(|k| k.key() == bare);
-        let colors = if colored {
-            let swatches: Vec<_> = style::HIGHLIGHT_COLORS
-                .iter()
-                .map(|&c| {
-                    div()
-                        .id(SharedString::from(format!("{key}-{c:06x}")))
-                        .size(px(16.))
-                        .rounded_full()
-                        .cursor_pointer()
-                        .bg(rgb(c))
-                        .border_2()
-                        .border_color(rgb(if c == current { 0xffffff } else { style::PANEL }))
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            view.set_color(key, c, window, cx);
-                        }))
-                })
-                .collect();
-            let hex = self
-                .color_inputs
-                .iter()
-                .find(|(k, _)| *k == key)
-                .map(|(_, input)| div().w(px(84.)).child(Input::new(input).xsmall()));
-            let row = div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap_1()
-                // The color in use, even when it isn't one of the swatches.
-                .child(div().w(px(4.)).h(px(16.)).rounded_sm().bg(rgb(current)))
-                .children(swatches)
-                .children(hex);
-            Some(row)
-        } else {
-            None
-        };
+        let colors = colored.then(|| self.color_picker(key, &style::HIGHLIGHT_COLORS, cx));
         div()
             .flex()
             .items_center()
@@ -1329,12 +1391,15 @@ impl ChatView {
                 |o, v| o.fade_seconds = v,
                 cx,
             ))
-            .child(self.overlay_switch(
-                "overlay-badges",
-                "Badges",
-                "",
-                o.badges,
-                |o, on| o.badges = on,
+            .child(self.names_choice(
+                "overlay-names",
+                "Names",
+                "Simple or Badges, as under Chat, for your stream.",
+                o.names,
+                |view, style, cx| {
+                    view.set_overlay(|o| o.names = style, cx);
+                    view.reseed_overlay();
+                },
                 cx,
             ))
             .child(self.overlay_switch(
@@ -1952,7 +2017,7 @@ impl ChatView {
                     .child(
                         div()
                             .font_bold()
-                            .text_color(style::readable_name(a.color))
+                            .text_color(self.name_color(Some(a)))
                             .child(name.clone()),
                     )
                     .children(login.map(|l| div().text_color(rgb(style::MUTED)).child(l)))

@@ -45,12 +45,25 @@ pub(crate) fn color_keys() -> Vec<&'static str> {
     let mut keys = vec!["mention", "first"];
     keys.extend(rill_core::EventKind::ALL.iter().map(|k| k.key()));
     keys.extend(["o.mention", "o.first"]);
+    keys.extend(rill_core::Rank::ALL.into_iter().map(name_key));
     keys.extend(
         rill_core::EventKind::ALL
             .into_iter()
             .filter_map(overlay_key),
     );
     keys
+}
+
+/// A Simple view name color's key in Settings.
+pub(crate) fn name_key(rank: rill_core::Rank) -> &'static str {
+    use rill_core::Rank::*;
+    match rank {
+        Owner => "n.owner",
+        Moderator => "n.moderator",
+        Vip => "n.vip",
+        Subscriber => "n.subscriber",
+        Viewer => "n.viewer",
+    }
 }
 
 /// The overlay's highlight row for a kind of event; ad breaks aren't shown there.
@@ -197,9 +210,12 @@ pub struct ChatView {
     pub(crate) rumble_link: Entity<gpui_component::input::InputState>,
     /// The Copy button pressed last, which says "Copied" for a moment.
     copied: Option<(SharedString, Task<()>)>,
-    /// Each line's time and badges, unless the window is narrow.
+    /// Each line's time, unless the window is narrow.
     pub(crate) show_times: bool,
-    pub(crate) show_badges: bool,
+    /// Simple names (colored by role) or Badges (role badges and each name's own color).
+    pub(crate) names: rill_os::settings::NameStyle,
+    /// Simple view's name colors, shared with the overlay.
+    pub(crate) name_colors: rill_os::settings::NameColors,
     effective_compact: bool,
     following: bool,
     unseen: usize,
@@ -236,7 +252,13 @@ impl ChatView {
         let show_deleted = saved.as_ref().is_some_and(|s| s.show_deleted_messages);
         let link_previews = saved.as_ref().is_none_or(|s| s.link_previews);
         let show_times = saved.as_ref().is_none_or(|s| s.show_times);
-        let show_badges = saved.as_ref().is_none_or(|s| s.show_badges);
+        let names = saved
+            .as_ref()
+            .map_or(rill_os::settings::NameStyle::Badges, |s| s.names);
+        let name_colors = saved
+            .as_ref()
+            .map(|s| s.name_colors.clone())
+            .unwrap_or_default();
         let mentions_only = saved.as_ref().is_some_and(|s| s.mentions_only);
         input.update(cx, |state, cx| state.focus(window, cx));
 
@@ -374,7 +396,8 @@ impl ChatView {
                     .masked(true)
             }),
             show_times,
-            show_badges,
+            names,
+            name_colors,
             copied: None,
             effective_compact: false,
             following: true,
@@ -640,6 +663,12 @@ impl ChatView {
 
     /// A highlight's color: the one chosen in Settings, else Rill's.
     pub(crate) fn color_of(&self, key: &str) -> u32 {
+        if let Some(k) = key.strip_prefix("n.") {
+            let default = rill_os::settings::NameColors::default();
+            return style::parse_hex(self.name_colors.get(k))
+                .or_else(|| style::parse_hex(default.get(k)))
+                .unwrap_or(0xffffff);
+        }
         if let Some(k) = key.strip_prefix("o.") {
             let h = &self.overlay_settings.highlights;
             let (chosen, default) = match k {
@@ -751,6 +780,19 @@ impl ChatView {
     ) {
         let hex = style::to_hex(color);
         let saved = hex.clone();
+        if let Some(k) = key.strip_prefix("n.") {
+            let shown = hex.clone();
+            self.set_display(
+                |v| v.name_colors.set(k, shown),
+                |s| s.name_colors.set(k, saved),
+                cx,
+            );
+            self.reseed_overlay();
+            if let Some((_, input)) = self.color_inputs.iter().find(|(k, _)| *k == key) {
+                input.update(cx, |s, cx| s.set_value(hex, window, cx));
+            }
+            return;
+        }
         if let Some(k) = key.strip_prefix("o.") {
             self.set_overlay(
                 move |o| {
@@ -911,6 +953,14 @@ impl ChatView {
             .map(|a| a.display_name.clone())
     }
 
+    /// Draws the overlay's lines again, after a change to how names look.
+    pub(crate) fn reseed_overlay(&mut self) {
+        if let Some(o) = &self.overlay {
+            o.clear();
+        }
+        self.seed_overlay();
+    }
+
     /// Starts a newly opened overlay with the last lines of chat.
     fn seed_overlay(&mut self) {
         const SEED: usize = 30;
@@ -924,7 +974,9 @@ impl ChatView {
             .rev()
             .filter(|e| !e.deleted)
             .filter_map(|e| {
-                let json = rill_overlay::line(e, &self.overlay_settings, |p| self.own_name(p))?;
+                let json = rill_overlay::line(e, &self.overlay_settings, &self.name_colors, |p| {
+                    self.own_name(p)
+                })?;
                 Some((e.seq, json))
             })
             .take(SEED)
@@ -957,7 +1009,9 @@ impl ChatView {
             new.reverse();
             for e in new.into_iter().filter(|e| !e.deleted) {
                 if let Some(json) =
-                    rill_overlay::line(e, &self.overlay_settings, |p| self.own_name(p))
+                    rill_overlay::line(e, &self.overlay_settings, &self.name_colors, |p| {
+                        self.own_name(p)
+                    })
                 {
                     overlay.line(e.seq, json);
                 }
@@ -1956,8 +2010,23 @@ impl ChatView {
         self.show_times && !self.effective_compact
     }
 
-    /// Whether lines show badges right now.
+    /// Whether lines show role badges right now: in Badge view, unless the window is narrow.
     pub(crate) fn badges_shown(&self) -> bool {
-        self.show_badges && !self.effective_compact
+        self.names == rill_os::settings::NameStyle::Badges && !self.effective_compact
+    }
+
+    /// A name's color: its role's in Simple view, else its own (YouTube's by role).
+    pub(crate) fn name_color(&self, author: Option<&rill_core::Author>) -> gpui::Hsla {
+        let simple = |rank: rill_core::Rank| {
+            style::parse_hex(self.name_colors.get(rank.key()))
+                .map(style::hsla)
+                .unwrap_or_else(|| style::hsla(0xffffff))
+        };
+        match author {
+            // Your own line before the platform echoes it: you're the channel's owner.
+            None => simple(rill_core::Rank::Owner),
+            Some(a) if self.names == rill_os::settings::NameStyle::Simple => simple(a.roles.rank()),
+            Some(a) => style::readable_name(a.color),
+        }
     }
 }

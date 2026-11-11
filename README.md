@@ -44,9 +44,16 @@ next, from the same code.
   message while chat keeps moving: delete, timeouts, ban and unban, showing only what that
   platform allows, and every message from that user still in the chat. Actions leave the card
   open and the chat where it is; clicking anywhere else closes it.
-- **Badges:** hovering a badge says what it is, with how long a subscriber has subscribed.
-  Channels' own badges are used: custom subscriber badges on Twitch and Kick, and the moderator
-  and VIP badges a Twitch channel sets on FrankerFaceZ.
+- **Names and badges:** Settings → Names picks Simple or Badges, for Rill's window and the
+  overlay separately (`names` and `overlay.names`: `simple` or `badges`). Simple shows only the
+  platform's icon and colors each name by role: the channel owner orange-red, moderators red, VIPs
+  pink, subscribers and YouTube members light blue, and everyone else white. Settings changes
+  each color (`name_colors`). Badges shows owner, moderator, VIP and subscriber badges and each
+  name's own color; YouTube, which has no name colors, colors its owner, moderators and members
+  as its own chat does. Rill's window starts in Badges and the overlay in Simple. Hovering a
+  badge says what it is, with how long a subscriber has subscribed. Channels' own badges are
+  used: custom subscriber badges on Twitch and Kick, and the moderator and VIP badges a Twitch
+  channel sets on FrankerFaceZ.
 - **Copying:** drag across messages to select them and press Ctrl+C. Each message copies as a
   line with its time (`15:44 name: message`), and emotes copy as their names.
 - **Links:** links open in the default browser. Hovering one shows the page's title, description
@@ -120,12 +127,14 @@ next, from the same code.
   To resize it later, change Width and Height in the source's properties: dragging its corners
   only stretches the picture, so no more lines fit. Lines sit at the bottom and move up, with
   emotes, badges and platform icons. Settings picks the text size, whether lines fade after a
-  while, badges and icons, a dark backing, and hiding commands (`!uptime`) and well-known bots.
+  while, Simple or Badges names, platform icons, a dark backing, and hiding commands (`!uptime`)
+  and well-known bots.
   The overlay's highlights are its own, separate from Rill's and all off at first, so the stream
   shows plain chat until you choose otherwise. Deleted messages leave the overlay too. Only this
   computer can open the page, and it runs only while the setting is on and Rill is open; the
   source's Custom CSS box in OBS changes the look further (`.line`, `.name`, `.text`, `.badge`,
-  `.chip` for a badge drawn as a letter, `.icon`, `.emote`, and `.hl` for highlighted lines). The port is `overlay.port` in
+  `.chip` for a role badge Rill draws, `.icon`, `.emote`, and `.hl` for highlighted lines). The
+  port is `overlay.port` in
   `settings.json`, and `--overlay <port>` turns it on for one run.
 - **Problems and logs:** if Rill hits a problem, it records it, and the next start offers to send
   a report to the Rill team: what went wrong and the end of Rill's recent log, never chat
@@ -294,3 +303,7 @@ find these files through `https://rill.mobasity.com/updates`, which points at th
 ## License
 
 Rill is released under the MIT license. See [LICENSE](LICENSE).
+
+The badge images in `crates/rill-app/assets/kick-badges/` are Kick's, shown so Kick's broadcaster,
+moderator, VIP and subscriber badges look as they do on Kick. They belong to Kick and aren't
+covered by Rill's license.

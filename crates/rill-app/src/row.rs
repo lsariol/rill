@@ -58,7 +58,7 @@ impl ChatView {
     ) -> AnyElement {
         let (seq, deleted) = (entry.seq, entry.deleted);
         let soft = deleted && self.show_deleted;
-        let parts = chat_parts(m, deleted && !soft);
+        let parts = chat_parts(m, deleted && !soft, self.name_color(Some(&m.author)));
         let view = cx.entity().downgrade();
         let hover = self.link_hover_fn(cx);
         let text = ChatText::new(("chat-text", seq), order(seq, 1), parts)
@@ -173,8 +173,13 @@ impl ChatView {
                     .when(carded, |d| d.bg(rgb(style::RAISED)))
                     .when(times, |d| d.child(time(entry.seq, entry.received_ms)))
                     .child(gutter(Some(m.platform)))
-                    .when(self.badges_shown() && !m.author.badges.is_empty(), |d| {
-                        d.child(badges(entry.seq, &m.author.badges, self.link_hover_fn(cx)))
+                    .when(self.badges_shown() && has_roles(&m.author.badges), |d| {
+                        d.child(badges(
+                            entry.seq,
+                            m.platform,
+                            &m.author.badges,
+                            self.link_hover_fn(cx),
+                        ))
                     })
                     .child(
                         div()
@@ -191,7 +196,21 @@ impl ChatView {
                     .iter()
                     .find_map(|d| me(d.platform))
                     .unwrap_or_else(|| "You".into());
-                sent_row(entry, s, &name, compact, times, self.link_hover_fn(cx)).into_any_element()
+                let own_badges = s
+                    .author
+                    .as_ref()
+                    .filter(|a| self.badges_shown() && has_roles(&a.badges))
+                    .zip(s.deliveries.first())
+                    .map(|(a, d)| {
+                        badges(entry.seq, d.platform, &a.badges, self.link_hover_fn(cx))
+                            .into_any_element()
+                    });
+                let look = SentLook {
+                    name: &name,
+                    color: self.name_color(s.author.as_ref()),
+                    badges: own_badges,
+                };
+                sent_row(entry, s, look, compact, times, self.link_hover_fn(cx)).into_any_element()
             }
             Item::Notice(n) => notice_row(
                 entry,
@@ -260,14 +279,20 @@ fn time(seq: u64, ms: i64) -> impl IntoElement {
         .child(ChatText::new(("time", seq), order(seq, 0), parts).silent())
 }
 
-/// Badges, each saying what it is on hover ("Subscriber · 1 year, 4 months"), straight away.
-fn badges(seq: u64, badges: &[Badge], hover: HoverFn) -> impl IntoElement {
+/// Whether any badge stands for a role, which is all Badge view shows.
+fn has_roles(badges: &[Badge]) -> bool {
+    badges.iter().any(|b| b.role().is_some())
+}
+
+/// Role badges, each saying what it is on hover ("Subscriber · 1 year, 4 months"), straight away.
+fn badges(seq: u64, platform: Platform, badges: &[Badge], hover: HoverFn) -> impl IntoElement {
+    let roles = badges.iter().filter_map(|b| b.role().map(|r| (b, r)));
     div()
         .flex()
         .flex_none()
         .gap(px(2.))
         .pt(px(3.))
-        .children(badges.iter().take(4).enumerate().map(|(i, b)| {
+        .children(roles.take(4).enumerate().map(|(i, (b, rank))| {
             let image = match &b.image_url {
                 // FrankerFaceZ's custom moderator badges are drawn on moderator green.
                 Some(url) if b.id.starts_with("moderator/") && url.contains("frankerfacez.com") => {
@@ -279,7 +304,14 @@ fn badges(seq: u64, badges: &[Badge], hover: HoverFn) -> impl IntoElement {
                         .into_any_element()
                 }
                 Some(url) => img(url.clone()).size(px(icon_px())).into_any_element(),
-                None => badge_chip(b).into_any_element(),
+                // Kick sends no image for its role badges: Rill carries Kick's own.
+                None if platform == Platform::Kick => img(SharedString::from(format!(
+                    "kick-badges/{}.svg",
+                    rank.badge_icon()
+                )))
+                .size(px(icon_px()))
+                .into_any_element(),
+                None => badge_chip(platform, rank).into_any_element(),
             };
             let (title, url) = (b.title.clone(), b.image_url.clone());
             let key = SharedString::from(format!("badge-{seq}-{i}"));
@@ -298,32 +330,28 @@ fn badges(seq: u64, badges: &[Badge], hover: HoverFn) -> impl IntoElement {
         }))
 }
 
-/// A lettered stand-in for a badge without an image.
-fn badge_chip(b: &Badge) -> impl IntoElement {
-    let kind = b.id.split('/').next().unwrap_or("");
-    let (letter, color) = match kind {
-        "broadcaster" => ("B", 0xe91916),
-        "moderator" => ("M", 0x00ad03),
-        "vip" => ("V", 0xe005b9),
-        "subscriber" => ("S", 0x8205b4),
-        _ => ("•", 0x4e5058),
-    };
+/// Rill's own icon for a role whose platform sends no badge image (YouTube, Rumble).
+fn badge_chip(platform: Platform, rank: rill_core::Rank) -> impl IntoElement {
     div()
         .size(px(icon_px()))
         .rounded_sm()
-        .bg(rgb(color))
+        .bg(rgb(rank.badge_color(platform)))
         .flex()
         .items_center()
         .justify_center()
-        .text_size(px(9.))
-        .font_weight(FontWeight::BOLD)
-        .text_color(rgb(0xffffff))
-        .child(letter)
+        .child(
+            gpui::svg()
+                .path(SharedString::from(format!(
+                    "badges/{}.svg",
+                    rank.badge_icon()
+                )))
+                .size(px(icon_px() * 0.72))
+                .text_color(rgb(0xffffff)),
+        )
 }
 
 /// The name and message text as one selectable line. The name opens the user card.
-fn chat_parts(m: &ChatMessage, deleted: bool) -> Parts {
-    let name_color = style::readable_name(m.author.color);
+fn chat_parts(m: &ChatMessage, deleted: bool, name_color: gpui::Hsla) -> Parts {
     let mut parts = Parts::default();
     parts.target(
         m.author.display_name.clone(),
@@ -485,10 +513,17 @@ fn bold(color: gpui::Hsla) -> HighlightStyle {
     }
 }
 
+/// How your own line's name looks: the name, its color, and its badges in Badge view.
+struct SentLook<'a> {
+    name: &'a str,
+    color: gpui::Hsla,
+    badges: Option<AnyElement>,
+}
+
 fn sent_row(
     entry: &Entry,
     s: &SentMessage,
-    name: &str,
+    look: SentLook,
     compact: bool,
     times: bool,
     hover: HoverFn,
@@ -519,7 +554,7 @@ fn sent_row(
         _ => None,
     });
     let mut parts = Parts::default();
-    parts.text(format!("{name}: "), Some(bold(style::hsla(0x53fc18))));
+    parts.text(format!("{}: ", look.name), Some(bold(look.color)));
     if s.fragments.is_empty() {
         parts.linked(&s.text, None);
     } else {
@@ -537,6 +572,7 @@ fn sent_row(
     row_frame(entry.seq, None, compact)
         .when(times, |d| d.child(time(entry.seq, entry.received_ms)))
         .child(div().pt(px(3.)).w(px(icon_px())).flex_none().child(mark))
+        .children(look.badges)
         .child(div().flex_1().min_w_0().child(body).children(failures))
         .child(div().flex().flex_none().gap_1().pt(px(1.)).children(marks))
 }
