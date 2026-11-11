@@ -35,6 +35,12 @@ Fixes and polish from the first test stream.
 
 - YouTube's own emoji, such as `:hand-pink-waving:`, show as pictures instead of their names.
   A channel's member emoji still show as text: YouTube doesn't give apps their pictures.
+- YouTube chat stopped arriving when the chat went quiet for a moment: Rill took YouTube closing
+  a quiet connection for a failure and waited longer before each reconnect. It now reconnects
+  within seconds.
+- Kick forgot a channel picked with Read chat when Rill restarted. Signed in with no channel
+  open, Kick now reads your own channel, and Accounts shows the account and Disconnect instead
+  of only "Not connected".
 - After signing in to YouTube while not live, Accounts kept saying to finish signing in.
 - After approving Twitch's sign-in code, Accounts showed the sign-in prompt until Twitch connected.
 - Copy buttons say "Copied" for a moment, so a click shows.
