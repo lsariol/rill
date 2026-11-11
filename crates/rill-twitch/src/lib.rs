@@ -604,6 +604,8 @@ fn spawn_request(
         let result = run_request(&helix, &channel, &me, req.command).await;
         match &result {
             Err(e) => tracing::warn!(err = %e, "Twitch request failed"),
+            // A note, such as "not currently banned", means nothing changed.
+            Ok(Some(_)) if tell.is_some() => {}
             Ok(_) => {
                 if let Some(moderation) = tell {
                     events
@@ -654,8 +656,19 @@ async fn run_request(
             }
             Command::Unban { user } => {
                 let id = resolve(helix, &user).await?;
-                helix.unban(channel, me, &id).await?;
-                None
+                match helix.unban(channel, me, &id).await {
+                    Err(HelixError::Api {
+                        status: 400,
+                        message,
+                    }) if message.to_lowercase().contains("not banned") => Some(format!(
+                        "{} is not currently banned.",
+                        user.login.trim_start_matches('@')
+                    )),
+                    r => {
+                        r?;
+                        None
+                    }
+                }
             }
             Command::Poll {
                 title,

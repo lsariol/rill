@@ -28,6 +28,15 @@ Fixes and polish from the first test stream.
 - Kick's broadcaster, moderator, VIP and subscriber badges look as they do on Kick, instead of
   lettered squares. YouTube's and Rumble's role badges are small icons, and YouTube names take
   YouTube's own colors for the owner, moderators and members.
+- In the composer, Up brings back the messages you've sent, newest first, and Down steps forward
+  again to what you were typing.
+- `/ban`, `/timeout` and `/unban` work on anyone by name on Kick and YouTube, not only people who
+  have chatted since Rill connected.
+- On YouTube, Rill remembers the bans and timeouts it gives, so it can lift them after a restart
+  or once the stream has ended. YouTube doesn't let apps look up other bans, so those are still
+  lifted in YouTube Studio.
+- Unbanning someone who isn't banned says so in a plain line instead of an error.
+- When a YouTube stream ends, Rill no longer also says to go live.
 - Rumble is off until turned on in Settings.
 - Messages sent to every platform, and lines about several platforms or none, show Rill's logo.
 

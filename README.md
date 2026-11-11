@@ -24,7 +24,10 @@ next, from the same code.
   "All platforms" selected, Rill asks which platform when more than one can do it: click one, or
   pick it with Tab or the arrow keys and press Enter (Esc cancels).
   `/search <text>`, `/clear` and `/help` are Rill's own. Start a message with `//` to send a
-  literal slash.
+  literal slash. Moderation commands work on anyone by name, whether or not they've chatted.
+  YouTube lifts a ban only with the ID it gave when banning and lets apps look up no others, so
+  Rill keeps the ones it gives in `youtube-bans.txt` next to its settings and can lift those
+  later; bans given elsewhere are lifted in YouTube Studio.
 - **Nukes:** for bot raids and spam waves. `/nuke <phrase>` times out everyone who said the phrase
   in the last 5 minutes for 24 hours; `/nuke haha 48h` sets the timeout, and `/nuke haha 48h 15m`
   also looks back 15 minutes. `/meganuke <phrase> [lookback]` bans instead. Put a platform first
@@ -146,8 +149,9 @@ next, from the same code.
   everything Rill is built with.
 - **Keyboard:** F6 moves between the composer and the messages. In the messages, Up and Down (or
   Home and End) pick one, and Enter or Space opens its user card. Tab and Shift+Tab move between
-  buttons, and Enter or Space presses one. In the composer, press Esc (with nothing to close),
-  then Tab, to leave it. Esc anywhere else closes an open card and returns to the composer.
+  buttons, and Enter or Space presses one. In the composer, Up brings back the messages you've
+  sent, newest first, and Down steps forward again to what you were typing. Press Esc (with
+  nothing to close), then Tab, to leave the composer. Esc anywhere else closes an open card and returns to the composer.
 
 ## Requirements
 

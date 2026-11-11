@@ -171,6 +171,8 @@ pub struct ChatView {
     pub(crate) completions_dismissed: Option<SharedString>,
     /// Tab stepping through emotes and names for the word before the cursor.
     pub(crate) tab_cycle: Option<crate::composer::TabCycle>,
+    /// What was sent from the composer, for Up and Down.
+    pub(crate) sent_history: crate::composer::SentHistory,
     pub(crate) composer_error: Option<SharedString>,
     /// Set by Esc in the composer: the next Tab leaves it instead of switching the destination.
     pub(crate) tab_leaves: bool,
@@ -369,6 +371,7 @@ impl ChatView {
             completion_top: 0,
             completions_dismissed: None,
             tab_cycle: None,
+            sent_history: Default::default(),
             composer_error: None,
             tab_leaves: false,
             panel: Panel::None,

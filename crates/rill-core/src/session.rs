@@ -439,6 +439,10 @@ impl Session {
                 });
             }
             Some(Pending::Action { label, then }) => match (result, then) {
+                // The platform did nothing and said why, such as "Foo is not currently banned."
+                (Ok(Some(note)), Then::Quiet { .. }) => {
+                    self.notice(Some(platform), Level::Info, &note, now_ms);
+                }
                 (Ok(_), Then::Quiet { clears, deletes }) => {
                     // Gone at once, though the platform's own event may come later.
                     if let Some(user) = clears {
@@ -1098,6 +1102,34 @@ mod tests {
             s.feed
                 .entries()
                 .any(|e| matches!(e.item, Item::Chat(_)) && e.deleted)
+        );
+
+        // An unban of someone who isn't banned is a plain line, not an error.
+        let Submitted::Send(out) = s.execute(
+            Platform::Twitch,
+            Plan::Run {
+                command: Command::Unban {
+                    user: UserRef {
+                        id: None,
+                        login: "calm".into(),
+                    },
+                },
+                label: "Unban calm".into(),
+            },
+        ) else {
+            panic!("expected a request");
+        };
+        s.apply(
+            Event::Done {
+                platform: Platform::Twitch,
+                request: out[0].request.id,
+                result: Ok(Some("calm is not currently banned.".into())),
+            },
+            2,
+        );
+        assert_eq!(
+            last_notice(&s),
+            (Level::Info, "calm is not currently banned.".to_string())
         );
     }
 

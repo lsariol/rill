@@ -155,6 +155,61 @@ pub(crate) struct TabCycle {
 }
 
 /// Binds the composer's keys inside its text box.
+/// Messages sent from the composer, oldest first, for stepping through with Up and Down.
+#[derive(Debug, Default)]
+pub(crate) struct SentHistory {
+    sent: Vec<String>,
+    /// The message shown while stepping through.
+    at: Option<usize>,
+    /// What was typed before stepping back, brought back after the newest.
+    draft: String,
+}
+
+impl SentHistory {
+    /// The most messages kept.
+    const MAX: usize = 100;
+
+    /// Adds a sent message, once if it repeats the last one, and ends any stepping through.
+    pub(crate) fn push(&mut self, text: &str) {
+        let text = text.trim_end();
+        if !text.is_empty() && self.sent.last().map(String::as_str) != Some(text) {
+            self.sent.push(text.to_string());
+            if self.sent.len() > Self::MAX {
+                self.sent.remove(0);
+            }
+        }
+        self.at = None;
+        self.draft.clear();
+    }
+
+    /// Up: the message before the one shown; `None` at the oldest.
+    pub(crate) fn older(&mut self, typed: &str) -> Option<&str> {
+        let i = match self.at {
+            None => {
+                let newest = self.sent.len().checked_sub(1)?;
+                self.draft = typed.to_string();
+                newest
+            }
+            Some(0) => return None,
+            Some(i) => i - 1,
+        };
+        self.at = Some(i);
+        Some(&self.sent[i])
+    }
+
+    /// Down: the message after the one shown, then what was typed; `None` when not stepping.
+    pub(crate) fn newer(&mut self) -> Option<String> {
+        let i = self.at?;
+        if i + 1 < self.sent.len() {
+            self.at = Some(i + 1);
+            Some(self.sent[i + 1].clone())
+        } else {
+            self.at = None;
+            Some(std::mem::take(&mut self.draft))
+        }
+    }
+}
+
 pub fn init(cx: &mut App) {
     let input = Some("Composer > Input");
     cx.bind_keys([
@@ -345,20 +400,52 @@ impl ChatView {
         true
     }
 
-    fn next_completion(&mut self, _: &NextCompletion, _: &mut Window, cx: &mut Context<Self>) {
+    fn next_completion(&mut self, _: &NextCompletion, window: &mut Window, cx: &mut Context<Self>) {
         if self.completions(cx).is_empty() {
+            // Down on the last line steps forward through sent messages.
+            let (text, cursor) = {
+                let input = self.input.read(cx);
+                (input.value(), input.cursor())
+            };
+            if !text.get(cursor..).unwrap_or_default().contains('\n')
+                && let Some(newer) = self.sent_history.newer()
+            {
+                self.show_in_composer(&newer, window, cx);
+                return;
+            }
             cx.propagate();
             return;
         }
         self.move_completion(1, cx);
     }
 
-    fn prev_completion(&mut self, _: &PrevCompletion, _: &mut Window, cx: &mut Context<Self>) {
+    fn prev_completion(&mut self, _: &PrevCompletion, window: &mut Window, cx: &mut Context<Self>) {
         if self.completions(cx).is_empty() {
+            // Up on the first line steps back through sent messages, as in Chatterino.
+            let (text, cursor) = {
+                let input = self.input.read(cx);
+                (input.value(), input.cursor())
+            };
+            if !text.get(..cursor).unwrap_or_default().contains('\n')
+                && let Some(older) = self.sent_history.older(&text).map(str::to_string)
+            {
+                self.show_in_composer(&older, window, cx);
+                return;
+            }
             cx.propagate();
             return;
         }
         self.move_completion(-1, cx);
+    }
+
+    /// Fills the composer with `text`, the cursor at its end.
+    fn show_in_composer(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let end = position_at(text);
+        self.input.update(cx, |state, cx| {
+            state.set_value(text.to_string(), window, cx);
+            state.set_cursor_position(end, window, cx);
+        });
+        cx.notify();
     }
 
     fn move_completion(&mut self, by: isize, cx: &mut Context<Self>) {
@@ -453,6 +540,7 @@ impl ChatView {
             None => self.session.submit(&text, self.destination, now_ms()),
         };
         if self.handle_submitted(submitted, window, cx) {
+            self.sent_history.push(&text);
             self.end_reply();
             self.input
                 .update(cx, |state, cx| state.set_value("", window, cx));
@@ -890,6 +978,35 @@ mod tests {
         assert_eq!(in_view(10, 4, 100), 4, "above the top");
         assert_eq!(in_view(0, 99, 100), 92);
         assert_eq!(in_view(50, 2, 5), 0, "a short list never scrolls");
+    }
+
+    #[test]
+    fn up_and_down_step_through_sent_messages_and_back_to_the_draft() {
+        let mut h = SentHistory::default();
+        assert_eq!(h.older(""), None, "nothing sent yet");
+        h.push("first");
+        h.push("second");
+        h.push("second");
+        h.push("/ban spammer");
+        assert_eq!(h.older("half typed"), Some("/ban spammer"));
+        assert_eq!(h.older("/ban spammer"), Some("second"));
+        assert_eq!(h.older("second"), Some("first"), "a repeat is kept once");
+        assert_eq!(h.older("first"), None, "the oldest stays");
+        assert_eq!(h.newer().as_deref(), Some("second"));
+        assert_eq!(h.newer().as_deref(), Some("/ban spammer"));
+        assert_eq!(
+            h.newer().as_deref(),
+            Some("half typed"),
+            "the draft comes back"
+        );
+        assert_eq!(h.newer(), None, "Down does nothing once back");
+        h.older("");
+        h.push("third");
+        assert_eq!(
+            h.older(""),
+            Some("third"),
+            "sending starts again from the newest"
+        );
     }
 
     #[test]

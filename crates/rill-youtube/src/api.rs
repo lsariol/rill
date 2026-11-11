@@ -345,6 +345,21 @@ impl Api {
         Ok(v["id"].as_str().unwrap_or_default().to_string())
     }
 
+    /// A channel's ID from its handle (`@name`); `None` if there's no such channel.
+    pub async fn channel_by_handle(&self, handle: &str) -> Result<Option<String>, ApiError> {
+        let handle = format!("@{}", handle.trim_start_matches('@'));
+        let v = self
+            .call(
+                Method::GET,
+                "/channels",
+                &[("part", "id"), ("forHandle", &handle)],
+                None,
+                1,
+            )
+            .await?;
+        Ok(v["items"][0]["id"].as_str().map(str::to_string))
+    }
+
     pub async fn unban(&self, ban_id: &str) -> Result<(), ApiError> {
         self.call(
             Method::DELETE,

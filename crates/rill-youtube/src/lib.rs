@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod auth;
+mod bans;
 pub mod chat;
 pub mod emoji;
 pub mod stream;
@@ -108,6 +109,8 @@ struct Ctx {
     seven_tv: Option<rill_emotes::Config>,
     /// The gRPC chat stream's address; tests use a local server.
     stream: String,
+    /// Where Rill's YouTube bans are kept between runs; tests keep them in memory only.
+    bans_file: Option<std::path::PathBuf>,
 }
 
 enum Outcome {
@@ -122,8 +125,10 @@ struct Live {
     chat: Arc<Mutex<Option<String>>>,
     /// Lowercased name → channel ID, for `/ban name`.
     authors: Arc<Mutex<HashMap<String, String>>>,
-    /// Channel ID → ban ID and whether it's a timeout, to lift it.
-    bans: Arc<Mutex<HashMap<String, (String, bool)>>>,
+    /// Channel ID → the ban Rill gave, to lift it.
+    bans: Arc<Mutex<HashMap<String, bans::Saved>>>,
+    /// Where the bans are kept between runs.
+    bans_file: Option<std::path::PathBuf>,
     /// The signed-in channel's name, for lines about its own actions.
     me: Arc<Mutex<String>>,
     /// Channels Rill banned or timed out lately; YouTube's later event about them adds no line.
@@ -173,6 +178,7 @@ async fn run(adapter: YouTubeAdapter, io: AdapterIo) {
         api_base: api::API.into(),
         seven_tv: Some(rill_emotes::Config::default()),
         stream: stream::ENDPOINT.into(),
+        bans_file: Some(bans::path()),
     };
     let mut failure: Option<String> = None;
     loop {
@@ -300,7 +306,13 @@ fn expired() -> Outcome {
 /// A signed-in session: find the live chat, then stream it.
 async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
     let api = Api::new(ctx.http.clone(), ctx.client.clone(), token, &ctx.api_base);
-    let live = Live::default();
+    let live = Live {
+        bans_file: ctx.bans_file.clone(),
+        ..Live::default()
+    };
+    if let Some(path) = &live.bans_file {
+        *live.bans.lock().await = bans::load(path, now_ms());
+    }
     let mut backoff = Backoff::chat();
     ctx.events
         .status(ConnectionStatus::Connecting, None, Capabilities::NONE)
@@ -409,7 +421,6 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
                 continue;
             }
         };
-        told_not_live = false;
         told_not_enabled = false;
         *live.chat.lock().await = Some(chat.clone());
         ctx.events
@@ -503,6 +514,8 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
             }
         }
         *live.chat.lock().await = None;
+        // The stream just ended; "chat appears once you go live" would only repeat it.
+        told_not_live = true;
     }
 }
 
@@ -761,6 +774,9 @@ async fn run_request(
     events: &EventSink,
     command: Command,
 ) -> Result<Option<String>, String> {
+    if let Command::Unban { user } = command {
+        return unban(api, live, events, &user).await;
+    }
     let Some(chat) = live.chat.lock().await.clone() else {
         return Err(NOT_LIVE.into());
     };
@@ -768,46 +784,25 @@ async fn run_request(
         Command::Send { text, .. } => api.send(&chat, &text).await.map(Some),
         Command::Delete { message_id } => api.delete(&message_id).await.map(|_| None),
         Command::Timeout { user, seconds, .. } => {
-            let id = resolve(live, &user).await?;
+            let id = find(api, live, &user).await?;
             let ban = api.ban(&chat, &id, Some(seconds)).await;
             if let Ok(ban_id) = &ban {
-                live.bans
-                    .lock()
-                    .await
-                    .insert(id.clone(), (ban_id.clone(), true));
+                let until = now_ms() + i64::from(seconds) * 1000;
+                keep_ban(live, &id, ban_id, Some(until)).await;
                 tell(live, events, &user, &id, ModAction::Timeout { seconds }).await;
             }
             ban.map(|_| None)
         }
         Command::Ban { user, .. } => {
-            let id = resolve(live, &user).await?;
+            let id = find(api, live, &user).await?;
             let ban = api.ban(&chat, &id, None).await;
             if let Ok(ban_id) = &ban {
-                live.bans
-                    .lock()
-                    .await
-                    .insert(id.clone(), (ban_id.clone(), false));
+                keep_ban(live, &id, ban_id, None).await;
                 tell(live, events, &user, &id, ModAction::Ban).await;
             }
             ban.map(|_| None)
         }
-        Command::Unban { user } => {
-            let id = resolve(live, &user).await?;
-            let Some((ban_id, timeout)) = live.bans.lock().await.get(&id).cloned() else {
-                return Err("YouTube: Rill can only lift bans and timeouts it gave this session. Lift others in YouTube Studio.".into());
-            };
-            let r = api.unban(&ban_id).await;
-            if r.is_ok() {
-                live.bans.lock().await.remove(&id);
-                let action = if timeout {
-                    ModAction::Untimeout
-                } else {
-                    ModAction::Unban
-                };
-                tell(live, events, &user, &id, action).await;
-            }
-            r.map(|_| None)
-        }
+        Command::Unban { .. } => unreachable!("handled before the chat check"),
         Command::Poll { .. } => {
             return Err(
                 "YouTube: polls can't be started through the API. Start them in YouTube Studio."
@@ -842,17 +837,95 @@ async fn run_request(
 }
 
 /// A user's channel ID: given, or looked up among recent chatters by name.
-async fn resolve(live: &Live, user: &UserRef) -> Result<String, String> {
+async fn resolve(live: &Live, user: &UserRef) -> Option<String> {
     if let Some(id) = &user.id {
-        return Ok(id.clone());
+        return Some(id.clone());
     }
     let key = user.login.trim_start_matches('@').to_lowercase();
-    live.authors.lock().await.get(&key).cloned().ok_or_else(|| {
-        format!(
-            "YouTube: \"{}\" hasn't chatted since Rill connected, so Rill can't find them. Click their message instead.",
-            user.login
-        )
-    })
+    live.authors.lock().await.get(&key).cloned()
+}
+
+/// A user's channel ID: given, from recent chatters, or by their handle.
+async fn find(api: &Api, live: &Live, user: &UserRef) -> Result<String, String> {
+    if let Some(id) = resolve(live, user).await {
+        return Ok(id);
+    }
+    match api
+        .channel_by_handle(&user.login)
+        .await
+        .map_err(|e| e.message())?
+    {
+        Some(id) => {
+            let key = user.login.trim_start_matches('@').to_lowercase();
+            live.authors.lock().await.insert(key, id.clone());
+            Ok(id)
+        }
+        None => Err(format!(
+            "YouTube: there's no channel with the handle \"@{}\".",
+            user.login.trim_start_matches('@')
+        )),
+    }
+}
+
+/// Remembers a ban Rill gave, on disk too, so it can be lifted later.
+async fn keep_ban(live: &Live, channel: &str, ban: &str, until_ms: Option<i64>) {
+    let mut bans = live.bans.lock().await;
+    bans.insert(
+        channel.to_string(),
+        bans::Saved {
+            ban: ban.to_string(),
+            until_ms,
+        },
+    );
+    if let Some(path) = &live.bans_file {
+        bans::save(path, &bans);
+    }
+}
+
+/// Lifts a ban or timeout Rill gave; YouTube can't look up others, so those stay for YouTube Studio.
+async fn unban(
+    api: &Api,
+    live: &Live,
+    events: &EventSink,
+    user: &UserRef,
+) -> Result<Option<String>, String> {
+    let name = user.login.trim_start_matches('@');
+    let not_banned = || Ok(Some(format!("{name} is not currently banned.")));
+    let id = find(api, live, user).await?;
+    let Some(saved) = live.bans.lock().await.get(&id).cloned() else {
+        return Err(format!(
+            "YouTube: YouTube doesn't let apps look up bans, so Rill can only lift the ones it gave. Lift {name}'s in YouTube Studio."
+        ));
+    };
+    let forget = || async {
+        let mut bans = live.bans.lock().await;
+        bans.remove(&id);
+        if let Some(path) = &live.bans_file {
+            bans::save(path, &bans);
+        }
+    };
+    if saved.until_ms.is_some_and(|u| u <= now_ms()) {
+        forget().await;
+        return not_banned();
+    }
+    match api.unban(&saved.ban).await {
+        Ok(()) => {
+            forget().await;
+            let action = if saved.until_ms.is_some() {
+                ModAction::Untimeout
+            } else {
+                ModAction::Unban
+            };
+            tell(live, events, user, &id, action).await;
+            Ok(None)
+        }
+        // Already lifted elsewhere, such as in YouTube Studio.
+        Err(ApiError::Api { status: 404, .. }) => {
+            forget().await;
+            not_banned()
+        }
+        Err(e) => Err(e.message()),
+    }
 }
 
 #[cfg(test)]
@@ -881,12 +954,12 @@ mod tests {
             id: None,
             login: "@Viewer".into(),
         };
-        assert_eq!(resolve(&live, &user).await, Ok("UCviewer".into()));
+        assert_eq!(resolve(&live, &user).await, Some("UCviewer".into()));
         let stranger = UserRef {
             id: None,
             login: "nobody".into(),
         };
-        assert!(resolve(&live, &stranger).await.is_err());
+        assert_eq!(resolve(&live, &stranger).await, None);
     }
 }
 
@@ -971,6 +1044,10 @@ mod sessions {
     /// The fake Data API's usual answers. Chat itself only comes over the stream.
     fn base_route(r: &Seen) -> (u16, Value) {
         match (r.method.as_str(), r.path.as_str()) {
+            ("GET", "/channels") if r.query.contains("forHandle=%40Stranger") => {
+                (200, json!({"items": [{"id": "UCstranger"}]}))
+            }
+            ("GET", "/channels") if r.query.contains("forHandle") => (200, json!({"items": []})),
             ("GET", "/channels") => (
                 200,
                 json!({"items": [{"id": "UC1", "snippet": {"title": "Me"}}]}),
@@ -1040,6 +1117,7 @@ mod sessions {
             api_base: base.into(),
             seven_tv: None,
             stream,
+            bans_file: None,
         };
         let token = Token {
             access: "access".into(),
@@ -1151,6 +1229,44 @@ mod sessions {
         );
         assert!(said(&seen, "Me unbanned Viewer."), "{seen:#?}");
 
+        // Someone who hasn't chatted is found by handle.
+        let stranger = UserRef {
+            id: None,
+            login: "@Stranger".into(),
+        };
+        request(
+            &tx,
+            4,
+            Command::Ban {
+                user: stranger.clone(),
+                reason: None,
+            },
+        )
+        .await;
+        let seen = until(&mut rx, |e| done(e, 4)).await;
+        assert!(said(&seen, "Me banned Stranger."), "{seen:#?}");
+        // A ban Rill didn't give can't be looked up.
+        let other = UserRef {
+            id: Some("UCother".into()),
+            login: "Other".into(),
+        };
+        request(&tx, 5, Command::Unban { user: other }).await;
+        let seen = until(&mut rx, |e| done(e, 5)).await;
+        assert!(
+            matches!(seen.last(), Some(Event::Done { result: Err(e), .. }) if e.contains("YouTube Studio")),
+            "{seen:#?}"
+        );
+        let nobody = UserRef {
+            id: None,
+            login: "@nobody".into(),
+        };
+        request(&tx, 6, Command::Unban { user: nobody }).await;
+        let seen = until(&mut rx, |e| done(e, 6)).await;
+        assert!(
+            matches!(seen.last(), Some(Event::Done { result: Err(e), .. }) if e.contains("no channel with the handle")),
+            "{seen:#?}"
+        );
+
         drop(tx);
         assert!(
             task.await.unwrap(),
@@ -1166,6 +1282,8 @@ mod sessions {
             sent.body["snippet"]["textMessageDetails"]["messageText"],
             "hello"
         );
+        assert!(log.iter().any(|r| r.path == "/liveChat/bans"
+            && r.body["snippet"]["bannedUserDetails"]["channelId"] == "UCstranger"));
         let ban = log
             .iter()
             .find(|r| r.path == "/liveChat/bans" && r.method == "POST")

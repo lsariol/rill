@@ -268,6 +268,30 @@ pub(crate) fn random_uuid() -> String {
     )
 }
 
+/// A user's ID: given, remembered from chat, or looked up by name.
+async fn find_user(shared: &Shared, api: &Api, u: &UserRef) -> Result<u64, String> {
+    if let Some(id) = u.id.as_deref().and_then(|id| id.parse().ok()) {
+        return Ok(id);
+    }
+    let key = u.login.trim_start_matches('@').to_lowercase();
+    if let Some(id) = shared.lock().logins.get(&key).copied() {
+        return Ok(id);
+    }
+    match api.user_id(&key).await.map_err(|e| e.message())? {
+        Some(id) => {
+            shared.lock().logins.insert(key, id);
+            Ok(id)
+        }
+        None => Err(format!("Kick: there's no user named \"{}\".", u.login)),
+    }
+}
+
+/// Whether Kick refused an unban because the user isn't banned.
+fn not_banned(message: &str) -> bool {
+    let m = message.to_lowercase();
+    m.contains("not banned") || m.contains("not currently banned") || m.contains("no active ban")
+}
+
 fn remember(channel: Option<&str>) {
     let result = rill_os::settings::update(|s| s.kick.channel = channel.map(str::to_string));
     if let Err(e) = result {
@@ -474,18 +498,6 @@ async fn perform(
     let api = signed.ok_or(NOT_SIGNED_IN)?.api;
     let broadcaster = broadcaster
         .ok_or("Kick: Rill hasn't found this channel's owner yet. Try again in a moment.")?;
-    let user_id = |u: &UserRef| -> Result<u64, String> {
-        if let Some(id) = u.id.as_deref().and_then(|id| id.parse().ok()) {
-            return Ok(id);
-        }
-        let key = u.login.trim_start_matches('@').to_lowercase();
-        shared.lock().logins.get(&key).copied().ok_or_else(|| {
-            format!(
-                "Kick: \"{}\" hasn't chatted since Rill connected, so Rill can't find them. Click their message instead.",
-                u.login
-            )
-        })
-    };
     let result = match command {
         Command::Send { text, reply_to } => {
             let text = events::encode_emotes(&text, &shared.lock().kick_emotes);
@@ -499,7 +511,7 @@ async fn perform(
             seconds,
             reason,
         } => {
-            let id = user_id(&user)?;
+            let id = find_user(shared, &api, &user).await?;
             api.ban(
                 broadcaster,
                 id,
@@ -510,14 +522,20 @@ async fn perform(
             .map(|_| None)
         }
         Command::Ban { user, reason } => {
-            let id = user_id(&user)?;
+            let id = find_user(shared, &api, &user).await?;
             api.ban(broadcaster, id, None, reason.as_deref())
                 .await
                 .map(|_| None)
         }
         Command::Unban { user } => {
-            let id = user_id(&user)?;
-            api.unban(broadcaster, id).await.map(|_| None)
+            let id = find_user(shared, &api, &user).await?;
+            match api.unban(broadcaster, id).await {
+                Err(ApiError::Api { message, .. }) if not_banned(&message) => Ok(Some(format!(
+                    "{} is not currently banned.",
+                    user.login.trim_start_matches('@')
+                ))),
+                r => r.map(|_| None),
+            }
         }
         Command::StartAds { seconds } => {
             let seconds = seconds.clamp(7, api::MAX_AD_SECONDS);
@@ -1673,7 +1691,15 @@ mod official_api {
                         {
                             (429, json!({"message": "slow down"}))
                         }
+                        ("DELETE", "/moderation/bans") if body.contains("404") => {
+                            (400, json!({"message": "User is not banned"}))
+                        }
                         ("POST" | "DELETE", "/moderation/bans") => (200, json!({"data": {}})),
+                        ("GET", "/channels?slug=some-one") => (
+                            200,
+                            json!({"data": [{"broadcaster_user_id": 321, "slug": "some-one"}]}),
+                        ),
+                        ("GET", "/channels?slug=nobody") => (200, json!({"data": []})),
                         ("PATCH", "/channels") => (204, Value::Null),
                         ("POST", "/ads/ad-break") => (
                             202,
@@ -1788,12 +1814,25 @@ mod official_api {
             user: user(Some("123"), "whoever"),
         };
         assert_eq!(perform(&shared, &events, unban).await, Ok(None));
+        // Someone who hasn't chatted is looked up by name.
+        let stranger = Command::Ban {
+            user: user(None, "Some_One"),
+            reason: None,
+        };
+        assert_eq!(perform(&shared, &events, stranger).await, Ok(None));
         let unknown = Command::Ban {
-            user: user(None, "stranger"),
+            user: user(None, "nobody"),
             reason: None,
         };
         let err = perform(&shared, &events, unknown).await.unwrap_err();
-        assert!(err.contains("hasn't chatted"), "{err}");
+        assert!(err.contains("no user named"), "{err}");
+        let not_banned = Command::Unban {
+            user: user(Some("404"), "Calm"),
+        };
+        assert_eq!(
+            perform(&shared, &events, not_banned).await,
+            Ok(Some("Calm is not currently banned.".into()))
+        );
         let poll = Command::Poll {
             title: "q".into(),
             choices: vec![],
@@ -1831,7 +1870,8 @@ mod official_api {
             .filter(|r| r.method == "POST" && r.path == "/moderation/bans")
             .map(|r| serde_json::from_str(&r.body).unwrap())
             .collect();
-        assert_eq!(bans.len(), 3, "the rate-limited ban was sent again");
+        assert_eq!(bans.len(), 4, "the rate-limited ban was sent again");
+        assert_eq!(bans[3]["user_id"], 321, "found by name");
         assert_eq!(bans[1]["user_id"], 99);
         assert_eq!(bans[1]["duration"], 2);
         assert_eq!(bans[1]["reason"].as_str().unwrap().len(), 100);
