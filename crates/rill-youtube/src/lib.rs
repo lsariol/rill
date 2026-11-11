@@ -551,10 +551,22 @@ async fn stream_chat(ctx: &mut Ctx, api: &Api, live: &Live, f: &mut Follow) -> S
     };
     api.spend(api::cost::OPEN_STREAM);
     let opened = Instant::now();
-    let mut messages = match stream::open(channel, &access, &f.chat, f.page_token.as_deref()).await
-    {
-        Ok(s) => s,
-        Err(e) => return failed(e),
+    // YouTube holds a quiet chat's opening for about 10 seconds, so requests are answered meanwhile.
+    let (chat, resume) = (f.chat.clone(), f.page_token.clone());
+    let open = stream::open(channel, &access, &chat, resume.as_deref());
+    tokio::pin!(open);
+    let mut messages = loop {
+        tokio::select! {
+            opened = &mut open => match opened {
+                Ok(s) => break s,
+                Err(e) => return failed(e),
+            },
+            req = ctx.requests.recv() => {
+                if let Some(end) = handle(ctx, api, live, req).await {
+                    return StreamEnd::Stop(end);
+                }
+            }
+        }
     };
     tracing::debug!("YouTube chat stream open");
     let mut got_chat = false;
@@ -1183,6 +1195,8 @@ mod sessions {
         fails: usize,
         /// Ends each stream after this long with nothing sent, as YouTube does with a quiet chat.
         quiet: Option<Duration>,
+        /// Answers each opening only after this long, as YouTube does with a quiet chat.
+        hold: Option<Duration>,
         /// Each call's authorization header and chat ID.
         calls: Arc<StdMutex<Vec<(String, String)>>>,
     }
@@ -1194,6 +1208,7 @@ mod sessions {
                 fail: None,
                 fails: 0,
                 quiet: None,
+                hold: None,
                 calls: Arc::default(),
             }
         }
@@ -1234,6 +1249,9 @@ mod sessions {
                 calls.push((auth, chat));
                 calls.len() - 1
             };
+            if let Some(hold) = self.hold {
+                tokio::time::sleep(hold).await;
+            }
             if let Some(code) = self.fail.filter(|_| earlier < self.fails) {
                 return Err(tonic::Status::new(code, "not here"));
             }
@@ -1380,6 +1398,45 @@ mod sessions {
         assert!(task.await.unwrap());
         assert_eq!(calls.lock().unwrap().len(), 5);
         assert!(!polled(&log), "it polled instead of streaming");
+    }
+
+    #[tokio::test]
+    async fn requests_are_answered_while_youtube_holds_the_opening() {
+        let (base, _log) = api_server(base_route).await;
+        let fake = FakeStream {
+            hold: Some(Duration::from_secs(5)),
+            ..FakeStream::sending(Vec::new())
+        };
+        let stream = stream_server(fake).await;
+        let (mut rx, tx, task) = start_with(&base, stream);
+        until(&mut rx, |e| {
+            matches!(
+                e,
+                Event::Status {
+                    status: ConnectionStatus::Connected,
+                    ..
+                }
+            )
+        })
+        .await;
+        let asked = Instant::now();
+        request(
+            &tx,
+            1,
+            Command::Send {
+                text: "hello".into(),
+                reply_to: None,
+            },
+        )
+        .await;
+        until(&mut rx, |e| done(e, 1)).await;
+        assert!(
+            asked.elapsed() < Duration::from_secs(2),
+            "the message waited {:?} for the opening",
+            asked.elapsed()
+        );
+        drop(tx);
+        assert!(task.await.unwrap());
     }
 
     #[tokio::test]
