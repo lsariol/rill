@@ -222,7 +222,7 @@ async fn run(adapter: KickAdapter, io: AdapterIo) {
         wake,
         wake_tx,
     };
-    restore_sign_in(&ctx).await;
+    restore_sign_in(&ctx, adapter.channel.is_none()).await;
     let mut channel = adapter.channel;
     loop {
         let Some(slug) = channel.clone() else {
@@ -231,7 +231,10 @@ async fn run(adapter: KickAdapter, io: AdapterIo) {
                 .report(&ctx.events, ConnectionStatus::Disconnected)
                 .await;
             match wait(&mut ctx, None).await {
-                Some(Interrupt::Switch(next)) => channel = next,
+                Some(Interrupt::Switch(next)) => {
+                    channel = next;
+                    remember(channel.as_deref());
+                }
                 _ => return,
             }
             continue;
@@ -280,8 +283,8 @@ fn account(id: u64, name: &str) -> Account {
     }
 }
 
-/// Picks up a stored Kick sign-in at startup, checking it in the background.
-async fn restore_sign_in(ctx: &Ctx) {
+/// Picks up a stored Kick sign-in at startup, checking it in the background; reads your own channel if none is set.
+async fn restore_sign_in(ctx: &Ctx, read_own: bool) {
     let Some(exchange) = ctx.exchange.clone() else {
         return;
     };
@@ -294,16 +297,28 @@ async fn restore_sign_in(ctx: &Ctx) {
         }
     };
     let api = Api::new(ctx.http.clone(), exchange, token);
-    let (events, shared) = (ctx.events.clone(), ctx.shared.clone());
+    let (events, shared, wake) = (ctx.events.clone(), ctx.shared.clone(), ctx.wake_tx.clone());
     tokio::spawn(async move {
         match api.me().await {
             Ok((id, name)) => {
+                let own_slug = if read_own {
+                    api.own_slug().await.ok().flatten()
+                } else {
+                    None
+                };
                 tracing::info!("Kick signed in");
-                shared.lock().signed = Some(Signed {
-                    api,
-                    account: account(id, &name),
-                });
+                let reading = {
+                    let mut s = shared.lock();
+                    s.signed = Some(Signed {
+                        api,
+                        account: account(id, &name),
+                    });
+                    s.slug.is_some()
+                };
                 shared.report_account(&events).await;
+                if !reading && let Some(slug) = own_slug {
+                    let _ = wake.send(Interrupt::Switch(Some(slug))).await;
+                }
             }
             Err(ApiError::Unauthorized) => {
                 let _ = auth::delete_token();

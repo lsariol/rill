@@ -187,11 +187,19 @@ impl Api {
                 cost::LIST_BROADCASTS,
             )
             .await?;
-        Ok(v["items"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find_map(|b| b["snippet"]["liveChatId"].as_str().map(str::to_string)))
+        let items = v["items"].as_array().map(Vec::as_slice).unwrap_or_default();
+        let found = items.iter().find_map(|b| {
+            let chat = b["snippet"]["liveChatId"].as_str()?;
+            Some((b["id"].as_str().unwrap_or_default(), chat))
+        });
+        if let Some((broadcast, _)) = found {
+            tracing::debug!(
+                broadcast,
+                active = items.len(),
+                "YouTube live broadcast found"
+            );
+        }
+        Ok(found.map(|(_, chat)| chat.to_string()))
     }
 
     /// Inserts a mid-roll ad break into the live broadcast (monetized channels only).
