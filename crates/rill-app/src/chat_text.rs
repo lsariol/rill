@@ -141,7 +141,7 @@ impl Parts {
 pub(crate) fn link_in(word: &str) -> Option<(String, usize)> {
     let lower = word.to_ascii_lowercase();
     let web = lower.starts_with("https://") || lower.starts_with("http://");
-    if !web && !lower.starts_with("www.") {
+    if !web && !lower.contains('.') {
         return None;
     }
     let mut end = word.len();
@@ -159,12 +159,42 @@ pub(crate) fn link_in(word: &str) -> Option<(String, usize)> {
     if host.len() < 4 || !host.contains('.') {
         return None;
     }
+    if !web && !lower.starts_with("www.") && !bare_domain(shown) {
+        return None;
+    }
     let url = if web {
         shown.to_string()
     } else {
         format!("https://{shown}")
     };
     Some((url, end))
+}
+
+/// Whether text without `https://` starts with a web address, like `mobasity.com/rill`.
+fn bare_domain(text: &str) -> bool {
+    if text.contains('@') {
+        return false;
+    }
+    let host = text.split(['/', '?', '#', ':']).next().unwrap_or_default();
+    let labels: Vec<&str> = host.split('.').collect();
+    let named = |l: &&str| {
+        !l.is_empty()
+            && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+    };
+    labels.len() >= 2
+        && labels.iter().all(named)
+        && labels
+            .last()
+            .is_some_and(|tld| top_level_domains().contains(tld.to_ascii_lowercase().as_str()))
+}
+
+/// The internet's top-level domains, from IANA's list, so `notes.txt` isn't taken for an address.
+fn top_level_domains() -> &'static std::collections::HashSet<&'static str> {
+    static TLDS: std::sync::OnceLock<std::collections::HashSet<&'static str>> =
+        std::sync::OnceLock::new();
+    TLDS.get_or_init(|| include_str!("tlds.txt").lines().collect())
 }
 
 fn link_style() -> HighlightStyle {
@@ -742,6 +772,28 @@ mod tests {
         assert_eq!(link_in("file:///c:/x"), None);
         assert_eq!(link_in("https://"), None);
         assert_eq!(link_in("hello"), None);
+    }
+
+    #[test]
+    fn finds_addresses_written_without_https() {
+        assert_eq!(
+            link_in("mobasity.com"),
+            Some(("https://mobasity.com".into(), 12))
+        );
+        assert_eq!(
+            link_in("Google.com/search?q=rill!"),
+            Some(("https://Google.com/search?q=rill".into(), 24))
+        );
+        assert_eq!(
+            link_in("rill.mobasity.com."),
+            Some(("https://rill.mobasity.com".into(), 17))
+        );
+        assert_eq!(link_in("notes.txt"), None);
+        assert_eq!(link_in("v0.0.2"), None);
+        assert_eq!(link_in("3.14"), None);
+        assert_eq!(link_in("lu@mobasity.com"), None);
+        assert_eq!(link_in("end.Then"), None);
+        assert_eq!(link_in("a..com"), None);
     }
 
     #[test]
