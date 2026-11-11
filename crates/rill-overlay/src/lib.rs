@@ -7,8 +7,8 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use rill_core::feed::{Entry, Item};
 use rill_core::message::bigger_image;
-use rill_core::{ChatMessage, Fragment, MessageKind, Platform};
-use rill_os::settings::Overlay as Settings;
+use rill_core::{Author, ChatMessage, Fragment, MessageKind, Platform, Rank};
+use rill_os::settings::{NameColors, NameStyle, Overlay as Settings};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -54,6 +54,38 @@ const ICONS: &[(&str, &str)] = &[
     (
         "rumble",
         include_str!("../../rill-app/assets/icons/rumble.svg"),
+    ),
+    (
+        "kick-owner",
+        include_str!("../../rill-app/assets/kick-badges/owner.svg"),
+    ),
+    (
+        "kick-moderator",
+        include_str!("../../rill-app/assets/kick-badges/moderator.svg"),
+    ),
+    (
+        "kick-vip",
+        include_str!("../../rill-app/assets/kick-badges/vip.svg"),
+    ),
+    (
+        "kick-subscriber",
+        include_str!("../../rill-app/assets/kick-badges/subscriber.svg"),
+    ),
+    (
+        "badge-owner",
+        include_str!("../../rill-app/assets/badges/owner.svg"),
+    ),
+    (
+        "badge-moderator",
+        include_str!("../../rill-app/assets/badges/moderator.svg"),
+    ),
+    (
+        "badge-vip",
+        include_str!("../../rill-app/assets/badges/vip.svg"),
+    ),
+    (
+        "badge-subscriber",
+        include_str!("../../rill-app/assets/badges/subscriber.svg"),
     ),
 ];
 
@@ -180,7 +212,6 @@ pub fn config(settings: &Settings, highlights: &[(String, String)]) -> String {
         "t": "config",
         "font": settings.font_size.clamp(10, 72),
         "fade": settings.fade_seconds,
-        "badges": settings.badges,
         "icons": settings.platform_icons,
         "background": settings.background,
         "hl": hl,
@@ -192,20 +223,25 @@ pub fn config(settings: &Settings, highlights: &[(String, String)]) -> String {
 pub fn line(
     entry: &Entry,
     settings: &Settings,
+    colors: &NameColors,
     own: impl Fn(Platform) -> Option<String>,
 ) -> Option<String> {
     let mut out = match &entry.item {
-        Item::Chat(m) => chat_line(m, entry, settings)?,
+        Item::Chat(m) => chat_line(m, entry, settings, colors)?,
         Item::Sent(s) => {
             let platforms: Vec<Platform> = s.deliveries.iter().map(|d| d.platform).collect();
             let name = platforms.iter().find_map(|&p| own(p)).unwrap_or_default();
             // Badges and color come from the platform's echo, so they match received lines.
-            let author = s.author.as_ref();
+            let (color, badges) = match &s.author {
+                Some(a) => look(a, platforms[0], settings, colors),
+                // Before the echo: you're the channel's owner.
+                None => (Some(colors.get(Rank::Owner.key()).to_string()), Vec::new()),
+            };
             json!({
                 "p": platforms.iter().map(|p| key(*p)).collect::<Vec<_>>(),
                 "name": name,
-                "color": author.and_then(|a| a.color).map(|c| format!("#{c:06x}")),
-                "badges": author.map(|a| badges(&a.badges)).unwrap_or_default(),
+                "color": color,
+                "badges": badges,
                 "parts": parts(&s.fragments),
             })
         }
@@ -216,7 +252,12 @@ pub fn line(
     Some(out.to_string())
 }
 
-fn chat_line(m: &ChatMessage, entry: &Entry, settings: &Settings) -> Option<Value> {
+fn chat_line(
+    m: &ChatMessage,
+    entry: &Entry,
+    settings: &Settings,
+    colors: &NameColors,
+) -> Option<Value> {
     let event = matches!(m.kind, MessageKind::Event(_));
     if !event {
         if settings.hide_bots && BOTS.contains(&m.author.login.to_lowercase().as_str()) {
@@ -240,11 +281,11 @@ fn chat_line(m: &ChatMessage, entry: &Entry, settings: &Settings) -> Option<Valu
     if let MessageKind::Event(k) = m.kind {
         kinds.push(k.key());
     }
-    let badges = badges(&m.author.badges);
+    let (color, badges) = look(&m.author, m.platform, settings, colors);
     Some(json!({
         "p": [key(m.platform)],
         "name": m.author.display_name,
-        "color": m.author.color.map(|c| format!("#{c:06x}")),
+        "color": color,
         "badges": badges,
         "parts": parts(&m.fragments),
         "a": m.kind == MessageKind::Action,
@@ -253,23 +294,42 @@ fn chat_line(m: &ChatMessage, entry: &Entry, settings: &Settings) -> Option<Valu
     }))
 }
 
-/// Badges as the page draws them: an image, or a lettered square for one without (Kick's roles).
-fn badges(badges: &[rill_core::Badge]) -> Vec<Value> {
+/// A name's color and badges: by role in Simple view, else its own color and role badges.
+fn look(
+    author: &Author,
+    platform: Platform,
+    settings: &Settings,
+    colors: &NameColors,
+) -> (Option<String>, Vec<Value>) {
+    match settings.names {
+        NameStyle::Simple => (
+            Some(colors.get(author.roles.rank().key()).to_string()),
+            Vec::new(),
+        ),
+        NameStyle::Badges => (
+            author.color.map(|c| format!("#{c:06x}")),
+            badges(&author.badges, platform),
+        ),
+    }
+}
+
+/// Role badges as the page draws them: the platform's image, or Rill's icon for a role without one.
+fn badges(badges: &[rill_core::Badge], platform: Platform) -> Vec<Value> {
     badges
         .iter()
+        .filter_map(|b| Some((b, b.role()?)))
         .take(4)
-        .filter_map(|b| match b.image_url.as_deref() {
-            Some(url) => Some(json!({ "u": bigger_image(url), "t": b.title })),
-            None => {
-                let (letter, color) = match b.id.split('/').next().unwrap_or("") {
-                    "broadcaster" => ("B", "#e91916"),
-                    "moderator" => ("M", "#00ad03"),
-                    "vip" => ("V", "#e005b9"),
-                    "subscriber" | "founder" => ("S", "#8205b4"),
-                    _ => return None,
-                };
-                Some(json!({ "l": letter, "c": color, "t": b.title }))
+        .map(|(b, rank)| match b.image_url.as_deref() {
+            Some(url) => json!({ "u": bigger_image(url), "t": b.title }),
+            // Kick's own badge, which the overlay serves.
+            None if platform == Platform::Kick => {
+                json!({ "u": format!("/icons/kick-{}.svg", rank.badge_icon()), "t": b.title })
             }
+            None => json!({
+                "k": rank.badge_icon(),
+                "c": format!("#{:06x}", rank.badge_color(platform)),
+                "t": b.title,
+            }),
         })
         .collect()
 }
@@ -514,7 +574,10 @@ mod tests {
                         title: "Moderator".into(),
                         image_url: Some("https://static-cdn.jtvnw.net/badges/v1/abc/1".into()),
                     }],
-                    ..Default::default()
+                    roles: rill_core::Roles {
+                        moderator: true,
+                        ..Default::default()
+                    },
                 },
                 fragments: vec![
                     Fragment::Text(text.into()),
@@ -536,15 +599,24 @@ mod tests {
         }
     }
 
+    /// The overlay in Badge view.
+    fn badge_view() -> Settings {
+        Settings {
+            names: NameStyle::Badges,
+            ..Settings::default()
+        }
+    }
+
+    fn json(entry: &Entry, settings: &Settings) -> Value {
+        let line = line(entry, settings, &NameColors::default(), |_| {
+            Some("Mobasity".into())
+        });
+        serde_json::from_str(&line.unwrap()).unwrap()
+    }
+
     #[test]
     fn a_chat_line_carries_what_the_page_draws() {
-        let line = line(
-            &chat("Foo", "hi ", MessageKind::Chat),
-            &Settings::default(),
-            |_| None,
-        )
-        .unwrap();
-        let v: Value = serde_json::from_str(&line).unwrap();
+        let v = json(&chat("Foo", "hi ", MessageKind::Chat), &badge_view());
         assert_eq!(v["t"], "line");
         assert_eq!(v["id"], 7);
         assert_eq!(v["p"][0], "twitch");
@@ -562,23 +634,42 @@ mod tests {
     }
 
     #[test]
-    fn a_badge_without_an_image_is_a_lettered_square_and_own_lines_have_badges() {
+    fn simple_view_colors_names_by_role_and_drops_badges() {
+        let v = json(&chat("Foo", "hi", MessageKind::Chat), &Settings::default());
+        assert_eq!(v["color"], NameColors::default().moderator);
+        assert_eq!(v["badges"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[test]
+    fn badge_view_keeps_role_badges_and_draws_ones_without_an_image() {
         let mut entry = chat("Foo", "hi", MessageKind::Chat);
         let Item::Chat(m) = &mut entry.item else {
             unreachable!()
         };
+        m.platform = Platform::Kick;
         let author = Author {
-            badges: vec![Badge {
-                id: "broadcaster/1".into(),
-                title: "Broadcaster".into(),
-                image_url: None,
-            }],
+            badges: vec![
+                Badge {
+                    id: "broadcaster/1".into(),
+                    title: "Broadcaster".into(),
+                    image_url: None,
+                },
+                Badge {
+                    id: "bits/100".into(),
+                    title: "cheer 100".into(),
+                    image_url: Some("https://static-cdn.jtvnw.net/badges/v1/bits/1".into()),
+                },
+            ],
             ..m.author.clone()
         };
         m.author = author.clone();
-        let v: Value =
-            serde_json::from_str(&line(&entry, &Settings::default(), |_| None).unwrap()).unwrap();
-        assert_eq!(v["badges"][0]["l"], "B");
+        let v = json(&entry, &badge_view());
+        assert_eq!(v["badges"][0]["u"], "/icons/kick-owner.svg");
+        assert_eq!(
+            v["badges"].as_array().map(Vec::len),
+            Some(1),
+            "no Bits badge"
+        );
 
         // A message sent from Rill takes its badges from the platform's echo.
         entry.item = Item::Sent(rill_core::feed::SentMessage {
@@ -590,30 +681,71 @@ mod tests {
             }],
             author: Some(author),
         });
-        let v: Value = serde_json::from_str(
-            &line(&entry, &Settings::default(), |_| Some("Mobasity".into())).unwrap(),
-        )
-        .unwrap();
+        let v = json(&entry, &badge_view());
         assert_eq!(v["name"], "Mobasity");
-        assert_eq!(v["badges"][0]["l"], "B");
+        assert_eq!(v["badges"][0]["u"], "/icons/kick-owner.svg");
+
+        // On YouTube, which sends no badge images either, Rill draws its own.
+        let Item::Sent(sent) = &mut entry.item else {
+            unreachable!()
+        };
+        sent.deliveries[0].platform = Platform::YouTube;
+        let v = json(&entry, &badge_view());
+        assert_eq!(v["badges"][0]["k"], "owner");
+        assert_eq!(v["badges"][0]["c"], "#d9a400");
+
+        // Before the echo, your own line is the owner's color.
+        let Item::Sent(sent) = &mut entry.item else {
+            unreachable!()
+        };
+        sent.author = None;
+        let v = json(&entry, &Settings::default());
+        assert_eq!(v["color"], NameColors::default().owner);
     }
 
     #[test]
     fn commands_and_bots_are_left_out_when_asked() {
         let mut s = Settings::default();
         assert!(
-            line(&chat("nightbot", "!uptime", MessageKind::Chat), &s, |_| {
-                None
-            })
+            line(
+                &chat("nightbot", "!uptime", MessageKind::Chat),
+                &s,
+                &NameColors::default(),
+                |_| None
+            )
             .is_some()
         );
         s.hide_commands = true;
-        assert!(line(&chat("viewer", "!uptime", MessageKind::Chat), &s, |_| None).is_none());
+        assert!(
+            line(
+                &chat("viewer", "!uptime", MessageKind::Chat),
+                &s,
+                &NameColors::default(),
+                |_| None
+            )
+            .is_none()
+        );
         s.hide_bots = true;
-        assert!(line(&chat("Nightbot", "hello", MessageKind::Chat), &s, |_| None).is_none());
+        assert!(
+            line(
+                &chat("Nightbot", "hello", MessageKind::Chat),
+                &s,
+                &NameColors::default(),
+                |_| None
+            )
+            .is_none()
+        );
         // Events always show.
         let sub = MessageKind::Event(rill_core::EventKind::Subscription);
-        assert!(line(&chat("viewer", "!subscribed", sub), &s, |_| None).is_some());
+        assert!(
+            line(
+                &chat("viewer", "!subscribed", sub),
+                &s,
+                &NameColors::default(),
+                |_| None
+            )
+            .is_some()
+        );
     }
 
     #[test]

@@ -20,6 +20,14 @@ Fixes and polish from the first test stream.
   also copies the user's name and ID.
 - Times, badges and "only messages that mention you" are switches in Settings instead of header
   buttons, and they're remembered. A narrow window still hides times and badges by itself.
+- Settings → Names picks how names look, separately for Rill's window and the overlay. Simple
+  shows only the platform's icon and colors names by role: the owner orange-red, moderators red,
+  VIPs pink, subscribers light blue and everyone else white, each color changeable. Badges shows
+  owner, moderator, VIP and subscriber badges and each name's own color, and replaces the Show
+  badges switch. Rill's window starts in Badges and the overlay in Simple.
+- Kick's broadcaster, moderator, VIP and subscriber badges look as they do on Kick, instead of
+  lettered squares. YouTube's and Rumble's role badges are small icons, and YouTube names take
+  YouTube's own colors for the owner, moderators and members.
 - Rumble is off until turned on in Settings.
 - Messages sent to every platform, and lines about several platforms or none, show Rill's logo.
 

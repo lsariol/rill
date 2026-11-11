@@ -300,7 +300,7 @@ fn chat_message(timestamp: &str, e: &Value, badges: &Badges) -> ChatMessage {
         let key = format!("{set}/{}", b["id"].as_str().unwrap_or_default());
         match set {
             "broadcaster" => roles.broadcaster = true,
-            "moderator" => roles.moderator = true,
+            "moderator" | "lead_moderator" => roles.moderator = true,
             "vip" => roles.vip = true,
             "subscriber" | "founder" => roles.subscriber = true,
             _ => {}

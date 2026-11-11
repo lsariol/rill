@@ -115,7 +115,16 @@ pub fn to_event(item: &Value) -> Option<Event> {
             id: s(&a["channelId"]),
             login: name.trim_start_matches('@').to_string(),
             display_name: name,
-            color: None,
+            // YouTube has no name colors; its chat colors the owner, moderators and members.
+            color: if roles.broadcaster {
+                Some(0xffd600)
+            } else if roles.moderator {
+                Some(0x5e84f1)
+            } else if roles.subscriber {
+                Some(0x2ba640)
+            } else {
+                None
+            },
             badges,
             roles,
         },
@@ -160,6 +169,7 @@ mod tests {
         assert_eq!(m.author.display_name, "@viewer");
         assert_eq!(m.author.login, "viewer");
         assert!(m.author.roles.moderator);
+        assert_eq!(m.author.color, Some(0x5e84f1), "YouTube's moderator blue");
         assert_eq!(m.plain_text(), "hello @rill_dev");
         assert_eq!(m.sent_at_ms, 1_730_000_000_000);
         assert!(matches!(&p.events[1], Event::Message(m) if m.kind.is_event()));

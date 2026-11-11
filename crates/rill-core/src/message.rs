@@ -40,6 +40,88 @@ pub struct Roles {
     pub subscriber: bool,
 }
 
+impl Roles {
+    /// The highest role, which colors the name in Simple view.
+    pub fn rank(self) -> Rank {
+        if self.broadcaster {
+            Rank::Owner
+        } else if self.moderator {
+            Rank::Moderator
+        } else if self.vip {
+            Rank::Vip
+        } else if self.subscriber {
+            Rank::Subscriber
+        } else {
+            Rank::Viewer
+        }
+    }
+}
+
+/// Someone's standing in a chat, highest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rank {
+    Owner,
+    Moderator,
+    Vip,
+    Subscriber,
+    Viewer,
+}
+
+impl Rank {
+    pub const ALL: [Rank; 5] = [
+        Rank::Owner,
+        Rank::Moderator,
+        Rank::Vip,
+        Rank::Subscriber,
+        Rank::Viewer,
+    ];
+
+    /// Its name in settings.
+    pub fn key(self) -> &'static str {
+        match self {
+            Rank::Owner => "owner",
+            Rank::Moderator => "moderator",
+            Rank::Vip => "vip",
+            Rank::Subscriber => "subscriber",
+            Rank::Viewer => "viewer",
+        }
+    }
+
+    /// The color behind its badge icon, where the platform sends no image.
+    pub fn badge_color(self, platform: crate::Platform) -> u32 {
+        match (platform, self) {
+            (crate::Platform::YouTube, Rank::Owner) => 0xd9a400,
+            (crate::Platform::YouTube, Rank::Moderator) => 0x5e84f1,
+            (crate::Platform::YouTube, _) => 0x2ba640,
+            (_, Rank::Owner) => 0xe91916,
+            (_, Rank::Moderator) => 0x00ad03,
+            (_, Rank::Vip) => 0xe005b9,
+            (_, _) => 0x8205b4,
+        }
+    }
+
+    /// Its badge icon's name, for platforms that send no image.
+    pub fn badge_icon(self) -> &'static str {
+        match self {
+            Rank::Owner => "owner",
+            Rank::Moderator => "moderator",
+            Rank::Vip => "vip",
+            Rank::Subscriber | Rank::Viewer => "subscriber",
+        }
+    }
+
+    /// Its name in Settings.
+    pub fn label(self) -> &'static str {
+        match self {
+            Rank::Owner => "Channel owner",
+            Rank::Moderator => "Moderators",
+            Rank::Vip => "VIPs",
+            Rank::Subscriber => "Subscribers and members",
+            Rank::Viewer => "Everyone else",
+        }
+    }
+}
+
 /// A badge shown next to a name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Badge {
@@ -47,6 +129,24 @@ pub struct Badge {
     pub id: String,
     pub title: String,
     pub image_url: Option<String>,
+}
+
+impl Badge {
+    /// Its kind: the key before the `/`, such as `moderator`.
+    pub fn kind(&self) -> &str {
+        self.id.split('/').next().unwrap_or_default()
+    }
+
+    /// The role it stands for, for badges Badge view keeps: owner, moderator, VIP and subscriber.
+    pub fn role(&self) -> Option<Rank> {
+        Some(match self.kind() {
+            "broadcaster" => Rank::Owner,
+            "moderator" | "lead_moderator" => Rank::Moderator,
+            "vip" => Rank::Vip,
+            "subscriber" | "founder" => Rank::Subscriber,
+            _ => return None,
+        })
+    }
 }
 
 /// The largest size the image's service has, for hover cards and the overlay; other images as they are.

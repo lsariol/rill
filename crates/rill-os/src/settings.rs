@@ -18,8 +18,10 @@ pub struct Settings {
     pub link_previews: bool,
     /// Each line's time; a narrow window hides it anyway.
     pub show_times: bool,
-    /// Badges before names; a narrow window hides them anyway.
-    pub show_badges: bool,
+    /// How names look in Rill's window: colored by role, or with their badges and own colors.
+    pub names: NameStyle,
+    /// The name colors Simple view uses, in Rill's window and the overlay.
+    pub name_colors: NameColors,
     /// Show only messages that mention you.
     pub mentions_only: bool,
     /// How many chat lines Rill keeps for scrolling back, searching and user cards.
@@ -43,7 +45,8 @@ impl Default for Settings {
             show_deleted_messages: false,
             link_previews: true,
             show_times: true,
-            show_badges: true,
+            names: NameStyle::Badges,
+            name_colors: NameColors::default(),
             mentions_only: false,
             message_history: 5_000,
             highlights: Highlights::default(),
@@ -53,6 +56,63 @@ impl Default for Settings {
             twitch: TwitchSettings::default(),
             youtube: YouTubeSettings::default(),
             kick: KickSettings::default(),
+        }
+    }
+}
+
+/// How names look.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NameStyle {
+    /// The platform's icon and a name colored by role: owner, moderator, VIP, subscriber or viewer.
+    Simple,
+    /// The platform's icon, role badges (owner, moderator, VIP, subscriber) and each name's own color.
+    Badges,
+}
+
+/// Simple view's name colors, as `#rrggbb`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NameColors {
+    pub owner: String,
+    pub moderator: String,
+    pub vip: String,
+    pub subscriber: String,
+    pub viewer: String,
+}
+
+impl Default for NameColors {
+    fn default() -> Self {
+        NameColors {
+            owner: "#ff6a2b".into(),
+            moderator: "#ff3b3b".into(),
+            vip: "#ff7ad9".into(),
+            subscriber: "#5cb8ff".into(),
+            viewer: "#ffffff".into(),
+        }
+    }
+}
+
+impl NameColors {
+    /// A role's color by its key (`owner`, `moderator`, `vip`, `subscriber` or `viewer`).
+    pub fn get(&self, key: &str) -> &str {
+        match key {
+            "owner" => &self.owner,
+            "moderator" => &self.moderator,
+            "vip" => &self.vip,
+            "subscriber" => &self.subscriber,
+            _ => &self.viewer,
+        }
+    }
+
+    /// Sets a role's color by its key.
+    pub fn set(&mut self, key: &str, hex: String) {
+        match key {
+            "owner" => self.owner = hex,
+            "moderator" => self.moderator = hex,
+            "vip" => self.vip = hex,
+            "subscriber" => self.subscriber = hex,
+            _ => self.viewer = hex,
         }
     }
 }
@@ -124,7 +184,8 @@ pub struct Overlay {
     pub font_size: u16,
     /// Seconds before a line fades away; 0 keeps every line.
     pub fade_seconds: u32,
-    pub badges: bool,
+    /// How names look on stream.
+    pub names: NameStyle,
     pub platform_icons: bool,
     /// Leave out messages that start with `!`.
     pub hide_commands: bool,
@@ -143,7 +204,7 @@ impl Default for Overlay {
             port: 47832,
             font_size: 18,
             fade_seconds: 0,
-            badges: true,
+            names: NameStyle::Simple,
             platform_icons: true,
             hide_commands: false,
             hide_bots: false,
@@ -247,7 +308,9 @@ mod tests {
         assert_eq!(s.kick.channel.as_deref(), Some("xqc"));
         assert!(s.twitch.client_id.is_none());
         assert_eq!(s.disabled_platforms, ["rumble"], "Rumble starts off");
-        assert!(s.show_times && s.show_badges && !s.mentions_only);
+        assert!(s.show_times && !s.mentions_only);
+        assert_eq!(s.names, NameStyle::Badges);
+        assert_eq!(s.overlay.names, NameStyle::Simple);
         assert!(!s.show_deleted_messages);
         assert!(s.link_previews, "previews are on unless turned off");
         assert_eq!(s.message_history, 5_000);

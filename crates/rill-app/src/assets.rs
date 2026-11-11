@@ -25,6 +25,37 @@ const OWN: &[(&str, &[u8])] = &[
         "icons/rill.svg",
         include_bytes!("../assets/app/rill-small.svg"),
     ),
+    // Kick's role badges, which Kick draws in its page instead of sending an image.
+    (
+        "kick-badges/owner.svg",
+        include_bytes!("../assets/kick-badges/owner.svg"),
+    ),
+    (
+        "kick-badges/moderator.svg",
+        include_bytes!("../assets/kick-badges/moderator.svg"),
+    ),
+    (
+        "kick-badges/vip.svg",
+        include_bytes!("../assets/kick-badges/vip.svg"),
+    ),
+    (
+        "kick-badges/subscriber.svg",
+        include_bytes!("../assets/kick-badges/subscriber.svg"),
+    ),
+    // Rill's role badges for platforms that send no image for them (YouTube, Rumble).
+    (
+        "badges/owner.svg",
+        include_bytes!("../assets/badges/owner.svg"),
+    ),
+    (
+        "badges/moderator.svg",
+        include_bytes!("../assets/badges/moderator.svg"),
+    ),
+    ("badges/vip.svg", include_bytes!("../assets/badges/vip.svg")),
+    (
+        "badges/subscriber.svg",
+        include_bytes!("../assets/badges/subscriber.svg"),
+    ),
 ];
 
 impl AssetSource for Assets {

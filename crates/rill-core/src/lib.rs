@@ -20,8 +20,8 @@ pub use event::{
 };
 pub use feed::{Entry, Feed, Filter, Item};
 pub use message::{
-    Author, Badge, ChatMessage, EmoteScope, EventKind, Fragment, MessageKind, ReplyRef, Roles,
-    merge_text, replace_words, split_text,
+    Author, Badge, ChatMessage, EmoteScope, EventKind, Fragment, MessageKind, Rank, ReplyRef,
+    Roles, merge_text, replace_words, split_text,
 };
 pub use platform::Platform;
 pub use session::{Health, Outgoing, Plan, Session, Submitted};
