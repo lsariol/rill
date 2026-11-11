@@ -215,9 +215,11 @@ pub fn moderation(timestamp: &str, e: &Value) -> Option<Moderation> {
         "timeout" => {
             let ends = chrono::DateTime::parse_from_rfc3339(target["expires_at"].as_str()?).ok()?;
             let at = chrono::DateTime::parse_from_rfc3339(timestamp).ok()?;
-            let secs = (ends - at).num_seconds().max(1);
-            // Twitch's two times are a moment apart: 599 s is a 10m timeout.
-            let secs = if secs >= 60 {
+            let secs = ((ends - at).num_milliseconds() as f64 / 1000.0)
+                .round()
+                .max(1.0) as i64;
+            // Twitch's two times are a moment apart: 599 s is a 10m timeout, and 59 s is 1m.
+            let secs = if secs >= 55 {
                 (secs + 30) / 60 * 60
             } else {
                 secs
@@ -609,6 +611,17 @@ mod tests {
         let m = moderation("2026-11-10T20:00:00.5Z", &e).unwrap();
         assert_eq!(m.line(), "ModFoo timed out Bar for 10m. Reason: spam");
         assert_eq!((m.user_login.as_str(), m.user_id.as_str()), ("bar", "9"));
+        for (expires, says) in [
+            ("2026-11-10T20:00:59.1Z", "for 1m."),
+            ("2026-11-10T20:00:10.5Z", "for 10s."),
+            ("2026-11-10T20:00:01.2Z", "for 1s."),
+        ] {
+            let e = json!({"moderator_user_name": "ModFoo", "action": "timeout",
+                "timeout": {"user_id": "9", "user_login": "bar", "user_name": "Bar",
+                    "expires_at": expires}});
+            let line = moderation("2026-11-10T20:00:00.5Z", &e).unwrap().line();
+            assert!(line.ends_with(says), "{expires}: {line}");
+        }
         let e = json!({"moderator_user_name": "ModFoo", "action": "vip",
             "vip": {"user_id": "9", "user_login": "bar", "user_name": "Bar"}});
         assert_eq!(moderation("", &e).unwrap().line(), "ModFoo VIP'd Bar.");
