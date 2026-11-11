@@ -38,6 +38,9 @@ Fixes and polish from the first test stream.
 - YouTube chat stopped arriving when the chat went quiet for a moment: Rill took YouTube closing
   a quiet connection for a failure and waited longer before each reconnect. It now reconnects
   within seconds.
+- On YouTube, a ban, timeout or message sent while the chat was quiet could wait up to 10
+  seconds before Rill sent it.
+- A 1-minute Twitch timeout read "for 59s".
 - Kick forgot a channel picked with Read chat when Rill restarted. Signed in with no channel
   open, Kick now reads your own channel, and Accounts shows the account and Disconnect instead
   of only "Not connected".
