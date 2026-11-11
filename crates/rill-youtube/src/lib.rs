@@ -41,6 +41,8 @@ const REOPEN: Duration = Duration::from_secs(5);
 const RETRY: Duration = Duration::from_secs(5);
 /// A stream open this long, or one that carried chat, was working.
 const HEALTHY: Duration = Duration::from_secs(60);
+/// A stream that closed normally after this long was working: YouTube closes a quiet one after about 10 seconds.
+const QUIET_CLOSE: Duration = Duration::from_secs(5);
 /// Failed attempts in a row before the user is told.
 const TELL_AFTER: u32 = 3;
 /// Authors remembered for `/ban name`.
@@ -98,6 +100,8 @@ struct Ctx {
     reopen: Duration,
     /// The first wait after a failed stream.
     retry: Duration,
+    /// How long a normally closed stream must have lasted to count as working.
+    quiet_close: Duration,
     /// The Data API's address; tests use a local server.
     api_base: String,
     /// Where to load 7TV's global emotes from; tests leave it out.
@@ -165,6 +169,7 @@ async fn run(adapter: YouTubeAdapter, io: AdapterIo) {
         client,
         reopen: REOPEN,
         retry: RETRY,
+        quiet_close: QUIET_CLOSE,
         api_base: api::API.into(),
         seven_tv: Some(rill_emotes::Config::default()),
         stream: stream::ENDPOINT.into(),
@@ -443,7 +448,6 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
                     } else {
                         retry.next_delay()
                     };
-                    tracing::debug!(healthy, "YouTube chat stream closed");
                     if let Some(end) = pause(ctx, &api, &live, Instant::now() + wait).await {
                         return end;
                     }
@@ -590,7 +594,14 @@ async fn stream_chat(ctx: &mut Ctx, api: &Api, live: &Live, f: &mut Follow) -> S
                     }
                 }
                 Ok(None) => {
-                    return StreamEnd::Ended { error: None, healthy: got_chat || opened.elapsed() >= HEALTHY };
+                    let ms = opened.elapsed().as_millis() as u64;
+                    // A failure can arrive in the trailers after the last message.
+                    if let Err(s) = messages.trailers().await {
+                        tracing::debug!(ms, code = ?s.code(), message = s.message(), "YouTube chat stream ended with an error");
+                        return StreamEnd::Ended { error: Some(stream::status_error(s)), healthy: got_chat || opened.elapsed() >= HEALTHY };
+                    }
+                    tracing::debug!(ms, got_chat, "YouTube chat stream ended");
+                    return StreamEnd::Ended { error: None, healthy: got_chat || opened.elapsed() >= ctx.quiet_close };
                 }
                 Err(status) => {
                     return StreamEnd::Ended {
@@ -1013,6 +1024,7 @@ mod sessions {
             },
             reopen: Duration::from_millis(20),
             retry: Duration::from_millis(10),
+            quiet_close: Duration::from_millis(30),
             api_base: base.into(),
             seven_tv: None,
             stream,
@@ -1169,6 +1181,8 @@ mod sessions {
         replies: Vec<pb::LiveChatMessageListResponse>,
         fail: Option<tonic::Code>,
         fails: usize,
+        /// Ends each stream after this long with nothing sent, as YouTube does with a quiet chat.
+        quiet: Option<Duration>,
         /// Each call's authorization header and chat ID.
         calls: Arc<StdMutex<Vec<(String, String)>>>,
     }
@@ -1179,6 +1193,7 @@ mod sessions {
                 replies,
                 fail: None,
                 fails: 0,
+                quiet: None,
                 calls: Arc::default(),
             }
         }
@@ -1223,6 +1238,16 @@ mod sessions {
                 return Err(tonic::Status::new(code, "not here"));
             }
             use tokio_stream::StreamExt as _;
+            if let Some(after) = self.quiet {
+                let (tx, rx) =
+                    mpsc::channel::<Result<pb::LiveChatMessageListResponse, tonic::Status>>(1);
+                tokio::spawn(async move {
+                    tokio::time::sleep(after).await;
+                    drop(tx);
+                });
+                let ends = tokio_stream::wrappers::ReceiverStream::new(rx);
+                return Ok(tonic::Response::new(Box::pin(ends) as Replies));
+            }
             let replies = tokio_stream::iter(self.replies.clone().into_iter().map(Ok))
                 .chain(tokio_stream::pending());
             Ok(tonic::Response::new(Box::pin(replies)))
@@ -1354,6 +1379,35 @@ mod sessions {
         drop(tx);
         assert!(task.await.unwrap());
         assert_eq!(calls.lock().unwrap().len(), 5);
+        assert!(!polled(&log), "it polled instead of streaming");
+    }
+
+    #[tokio::test]
+    async fn a_quiet_chat_is_reopened_steadily() {
+        let (base, log) = api_server(base_route).await;
+        let fake = FakeStream {
+            quiet: Some(Duration::from_millis(50)),
+            ..FakeStream::sending(Vec::new())
+        };
+        let calls = fake.calls.clone();
+        let stream = stream_server(fake).await;
+        let (mut rx, tx, task) = start_with(&base, stream);
+        until(&mut rx, |e| {
+            matches!(
+                e,
+                Event::Status {
+                    status: ConnectionStatus::Connected,
+                    ..
+                }
+            )
+        })
+        .await;
+        // Each round is 50 ms open and 20 ms closed: about 20 in 1.5 s, where doubling waits give 8.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let opens = calls.lock().unwrap().len();
+        assert!(opens >= 14, "{opens} opens");
+        drop(tx);
+        assert!(task.await.unwrap());
         assert!(!polled(&log), "it polled instead of streaming");
     }
 

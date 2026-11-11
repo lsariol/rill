@@ -701,6 +701,8 @@ impl ChatView {
                 && account.is_none()
             {
                 SharedString::from("Reading chat (read-only)")
+            } else if let (true, Some(a)) = (read_only_kick, &account) {
+                SharedString::from(format!("Signed in as {a}. Pick a channel to read."))
             } else if p == Platform::Rumble && status == ConnectionStatus::Connected {
                 SharedString::from(format!(
                     "Reading {} (read-only)",
@@ -815,7 +817,19 @@ impl ChatView {
                             }))
                     },
                 );
-            let button = if !set_up || read_only_kick || rumble_link.is_some() {
+            // Signed in to Kick without a channel open: signing out is still offered.
+            let kick_signed_idle = read_only_kick && account.is_some();
+            let button = if kick_signed_idle {
+                Some(
+                    Button::new("signout-kick-idle")
+                        .xsmall()
+                        .outline()
+                        .label("Disconnect")
+                        .on_click(cx.listener(move |view, _, window, cx| {
+                            view.account(Platform::Kick, Command::SignOut, window, cx);
+                        })),
+                )
+            } else if !set_up || read_only_kick || rumble_link.is_some() {
                 None
             } else {
                 match status {
