@@ -61,6 +61,29 @@ pub fn level_color(level: Level) -> Rgba {
     })
 }
 
+/// The gray that buttons and text boxes are drawn from: their outline, their background (faint),
+/// and the tint they take under the pointer.
+pub const CONTROL: u32 = 0x5c5f66;
+
+/// Makes controls show the pointer: the toolkit's dark theme tints them in a gray that vanishes on
+/// Rill's panels.
+pub fn tune_theme(cx: &mut gpui::App) {
+    gpui_component::Theme::update(cx, |t| {
+        t.colors.accent = hsla(CONTROL);
+        t.colors.input = hsla(CONTROL);
+    });
+}
+
+/// A switch with a soft halo under the pointer, since the switch itself doesn't change.
+pub fn switch(s: gpui_component::switch::Switch) -> gpui::Div {
+    gpui::div()
+        .flex_none()
+        .p(px(3.))
+        .rounded_full()
+        .hover(|d| d.bg(hsla_alpha(CONTROL, 0.45)))
+        .child(s)
+}
+
 /// A scroll bar that's always there, thin, and wider under the pointer.
 pub fn scrollbar(bar: gpui_component::scroll::Scrollbar) -> gpui_component::scroll::Scrollbar {
     bar.mode(gpui_component::scroll::ScrollbarMode::Always)

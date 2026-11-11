@@ -252,6 +252,7 @@ fn main() -> ExitCode {
     app.run(move |cx: &mut App| {
         gpui_component::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
+        style::tune_theme(cx);
         composer::init(cx);
         focus::init(cx);
         panels::init(cx);
