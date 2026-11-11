@@ -306,6 +306,22 @@ impl Api {
             .collect())
     }
 
+    /// A user's ID by name, from their channel (every Kick account has one); `None` if there's no such user.
+    pub async fn user_id(&self, name: &str) -> Result<Option<u64>, ApiError> {
+        // Kick's channel address is the name in lower case with dashes for underscores.
+        let slug = name
+            .trim_start_matches('@')
+            .to_lowercase()
+            .replace('_', "-");
+        if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return Ok(None);
+        }
+        let v = self
+            .call(Method::GET, &format!("/channels?slug={slug}"), None)
+            .await?;
+        Ok(v["data"][0]["broadcaster_user_id"].as_u64())
+    }
+
     pub async fn unban(&self, broadcaster: u64, user: u64) -> Result<(), ApiError> {
         let body = json!({"broadcaster_user_id": broadcaster, "user_id": user});
         self.call(Method::DELETE, "/moderation/bans", Some(body))
