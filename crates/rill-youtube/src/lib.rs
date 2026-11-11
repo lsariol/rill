@@ -3,6 +3,7 @@
 pub mod api;
 pub mod auth;
 pub mod chat;
+pub mod emoji;
 pub mod stream;
 
 use std::collections::HashMap;

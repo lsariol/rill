@@ -162,6 +162,8 @@ pub fn bigger_image(url: &str) -> String {
         swap("/1x.webp", "/3x.webp").or_else(|| swap("/1x", "/3x"))
     } else if url.contains("frankerfacez.com/emote/") {
         swap("/1", "/4")
+    } else if url.contains("yt3.ggpht.com/") {
+        swap("=w48-h48-c-k-nd", "=w96-h96-c-k-nd")
     } else {
         None
     }

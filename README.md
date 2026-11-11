@@ -64,7 +64,9 @@ next, from the same code.
   (such as "7TV channel emote" or "Twitch emote from another channel").
   Platform emotes, plus 7TV, BetterTTV and FrankerFaceZ. The channel's 7TV set loads on
   Twitch and Kick (changes show up without a restart), its BetterTTV and FrankerFaceZ sets on
-  Twitch, and the three services' global emotes everywhere. In the composer, type `:` and the
+  Twitch, and the three services' global emotes everywhere. YouTube's own emoji
+  (`:hand-pink-waving:`) show as pictures, from a list built into Rill since YouTube's API sends
+  only their names; a channel's member emoji stay as text. In the composer, type `:` and the
   start of a name (`:sm`) for a list of the emotes you can use where the message is going, with
   the platforms each works on; Tab or Enter picks one, Up and Down move, Esc closes the list. A
   `:` alone lists them all, the channel's own first; scroll with the mouse wheel, PgUp and PgDn. On
