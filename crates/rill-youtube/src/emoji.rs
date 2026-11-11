@@ -1,4 +1,5 @@
 //! YouTube's own emoji (`:hand-pink-waving:`), which its API sends as text: their images by name.
+//! Ordinary emoji arrive as characters, and channels' member emoji (`:_name:`) aren't listed.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -47,7 +48,7 @@ fn split(text: &str, out: &mut Vec<Fragment>) {
         let name = &text[open + 1..close];
         let known = name
             .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
             && !name.is_empty();
         match known.then(|| url(name)).flatten() {
             Some(url) => {
@@ -91,7 +92,9 @@ mod tests {
     #[test]
     fn known_emoji_become_images_and_the_rest_stays_text() {
         let out = emojify(vec![Fragment::Text(
-            "hi :face-green-smiling::face-blue-smiling: at 10:30 :not-one: :elbowcough:".into(),
+            "hi :face-green-smiling::face-blue-smiling: at 10:30 :not-one: :_member: :elbowcough: \
+             :wormRedBlue: :levels_cat_crying:"
+                .into(),
         )]);
         assert_eq!(
             names(&out),
@@ -99,8 +102,12 @@ mod tests {
                 "text hi ",
                 "emoji :face-green-smiling:",
                 "emoji :face-blue-smiling:",
-                "text  at 10:30 :not-one: ",
+                "text  at 10:30 :not-one: :_member: ",
                 "emoji :elbowcough:",
+                "text  ",
+                "emoji :wormRedBlue:",
+                "text  ",
+                "emoji :levels_cat_crying:",
             ]
         );
         let Fragment::Emote { url: Some(url), .. } = &out[1] else {
