@@ -171,6 +171,10 @@ const WORDS: &[&str] = &[
     "behind",
     "you",
     "run",
+    "😂",
+    "🔥",
+    "❤️",
+    "👋🏽",
 ];
 
 const SYLLABLES: &[&str] = &[
