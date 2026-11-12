@@ -26,8 +26,7 @@ next, from the same code.
   `/search <text>`, `/clear` and `/help` are Rill's own. Start a message with `//` to send a
   literal slash. Moderation commands work on anyone by name, whether or not they've chatted.
   YouTube lifts a ban only with the ID it gave when banning and lets apps look up no others, so
-  Rill keeps the ones it gives in `youtube-bans.txt` next to its settings and can lift those
-  later; bans given elsewhere are lifted in YouTube Studio.
+  Rill can lift the bans and timeouts it gave while open; others are lifted in YouTube Studio.
 - **Nukes:** for bot raids and spam waves. `/nuke <phrase>` times out everyone who said the phrase
   in the last 5 minutes for 24 hours; `/nuke haha 48h` sets the timeout, and `/nuke haha 48h 15m`
   also looks back 15 minutes. `/meganuke <phrase> [lookback]` bans instead. Put a platform first
@@ -118,11 +117,12 @@ next, from the same code.
   breaks) each get a colored bar and tint. Settings → Highlights turns each on or off and picks
   its color from the swatches or any hex code (`#ff00aa`). Thin marks along the scrollbar show
   where highlighted lines are, so a sub that scrolled away while you were gone is easy to find.
-  First-time chatters are off until you turn them on: the platforms don't tell apps when
-  someone chats for the first time, so Rill keeps a list of who has chatted in your channels
-  (`known-chatters.txt` beside `settings.json`, about 80 bytes of memory per person) and starts
-  marking first-timers once it has watched a platform's chat for a week. Turned off, the list
-  leaves memory, and Settings offers to delete the saved file.
+  First-time chatters are off until you turn them on, and are marked on Twitch, Kick and Rumble
+  (YouTube's rules don't let apps keep its chatters long enough to know who's new). The
+  platforms don't tell apps when someone chats for the first time, so Rill keeps a list of who
+  has chatted in your channels (`known-chatters.txt` beside `settings.json`, about 80 bytes of
+  memory per person) and starts marking first-timers once it has watched a platform's chat for a
+  week. Turned off, the list leaves memory, and Settings offers to delete the saved file.
 - **Text size:** Settings → Text size makes chat, emotes, badges and the rest of the window
   90 % to 150 % of normal (`text_size`); Ctrl+= and Ctrl+- change it from anywhere, and Ctrl+0
   puts it back.
@@ -174,9 +174,8 @@ YouTube is limited for now: until Google finishes reviewing Rill, only Google ac
 test list can connect it, and its sign-in lasts 7 days. To be added, email
 [rill@mobasity.com](mailto:rill@mobasity.com) with the Google account you stream from.
 Connecting YouTube means agreeing to the [YouTube Terms of Service](https://www.youtube.com/t/terms)
-and Rill's [privacy policy](https://rill.mobasity.com/privacy). When you disconnect YouTube, or
-remove Rill's access in your Google account, Rill deletes the YouTube bans and first-time chatters
-it kept.
+and Rill's [privacy policy](https://rill.mobasity.com/privacy). Rill keeps nothing from YouTube
+on your computer except its sign-in.
 
 To run it from source instead, in PowerShell from the repository folder:
 

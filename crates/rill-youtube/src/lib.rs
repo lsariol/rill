@@ -2,7 +2,6 @@
 
 pub mod api;
 pub mod auth;
-mod bans;
 pub mod chat;
 pub mod emoji;
 pub mod stream;
@@ -109,10 +108,6 @@ struct Ctx {
     seven_tv: Option<rill_emotes::Config>,
     /// The gRPC chat stream's address; tests use a local server.
     stream: String,
-    /// Where Rill's YouTube bans are kept between runs; tests keep them in memory only.
-    bans_file: Option<std::path::PathBuf>,
-    /// The first-time chatters file, whose YouTube lines go with the sign-in; tests have none.
-    known_file: Option<std::path::PathBuf>,
 }
 
 enum Outcome {
@@ -127,14 +122,20 @@ struct Live {
     chat: Arc<Mutex<Option<String>>>,
     /// Lowercased name → channel ID, for `/ban name`.
     authors: Arc<Mutex<HashMap<String, String>>>,
-    /// Channel ID → the ban Rill gave, to lift it.
-    bans: Arc<Mutex<HashMap<String, bans::Saved>>>,
-    /// Where the bans are kept between runs.
-    bans_file: Option<std::path::PathBuf>,
+    /// Channel ID → the ban Rill gave while open, to lift it.
+    bans: Arc<Mutex<HashMap<String, Given>>>,
     /// The signed-in channel's name, for lines about its own actions.
     me: Arc<Mutex<String>>,
     /// Channels Rill banned or timed out lately; YouTube's later event about them adds no line.
     told: Arc<Mutex<HashMap<String, Instant>>>,
+}
+
+/// A ban or timeout Rill gave: YouTube's ID for it, which lifting it needs.
+#[derive(Clone)]
+struct Given {
+    ban: String,
+    /// When a timeout ends, in Unix milliseconds; `None` for a ban.
+    until_ms: Option<i64>,
 }
 
 /// How long YouTube's own event about Rill's ban is expected to take.
@@ -180,8 +181,6 @@ async fn run(adapter: YouTubeAdapter, io: AdapterIo) {
         api_base: api::API.into(),
         seven_tv: Some(rill_emotes::Config::default()),
         stream: stream::ENDPOINT.into(),
-        bans_file: Some(bans::path()),
-        known_file: Some(rill_os::known::path()),
     };
     let mut failure: Option<String> = None;
     loop {
@@ -245,7 +244,6 @@ async fn wait_for_sign_in(ctx: &mut Ctx) -> Option<Token> {
                 }
             },
             Command::SignOut => {
-                forget_youtube_data(ctx);
                 ctx.events.done(req.id, Ok(None)).await;
             }
             _ => {
@@ -300,40 +298,17 @@ async fn browser_flow(ctx: &mut Ctx) -> Result<Option<Token>, String> {
     }
 }
 
-/// Google refused the sign-in, as it does once someone removes Rill's access in their Google account.
-fn expired(ctx: &Ctx) -> Outcome {
+fn expired() -> Outcome {
     if let Err(e) = auth::delete_token() {
         tracing::error!(err = %e, "YouTube token not deleted");
     }
-    forget_youtube_data(ctx);
     Outcome::Failed(AuthError::Invalid.message())
-}
-
-/// Deletes what Rill kept from YouTube, since YouTube's rules allow keeping it only while signed in.
-fn forget_youtube_data(ctx: &Ctx) {
-    if let Some(path) = &ctx.bans_file
-        && let Err(e) = std::fs::remove_file(path)
-        && e.kind() != std::io::ErrorKind::NotFound
-    {
-        tracing::warn!(err = %e, path = %path.display(), "YouTube bans not deleted");
-    }
-    if let Some(path) = &ctx.known_file
-        && let Err(e) = rill_os::known::forget(path, "youtube")
-    {
-        tracing::warn!(err = %e, "YouTube first-time chatters not deleted");
-    }
 }
 
 /// A signed-in session: find the live chat, then stream it.
 async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
     let api = Api::new(ctx.http.clone(), ctx.client.clone(), token, &ctx.api_base);
-    let live = Live {
-        bans_file: ctx.bans_file.clone(),
-        ..Live::default()
-    };
-    if let Some(path) = &live.bans_file {
-        *live.bans.lock().await = bans::load(path, now_ms());
-    }
+    let live = Live::default();
     let mut backoff = Backoff::chat();
     ctx.events
         .status(ConnectionStatus::Connecting, None, Capabilities::NONE)
@@ -348,7 +323,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
                     display_name: title,
                 };
             }
-            Err(ApiError::Unauthorized) => return expired(ctx),
+            Err(ApiError::Unauthorized) => return expired(),
             Err(e @ ApiError::Api { status: 404, .. }) => return Outcome::Failed(e.message()),
             Err(e) => {
                 tracing::warn!(err = %e.message(), "YouTube channel lookup failed");
@@ -404,7 +379,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
                 }
                 continue;
             }
-            Err(ApiError::Unauthorized) => return expired(ctx),
+            Err(ApiError::Unauthorized) => return expired(),
             Err(ApiError::NotEnabled) => {
                 // Signed in fine; YouTube just won't list broadcasts until streaming is turned on.
                 ctx.events
@@ -500,7 +475,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
                 Some(stream::StreamError::Unauthorized) if !refreshed => {
                     refreshed = true;
                     if let Err(ApiError::Unauthorized) = api.bearer(true).await {
-                        return expired(ctx);
+                        return expired();
                     }
                     continue;
                 }
@@ -761,7 +736,6 @@ async fn handle(ctx: &mut Ctx, api: &Api, live: &Live, req: Option<Request>) -> 
     match req.command {
         Command::SignOut => {
             auth::revoke(&ctx.http, &api.token().await).await;
-            forget_youtube_data(ctx);
             let result = auth::delete_token().map(|_| None);
             ctx.events.done(req.id, result).await;
             return Some(Outcome::SignedOut);
@@ -889,19 +863,13 @@ async fn find(api: &Api, live: &Live, user: &UserRef) -> Result<String, String> 
     }
 }
 
-/// Remembers a ban Rill gave, on disk too, so it can be lifted later.
+/// Remembers a ban Rill gave, so it can be lifted while Rill is open.
 async fn keep_ban(live: &Live, channel: &str, ban: &str, until_ms: Option<i64>) {
-    let mut bans = live.bans.lock().await;
-    bans.insert(
-        channel.to_string(),
-        bans::Saved {
-            ban: ban.to_string(),
-            until_ms,
-        },
-    );
-    if let Some(path) = &live.bans_file {
-        bans::save(path, &bans);
-    }
+    let given = Given {
+        ban: ban.to_string(),
+        until_ms,
+    };
+    live.bans.lock().await.insert(channel.to_string(), given);
 }
 
 /// Lifts a ban or timeout Rill gave; YouTube can't look up others, so those stay for YouTube Studio.
@@ -916,15 +884,11 @@ async fn unban(
     let id = find(api, live, user).await?;
     let Some(saved) = live.bans.lock().await.get(&id).cloned() else {
         return Err(format!(
-            "YouTube: YouTube doesn't let apps look up bans, so Rill can only lift the ones it gave. Lift {name}'s in YouTube Studio."
+            "YouTube: YouTube doesn't let apps look up bans, so Rill can only lift the ones it gave while open. Lift {name}'s in YouTube Studio."
         ));
     };
     let forget = || async {
-        let mut bans = live.bans.lock().await;
-        bans.remove(&id);
-        if let Some(path) = &live.bans_file {
-            bans::save(path, &bans);
-        }
+        live.bans.lock().await.remove(&id);
     };
     if saved.until_ms.is_some_and(|u| u <= now_ms()) {
         forget().await;
@@ -1139,8 +1103,6 @@ mod sessions {
             api_base: base.into(),
             seven_tv: None,
             stream,
-            bans_file: None,
-            known_file: None,
         };
         let token = Token {
             access: "access".into(),

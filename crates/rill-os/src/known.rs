@@ -68,9 +68,10 @@ pub fn delete() -> Result<(), String> {
     }
 }
 
-/// Removes one platform's lines from the file at `path`, keeping the others.
-pub fn forget(path: &std::path::Path, platform: &str) -> Result<(), String> {
-    let text = match std::fs::read_to_string(path) {
+/// Removes one platform's lines from the file, keeping the others.
+pub fn forget(platform: &str) -> Result<(), String> {
+    let path = path();
+    let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => {
@@ -84,7 +85,7 @@ pub fn forget(path: &std::path::Path, platform: &str) -> Result<(), String> {
     if kept == text {
         return Ok(());
     }
-    std::fs::write(path, kept).map_err(|e| {
+    std::fs::write(&path, kept).map_err(|e| {
         format!(
             "Known chatters: can't write {} ({e}). Check the folder's permissions.",
             path.display()

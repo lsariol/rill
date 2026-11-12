@@ -32,9 +32,6 @@ Fixes and polish from the first test stream.
   again to what you were typing.
 - `/ban`, `/timeout` and `/unban` work on anyone by name on Kick and YouTube, not only people who
   have chatted since Rill connected.
-- On YouTube, Rill remembers the bans and timeouts it gives, so it can lift them after a restart
-  or once the stream has ended. YouTube doesn't let apps look up other bans, so those are still
-  lifted in YouTube Studio.
 - Unbanning someone who isn't banned says so in a plain line instead of an error.
 - When a YouTube stream ends, Rill no longer also says to go live.
 - Web addresses written without `https://`, such as `mobasity.com`, are links too.
@@ -42,8 +39,9 @@ Fixes and polish from the first test stream.
   clear what can be clicked.
 - Accounts says, before you connect YouTube, that connecting means agreeing to YouTube's Terms of
   Service and Rill's privacy policy, with links to both. Settings → About links Rill's terms.
-- Disconnecting YouTube, or removing Rill's access in your Google account, deletes the YouTube bans
-  and first-time chatters Rill kept.
+- First-time chatters are marked on Twitch, Kick and Rumble only: YouTube's rules don't let apps
+  keep its chatters long enough to know who's new. The YouTube chatters an older version kept are
+  deleted.
 - Rumble is off until turned on in Settings.
 - Messages sent to every platform, and lines about several platforms or none, show Rill's logo.
 
