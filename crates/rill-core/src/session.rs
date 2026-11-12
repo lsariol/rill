@@ -203,8 +203,7 @@ impl Default for Known {
     }
 }
 
-/// Whether first-time chatters are marked on a platform. Not YouTube: its rules let apps keep
-/// YouTube data for 30 days at most, too short to know who's new.
+/// Whether first-time chatters are marked: not on YouTube, whose 30-day data limit is too short.
 pub fn first_chatters_on(platform: Platform) -> bool {
     platform != Platform::YouTube
 }
