@@ -24,6 +24,9 @@ actions!(target, [TargetNext, TargetPrev, TargetRun, TargetCancel]);
 
 const TARGET_CONTEXT: &str = "TargetPrompt";
 
+/// YouTube's Terms of Service, which YouTube asks apps using its API to link.
+const YOUTUBE_TERMS: &str = "https://www.youtube.com/t/terms";
+
 /// Keys for the "which platform?" prompt: Tab or the arrows pick, Enter or Space runs, Esc cancels.
 pub fn init(cx: &mut App) {
     let prompt = Some(TARGET_CONTEXT);
@@ -738,6 +741,38 @@ impl ChatView {
                             }),
                     )
             });
+            // YouTube's rules: before connecting, people agree to its terms and Rill's privacy policy.
+            let youtube_terms =
+                (p == Platform::YouTube && set_up && account.is_none()).then(|| {
+                    let open = |id: &'static str, label: &'static str, url: String| {
+                        Button::new(id)
+                            .xsmall()
+                            .ghost()
+                            .label(label)
+                            .on_click(move |_, _, cx| cx.open_url(&url))
+                    };
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(style::MUTED))
+                                .child("Connecting YouTube means you agree to:"),
+                        )
+                        .child(open(
+                            "youtube-terms",
+                            "YouTube's Terms of Service",
+                            YOUTUBE_TERMS.into(),
+                        ))
+                        .child(open(
+                            "youtube-privacy",
+                            "Rill's privacy policy",
+                            format!("{}/privacy", rill_core::WEBSITE),
+                        ))
+                });
             // Rumble connects with the private link from the account's Live Stream API page.
             let rumble_link = (p == Platform::Rumble
                 && set_up
@@ -939,6 +974,7 @@ impl ChatView {
                 )
                 .children(error.map(|e| div().text_xs().text_color(rgb(style::ERROR)).child(e)))
                 .children(youtube_limited)
+                .children(youtube_terms)
                 .children(prompt_box)
                 .children(kick_join)
                 .children(rumble_link)
@@ -1721,6 +1757,7 @@ impl ChatView {
                     .child(link("about-site", "Website", "/"))
                     .child(link("about-support", "Support", "/support"))
                     .child(link("about-privacy", "Privacy", "/privacy"))
+                    .child(link("about-terms", "Terms", "/terms"))
                     .when_some(licences, |d, path| {
                         d.child(
                             Button::new("about-licences")
