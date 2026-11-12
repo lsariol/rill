@@ -145,7 +145,7 @@ next, from the same code.
   a report to the Rill team: what went wrong and the end of Rill's recent log, never chat
   messages or passwords. Settings → About can send the log at any time too. Either way, Rill shows
   the report's ID to mention when emailing rill@mobasity.com. Nothing is sent unless you choose
-  to. About also has the version, links to the website, and the open-source license notices of
+  to. About also has the version, links to the website, its privacy policy and terms, and the open-source license notices of
   everything Rill is built with.
 - **Keyboard:** F6 moves between the composer and the messages. In the messages, Up and Down (or
   Home and End) pick one, and Enter or Space opens its user card. Tab and Shift+Tab move between
@@ -173,6 +173,10 @@ platforms.
 YouTube is limited for now: until Google finishes reviewing Rill, only Google accounts on Rill's
 test list can connect it, and its sign-in lasts 7 days. To be added, email
 [rill@mobasity.com](mailto:rill@mobasity.com) with the Google account you stream from.
+Connecting YouTube means agreeing to the [YouTube Terms of Service](https://www.youtube.com/t/terms)
+and Rill's [privacy policy](https://rill.mobasity.com/privacy). When you disconnect YouTube, or
+remove Rill's access in your Google account, Rill deletes the YouTube bans and first-time chatters
+it kept.
 
 To run it from source instead, in PowerShell from the repository folder:
 

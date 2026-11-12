@@ -40,6 +40,10 @@ Fixes and polish from the first test stream.
 - Web addresses written without `https://`, such as `mobasity.com`, are links too.
 - Buttons and switches light up under the pointer, and a color swatch shrinks to a dot, so it's
   clear what can be clicked.
+- Accounts says, before you connect YouTube, that connecting means agreeing to YouTube's Terms of
+  Service and Rill's privacy policy, with links to both. Settings → About links Rill's terms.
+- Disconnecting YouTube, or removing Rill's access in your Google account, deletes the YouTube bans
+  and first-time chatters Rill kept.
 - Rumble is off until turned on in Settings.
 - Messages sent to every platform, and lines about several platforms or none, show Rill's logo.
 

@@ -68,6 +68,50 @@ pub fn delete() -> Result<(), String> {
     }
 }
 
+/// Removes one platform's lines from the file at `path`, keeping the others.
+pub fn forget(path: &std::path::Path, platform: &str) -> Result<(), String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(format!(
+                "Known chatters: can't read {} ({e}).",
+                path.display()
+            ));
+        }
+    };
+    let kept = without(&text, platform);
+    if kept == text {
+        return Ok(());
+    }
+    std::fs::write(path, kept).map_err(|e| {
+        format!(
+            "Known chatters: can't write {} ({e}). Check the folder's permissions.",
+            path.display()
+        )
+    })
+}
+
+/// The file's text without `platform`'s lines.
+fn without(text: &str, platform: &str) -> String {
+    fn owner(line: &str) -> Option<&str> {
+        let mut parts = line.split('\t');
+        let first = parts.next();
+        if first == Some("since") {
+            parts.next()
+        } else {
+            first
+        }
+    }
+    if !text.lines().any(|line| owner(line) == Some(platform)) {
+        return text.to_string();
+    }
+    text.lines()
+        .filter(|line| owner(line) != Some(platform))
+        .flat_map(|line| [line, "\n"])
+        .collect()
+}
+
 /// Adds lines to the end of the file, creating it if needed.
 pub fn append(known: &Known) -> Result<(), String> {
     if known.since.is_empty() && known.ids.is_empty() {
@@ -116,5 +160,15 @@ mod tests {
                 ("kick".to_string(), "name:bob".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn forgetting_a_platform_keeps_the_others() {
+        let text = "since\tyoutube\t1700\nyoutube\tUC1\ntwitch\t42\nsince\ttwitch\t1600\n";
+        assert_eq!(
+            without(text, "youtube"),
+            "twitch\t42\nsince\ttwitch\t1600\n"
+        );
+        assert_eq!(without(text, "kick"), text);
     }
 }

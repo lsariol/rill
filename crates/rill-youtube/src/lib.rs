@@ -111,6 +111,8 @@ struct Ctx {
     stream: String,
     /// Where Rill's YouTube bans are kept between runs; tests keep them in memory only.
     bans_file: Option<std::path::PathBuf>,
+    /// The first-time chatters file, whose YouTube lines go with the sign-in; tests have none.
+    known_file: Option<std::path::PathBuf>,
 }
 
 enum Outcome {
@@ -179,6 +181,7 @@ async fn run(adapter: YouTubeAdapter, io: AdapterIo) {
         seven_tv: Some(rill_emotes::Config::default()),
         stream: stream::ENDPOINT.into(),
         bans_file: Some(bans::path()),
+        known_file: Some(rill_os::known::path()),
     };
     let mut failure: Option<String> = None;
     loop {
@@ -242,6 +245,7 @@ async fn wait_for_sign_in(ctx: &mut Ctx) -> Option<Token> {
                 }
             },
             Command::SignOut => {
+                forget_youtube_data(ctx);
                 ctx.events.done(req.id, Ok(None)).await;
             }
             _ => {
@@ -296,11 +300,28 @@ async fn browser_flow(ctx: &mut Ctx) -> Result<Option<Token>, String> {
     }
 }
 
-fn expired() -> Outcome {
+/// Google refused the sign-in, as it does once someone removes Rill's access in their Google account.
+fn expired(ctx: &Ctx) -> Outcome {
     if let Err(e) = auth::delete_token() {
         tracing::error!(err = %e, "YouTube token not deleted");
     }
+    forget_youtube_data(ctx);
     Outcome::Failed(AuthError::Invalid.message())
+}
+
+/// Deletes what Rill kept from YouTube, since YouTube's rules allow keeping it only while signed in.
+fn forget_youtube_data(ctx: &Ctx) {
+    if let Some(path) = &ctx.bans_file
+        && let Err(e) = std::fs::remove_file(path)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(err = %e, path = %path.display(), "YouTube bans not deleted");
+    }
+    if let Some(path) = &ctx.known_file
+        && let Err(e) = rill_os::known::forget(path, "youtube")
+    {
+        tracing::warn!(err = %e, "YouTube first-time chatters not deleted");
+    }
 }
 
 /// A signed-in session: find the live chat, then stream it.
@@ -327,7 +348,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
                     display_name: title,
                 };
             }
-            Err(ApiError::Unauthorized) => return expired(),
+            Err(ApiError::Unauthorized) => return expired(ctx),
             Err(e @ ApiError::Api { status: 404, .. }) => return Outcome::Failed(e.message()),
             Err(e) => {
                 tracing::warn!(err = %e.message(), "YouTube channel lookup failed");
@@ -383,7 +404,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
                 }
                 continue;
             }
-            Err(ApiError::Unauthorized) => return expired(),
+            Err(ApiError::Unauthorized) => return expired(ctx),
             Err(ApiError::NotEnabled) => {
                 // Signed in fine; YouTube just won't list broadcasts until streaming is turned on.
                 ctx.events
@@ -479,7 +500,7 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
                 Some(stream::StreamError::Unauthorized) if !refreshed => {
                     refreshed = true;
                     if let Err(ApiError::Unauthorized) = api.bearer(true).await {
-                        return expired();
+                        return expired(ctx);
                     }
                     continue;
                 }
@@ -740,6 +761,7 @@ async fn handle(ctx: &mut Ctx, api: &Api, live: &Live, req: Option<Request>) -> 
     match req.command {
         Command::SignOut => {
             auth::revoke(&ctx.http, &api.token().await).await;
+            forget_youtube_data(ctx);
             let result = auth::delete_token().map(|_| None);
             ctx.events.done(req.id, result).await;
             return Some(Outcome::SignedOut);
@@ -1118,6 +1140,7 @@ mod sessions {
             seven_tv: None,
             stream,
             bans_file: None,
+            known_file: None,
         };
         let token = Token {
             access: "access".into(),
