@@ -300,6 +300,10 @@ impl ChatView {
         // Who has chatted before, kept only while first-time chatters are on.
         session.set_first_chatters(highlights.first_chatters);
         if platforms.saves() {
+            // Rill 0.0.1 also kept YouTube's chatters, which YouTube's rules don't allow.
+            if let Err(e) = rill_os::known::forget("youtube") {
+                tracing::warn!(err = %e, "YouTube first-time chatters not deleted");
+            }
             if highlights.first_chatters {
                 load_known_chatters(&mut session);
             }

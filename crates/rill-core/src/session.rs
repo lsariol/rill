@@ -203,6 +203,12 @@ impl Default for Known {
     }
 }
 
+/// Whether first-time chatters are marked on a platform. Not YouTube: its rules let apps keep
+/// YouTube data for 30 days at most, too short to know who's new.
+pub fn first_chatters_on(platform: Platform) -> bool {
+    platform != Platform::YouTube
+}
+
 /// How long Rill watches a platform's chat before it marks first-time chatters: a week.
 pub const LEARN_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
@@ -784,8 +790,13 @@ impl Session {
         since: impl IntoIterator<Item = (Platform, i64)>,
         ids: impl IntoIterator<Item = (Platform, String)>,
     ) {
-        self.known.since.extend(since);
-        self.known.ids.extend(ids);
+        let kept = |p: &Platform| first_chatters_on(*p);
+        self.known
+            .since
+            .extend(since.into_iter().filter(|(p, _)| kept(p)));
+        self.known
+            .ids
+            .extend(ids.into_iter().filter(|(p, _)| kept(p)));
     }
 
     /// Turns first-time chatter tracking on or off. Off, nothing is noted and nothing is marked.
@@ -830,7 +841,7 @@ impl Session {
 
     /// Notes the author; true when they're new and the platform has been watched long enough.
     fn first_message(&mut self, platform: Platform, user_id: &str, now_ms: i64) -> bool {
-        if user_id.is_empty() || !self.known.tracking {
+        if user_id.is_empty() || !self.known.tracking || !first_chatters_on(platform) {
             return false;
         }
         let k = &mut self.known;
@@ -1256,6 +1267,17 @@ mod tests {
         assert_eq!(first(&t), Some(false));
         assert_eq!(t.first_chatters_from(Platform::Twitch), Some(LEARN_MS));
         assert_eq!(t.known_count(), 1);
+        // Never on YouTube, and anything kept for it is left out.
+        connect(&mut t, Platform::YouTube, ALL_CAPS);
+        t.load_known(
+            [(Platform::YouTube, 0)],
+            [(Platform::YouTube, "UCold".to_string())],
+        );
+        assert_eq!(t.known_count(), 1);
+        t.apply(msg(Platform::YouTube, "6", "UCnew", "hi"), later);
+        assert_eq!(first(&t), Some(false));
+        assert_eq!(t.first_chatters_from(Platform::YouTube), None);
+        assert_eq!(t.take_known_changes().ids.len(), 0);
         // Forgetting starts over.
         t.forget_known();
         assert_eq!(t.known_count(), 0);

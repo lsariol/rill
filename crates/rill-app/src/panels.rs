@@ -1161,7 +1161,7 @@ impl ChatView {
             self.highlight_row(
                 "first",
                 "First-time chatters",
-                "Someone's first message in your chat.",
+                "Someone's first message in your chat on Twitch, Kick or Rumble.",
                 true,
                 false,
                 cx,
