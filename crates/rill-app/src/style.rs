@@ -61,12 +61,10 @@ pub fn level_color(level: Level) -> Rgba {
     })
 }
 
-/// The gray that buttons and text boxes are drawn from: their outline, their background (faint),
-/// and the tint they take under the pointer.
+/// The gray of buttons and text boxes: their outline, faint background and hover tint.
 pub const CONTROL: u32 = 0x5c5f66;
 
-/// Makes controls show the pointer: the toolkit's dark theme tints them in a gray that vanishes on
-/// Rill's panels.
+/// Makes controls show the pointer: the toolkit's own hover gray vanishes on Rill's panels.
 pub fn tune_theme(cx: &mut gpui::App) {
     gpui_component::Theme::update(cx, |t| {
         t.colors.accent = hsla(CONTROL);

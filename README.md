@@ -45,7 +45,9 @@ next, from the same code.
 - **Moderation:** click a name to open the user card, which floats over the chat beside the
   message while chat keeps moving: delete, timeouts, ban and unban, showing only what that
   platform allows, and every message from that user still in the chat. Actions leave the card
-  open and the chat where it is; clicking anywhere else closes it.
+  open and the chat where it is; clicking anywhere else closes it. Each action shows one line
+  once the platform has done it, such as `Mobasity banned Foo. Reason: spam`, and on Twitch and
+  Kick so do other moderators' actions. The overlay never shows these lines.
 - **Names and badges:** Settings → Names picks Simple or Badges, for Rill's window and the
   overlay separately (`names` and `overlay.names`: `simple` or `badges`). Simple shows only the
   platform's icon and colors each name by role: the channel owner orange-red, moderators red, VIPs
@@ -91,7 +93,7 @@ next, from the same code.
   default browser; Copy link is there for signing in with another browser.
 - **Settings:** turn off the platforms you don't use. A platform that's off isn't connected and
   doesn't appear in the chat, the header or Accounts; its sign-in is kept for when you turn it
-  back on. The choice is saved in `settings.json` as `disabled_platforms`. **Show deleted
+  back on. Rumble starts off. The choice is saved in `settings.json` as `disabled_platforms`. **Show deleted
   messages** keeps the text of deleted messages, faded and struck through, instead of "message
   deleted" (`show_deleted_messages`). **Message history** sets how many chat lines Rill keeps
   for scrolling back, searching and user cards (`message_history`):
@@ -232,8 +234,8 @@ in `settings.json` (in `.dev/` for debug runs):
   secret, so a development build takes `client_secret` from `settings.json`; a release build instead
   sets `auth_helper` to a small token-exchange service that holds the secret. Sign-in listens on
   port 47831 while it waits for Kick. Kick timeouts last at most 7 days.
-- **Rumble:** read-only. In Accounts, paste the private link from rumble.com/account/livestream-api
-  (it starts `https://rumble.com/-livestream-api/get-data?key=`); Rill keeps it in the system's
+- **Rumble:** read-only, and off until turned on in Settings. In Accounts, paste the private link
+  from rumble.com/account/livestream-api (it starts `https://rumble.com/-livestream-api/get-data?key=`); Rill keeps it in the system's
   credential store, not in `settings.json`. Rumble's Live Stream API is polled every 10 seconds,
   so its chat arrives up to 10 seconds late. Rants, new followers and new subscribers show as
   event lines.

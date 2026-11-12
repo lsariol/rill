@@ -154,7 +154,6 @@ pub(crate) struct TabCycle {
     cursor: usize,
 }
 
-/// Binds the composer's keys inside its text box.
 /// Messages sent from the composer, oldest first, for stepping through with Up and Down.
 #[derive(Debug, Default)]
 pub(crate) struct SentHistory {
@@ -210,6 +209,7 @@ impl SentHistory {
     }
 }
 
+/// Binds the composer's keys inside its text box.
 pub fn init(cx: &mut App) {
     let input = Some("Composer > Input");
     cx.bind_keys([

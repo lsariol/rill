@@ -1,5 +1,4 @@
-//! YouTube's own emoji (`:hand-pink-waving:`), which its API sends as text: their images by name.
-//! Ordinary emoji arrive as characters, and channels' member emoji (`:_name:`) aren't listed.
+//! YouTube's own emoji (`:hand-pink-waving:`), sent as text by its API: their images by name.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
