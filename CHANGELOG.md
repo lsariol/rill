@@ -63,6 +63,8 @@ Fixes and polish from the first test stream.
   finish a ban, so an Unban within 25 seconds of it now waits until then, and says so.
 - Lifting a YouTube timeout, by Unban or `/unnuke`, failed with "The id parameter specifies an
   invalid value". YouTube's API can't delete a timeout, so Rill now replaces it with a 1-second one.
+- When a YouTube moderation action failed, Rill's log kept the viewer's name from the error. It now
+  leaves the name out, so nothing from YouTube but the sign-in is written to your computer.
 - Kick forgot a channel picked with Read chat when Rill restarted. Signed in with no channel
   open, Kick now reads your own channel, and Accounts shows the account and Disconnect instead
   of only "Not connected".
