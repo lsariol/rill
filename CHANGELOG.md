@@ -9,7 +9,8 @@ Fixes and polish from the first test stream.
 - Moderation reads as one line per action, once the platform has done it, such as
   `Mobasity banned Foo. Reason: spam`, `ModFoo timed out Bar for 10m.` or `Mobasity VIP'd Bar.`
   Other moderators' actions show too where the platform reports them (Twitch and Kick), and the
-  "working" and ✓ lines are gone. A `/nuke` or `/meganuke` is one line for everyone it caught.
+  "working" and ✓ lines are gone. A `/nuke` or `/meganuke` is one line for everyone it caught,
+  and banning or unbanning one of them yourself afterwards still shows its own line.
   The overlay never shows these lines; it only removes the messages.
 - Twitch asks for five more read permissions, for moderation events. A Twitch sign-in from an
   earlier version keeps working, and Rill asks once to reconnect Twitch to get them.

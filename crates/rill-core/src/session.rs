@@ -155,6 +155,24 @@ impl Then {
 /// How long a nuke's users stay out of moderation lines, so one line tells the whole nuke.
 const QUIET_MS: i64 = 5 * 60_000;
 
+/// A user in a recent nuke, until when their moderation lines stay quiet.
+#[derive(Debug, Clone)]
+struct Quiet {
+    platform: Platform,
+    id: Option<String>,
+    /// Lowercase.
+    login: String,
+    until_ms: i64,
+}
+
+impl Quiet {
+    fn is(&self, platform: Platform, id: Option<&str>, login: &str) -> bool {
+        self.platform == platform
+            && (id.is_some_and(|id| !id.is_empty() && self.id.as_deref() == Some(id))
+                || (!login.is_empty() && self.login == login.to_lowercase()))
+    }
+}
+
 /// The chat core's state.
 #[derive(Debug, Default)]
 pub struct Session {
@@ -169,8 +187,8 @@ pub struct Session {
     next_batch: u64,
     /// The users the last nuke hit, for `/unnuke`.
     pub(crate) last_nuke: Vec<(Platform, UserRef)>,
-    /// Users in a recent nuke, by platform and `id:…` or lowercase `login:…`, until when.
-    quiet: HashMap<(Platform, String), i64>,
+    /// Users in a recent nuke, whose moderation lines the nuke's one line already tells.
+    quiet: Vec<Quiet>,
     /// Emotes the user can use, by platform and source.
     emotes: BTreeMap<(Platform, EmoteSource), Vec<EmoteOption>>,
     /// Everyone seen in chat, for `@` mentions and Tab.
@@ -368,11 +386,11 @@ impl Session {
         if m.clears() && !m.user_id.is_empty() {
             self.feed.mark_user_deleted(platform, &m.user_id);
         }
-        self.quiet.retain(|_, until| *until > now_ms);
-        let id = format!("id:{}", m.user_id);
-        let login = format!("login:{}", m.user_login.to_lowercase());
-        let nuked = (!m.user_id.is_empty() && self.quiet.contains_key(&(platform, id)))
-            || (!m.user_login.is_empty() && self.quiet.contains_key(&(platform, login)));
+        self.quiet.retain(|q| q.until_ms > now_ms);
+        let nuked = self
+            .quiet
+            .iter()
+            .any(|q| q.is(platform, Some(&m.user_id), &m.user_login));
         if nuked {
             return;
         }
@@ -771,6 +789,15 @@ impl Session {
         match plan {
             Plan::PollDialog => Submitted::PollDialog(platform),
             Plan::Run { command, label } => {
+                // Moderating someone by hand ends a nuke's quiet about them, so it shows.
+                if let Command::Ban { user, .. }
+                | Command::Timeout { user, .. }
+                | Command::Unban { user } = &command
+                {
+                    let login = user.login.trim_start_matches('@');
+                    self.quiet
+                        .retain(|q| !q.is(platform, user.id.as_deref(), login));
+                }
                 let id = self.request_id();
                 let then = Then::of(&command);
                 self.pending
@@ -933,12 +960,12 @@ impl Session {
             | Command::Ban { user, .. }
             | Command::Unban { user } = c
             {
-                if let Some(id) = &user.id {
-                    self.quiet
-                        .insert((*p, format!("id:{id}")), now_ms + QUIET_MS);
-                }
-                let login = format!("login:{}", user.login.to_lowercase());
-                self.quiet.insert((*p, login), now_ms + QUIET_MS);
+                self.quiet.push(Quiet {
+                    platform: *p,
+                    id: user.id.clone(),
+                    login: user.login.to_lowercase(),
+                    until_ms: now_ms + QUIET_MS,
+                });
             }
         }
         if batch.undoable {
@@ -1342,6 +1369,63 @@ mod tests {
     }
 
     #[test]
+    fn moderating_a_nuked_user_by_hand_shows_its_line() {
+        let mut s = Session::new(100);
+        connect(&mut s, Platform::Kick, ALL_CAPS);
+        let mut m = msg(Platform::Kick, "1", "u-bob", "spam");
+        if let Event::Message(m) = &mut m {
+            m.author.login = "rillappdev".into();
+        }
+        s.apply(m, 0);
+        let Submitted::Confirm { batch, .. } = s.submit("/nuke spam", Destination::All, 0) else {
+            panic!("expected a confirmation");
+        };
+        let Submitted::Send(out) = s.run_batch(batch, 0) else {
+            panic!("expected requests");
+        };
+        done(&mut s, &out, 0, 0);
+        let unban = |s: &mut Session| {
+            s.apply(
+                Event::Moderation {
+                    platform: Platform::Kick,
+                    moderation: crate::Moderation {
+                        user: "RillAppDev".into(),
+                        user_login: "rillappdev".into(),
+                        user_id: "u-bob".into(),
+                        action: crate::ModAction::Unban,
+                        ..ban("Mobasity", "")
+                    },
+                },
+                1_000,
+            );
+        };
+        // Kick's own event for the nuke adds nothing to its one line.
+        let lines = s.feed.len();
+        unban(&mut s);
+        assert_eq!(s.feed.len(), lines);
+        // An unban by name, minutes later but inside the nuke's quiet, shows.
+        let Submitted::Send(_) = s.execute(
+            Platform::Kick,
+            Plan::Run {
+                command: Command::Unban {
+                    user: UserRef {
+                        id: None,
+                        login: "RillAppDev".into(),
+                    },
+                },
+                label: "Unban RillAppDev".into(),
+            },
+        ) else {
+            panic!("expected a request");
+        };
+        unban(&mut s);
+        assert_eq!(
+            last_notice(&s),
+            (Level::Info, "Mobasity unbanned RillAppDev.".to_string())
+        );
+    }
+
+    #[test]
     fn nuke_confirms_runs_reports_and_undoes() {
         let mut s = Session::new(100);
         connect(&mut s, Platform::Twitch, ALL_CAPS);
@@ -1429,7 +1513,6 @@ mod tests {
             now,
         );
         assert_eq!(s.feed.len(), lines, "a nuke tells its users in one line");
-
         let Submitted::Confirm { batch, .. } = s.submit("/unnuke", Destination::All, now) else {
             panic!("expected a confirmation");
         };
