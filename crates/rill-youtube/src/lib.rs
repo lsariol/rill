@@ -47,8 +47,8 @@ const QUIET_CLOSE: Duration = Duration::from_secs(5);
 const TELL_AFTER: u32 = 3;
 /// Authors remembered for `/ban name`.
 const AUTHOR_LIMIT: usize = 5_000;
-/// The longest an unban waits for YouTube to finish the ban it lifts.
-const BAN_SETTLE: Duration = Duration::from_secs(30);
+/// How long YouTube takes to finish a ban: lifted sooner, the user stays hidden on the channel.
+const BAN_SETTLE: Duration = Duration::from_secs(25);
 
 const OWNER: Capabilities = Capabilities::of(&[
     Action::Ads,
@@ -110,7 +110,7 @@ struct Ctx {
     seven_tv: Option<rill_emotes::Config>,
     /// The gRPC chat stream's address; tests use a local server.
     stream: String,
-    /// The longest an unban waits for YouTube to finish the ban it lifts.
+    /// How long YouTube takes to finish a ban, before it can be lifted.
     ban_settle: Duration,
 }
 
@@ -132,7 +132,7 @@ struct Live {
     me: Arc<Mutex<String>>,
     /// Channels Rill banned or timed out lately; YouTube's later event about them adds no line.
     told: Arc<Mutex<HashMap<String, Instant>>>,
-    /// The longest an unban waits for YouTube to finish the ban it lifts.
+    /// How long YouTube takes to finish a ban, before it can be lifted.
     settle: Duration,
 }
 
@@ -144,8 +144,6 @@ struct Given {
     until_ms: Option<i64>,
     /// When Rill gave it.
     at: Instant,
-    /// Whether YouTube's own event for it has arrived, so the ban is in place.
-    confirmed: bool,
 }
 
 /// How long YouTube's own event about Rill's ban is expected to take.
@@ -677,13 +675,6 @@ async fn already_told(live: &Live, e: Event) -> Event {
     else {
         return e;
     };
-    if matches!(
-        moderation.action,
-        ModAction::Ban | ModAction::Timeout { .. }
-    ) && let Some(given) = live.bans.lock().await.get_mut(&moderation.user_id)
-    {
-        given.confirmed = true;
-    }
     let mut told = live.told.lock().await;
     told.retain(|_, at| at.elapsed() < TOLD_FOR);
     if told.remove(&moderation.user_id).is_some() {
@@ -884,20 +875,29 @@ async fn find(api: &Api, live: &Live, user: &UserRef) -> Result<String, String> 
     }
 }
 
-/// Waits until YouTube has finished a ban Rill gave: lifted sooner, YouTube still hides the user.
-async fn settled(live: &Live, channel: &str) {
-    loop {
-        let waiting = live
-            .bans
-            .lock()
-            .await
-            .get(channel)
-            .is_some_and(|g| !g.confirmed && g.at.elapsed() < live.settle);
-        if !waiting {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+/// Waits until YouTube has finished a ban Rill just gave: lifted sooner, the user stays hidden.
+async fn settled(live: &Live, events: &EventSink, channel: &str, name: &str) {
+    let left = live
+        .bans
+        .lock()
+        .await
+        .get(channel)
+        .filter(|g| g.until_ms.is_none())
+        .map(|g| live.settle.saturating_sub(g.at.elapsed()))
+        .unwrap_or_default();
+    if left.is_zero() {
+        return;
     }
+    let secs = left.as_secs_f32().ceil() as u32;
+    events
+        .notice(
+            Level::Info,
+            &format!(
+                "YouTube: lifting {name}'s ban in {secs}s, once YouTube has finished banning them."
+            ),
+        )
+        .await;
+    tokio::time::sleep(left).await;
 }
 
 /// Remembers a ban Rill gave, so it can be lifted while Rill is open.
@@ -911,7 +911,6 @@ async fn keep_ban(live: &Live, channel: &str, ban: &str, until_ms: Option<i64>) 
         ban: ban.to_string(),
         until_ms,
         at: Instant::now(),
-        confirmed: false,
     };
     live.bans.lock().await.insert(channel.to_string(), given);
 }
@@ -926,7 +925,7 @@ async fn unban(
     let name = user.login.trim_start_matches('@');
     let not_banned = || Ok(Some(format!("{name} is not currently banned.")));
     let id = find(api, live, user).await?;
-    settled(live, &id).await;
+    settled(live, events, &id, name).await;
     let Some(saved) = live.bans.lock().await.get(&id).cloned() else {
         return Err(format!(
             "YouTube: YouTube doesn't let apps look up bans, so Rill can only lift the ones it gave while open. Lift {name}'s in YouTube Studio."
@@ -994,55 +993,29 @@ mod tests {
         assert_eq!(resolve(&live, &stranger).await, None);
     }
 
-    /// YouTube's own event for a ban, as the chat stream brings it.
-    fn banned_event(channel: &str) -> Event {
-        Event::Moderation {
-            platform: Platform::YouTube,
-            moderation: Moderation {
-                moderator: None,
-                user_login: "viewer".into(),
-                user: "Viewer".into(),
-                user_id: channel.into(),
-                action: ModAction::Ban,
-                reason: None,
-            },
-        }
-    }
-
     #[tokio::test]
-    async fn an_unban_waits_until_youtube_has_the_ban() {
+    async fn an_unban_right_after_a_ban_waits_for_youtube() {
         let live = Live {
-            settle: Duration::from_secs(10),
+            settle: Duration::from_millis(400),
             ..Live::default()
         };
+        let (events, mut rx) = EventSink::channel(Platform::YouTube, 10);
         keep_ban(&live, "UCviewer", "ban-1", None).await;
         let started = Instant::now();
-        let confirming = live.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            already_told(&confirming, banned_event("UCviewer")).await;
-        });
-        settled(&live, "UCviewer").await;
-        let waited = started.elapsed();
-        assert!(waited >= Duration::from_millis(300), "{waited:?}");
-        assert!(waited < Duration::from_secs(5), "{waited:?}");
-        assert!(live.bans.lock().await["UCviewer"].confirmed);
-    }
-
-    #[tokio::test]
-    async fn an_unban_stops_waiting_after_the_limit() {
-        let live = Live {
-            settle: Duration::from_millis(300),
-            ..Live::default()
-        };
-        keep_ban(&live, "UCviewer", "ban-1", None).await;
+        settled(&live, &events, "UCviewer", "Viewer").await;
+        assert!(started.elapsed() >= Duration::from_millis(350));
+        assert!(
+            matches!(rx.try_recv(), Ok(Event::Notice { text, .. }) if text.contains("lifting Viewer's ban in 1s")),
+            "says why it waits"
+        );
+        // Later, a timeout, or a ban Rill didn't give, isn't waited for.
         let started = Instant::now();
-        settled(&live, "UCviewer").await;
-        assert!(started.elapsed() >= Duration::from_millis(300));
-        // A ban Rill didn't give isn't waited for.
-        let started = Instant::now();
-        settled(&live, "UCother").await;
+        settled(&live, &events, "UCviewer", "Viewer").await;
+        keep_ban(&live, "UCtimed", "ban-2", Some(now_ms() + 60_000)).await;
+        settled(&live, &events, "UCtimed", "Timed").await;
+        settled(&live, &events, "UCother", "Other").await;
         assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(rx.try_recv().is_err(), "no more notices");
     }
 }
 
