@@ -902,6 +902,11 @@ async fn settled(live: &Live, channel: &str) {
 
 /// Remembers a ban Rill gave, so it can be lifted while Rill is open.
 async fn keep_ban(live: &Live, channel: &str, ban: &str, until_ms: Option<i64>) {
+    // Without YouTube's ID it can't be lifted from here; Unban then points to YouTube Studio.
+    if ban.is_empty() {
+        live.bans.lock().await.remove(channel);
+        return;
+    }
     let given = Given {
         ban: ban.to_string(),
         until_ms,
@@ -934,6 +939,7 @@ async fn unban(
         forget().await;
         return not_banned();
     }
+    tracing::debug!(ban = %saved.ban, "YouTube unban sent");
     match api.unban(&saved.ban).await {
         Ok(()) => {
             forget().await;
@@ -1682,6 +1688,55 @@ mod sessions {
         drop(tx);
         assert!(task.await.unwrap());
         assert!(!polled(&log), "it polled instead of streaming");
+    }
+
+    #[tokio::test]
+    async fn lifts_a_timeout_with_the_id_youtube_gave() {
+        fn route(r: &Seen) -> (u16, Value) {
+            match (r.method.as_str(), r.path.as_str()) {
+                // YouTube sends a timeout's ID URL-encoded.
+                ("POST", "/liveChat/bans") => (200, json!({"id": "CAIS%3D"})),
+                _ => base_route(r),
+            }
+        }
+        let (base, log) = api_server(route).await;
+        let (mut rx, tx, task) = start(&base).await;
+        until(&mut rx, |e| matches!(e, Event::Message(_))).await;
+        let viewer = UserRef {
+            id: Some("UC@viewer".into()),
+            login: "viewer".into(),
+        };
+        request(
+            &tx,
+            1,
+            Command::Timeout {
+                user: viewer.clone(),
+                seconds: 60,
+                reason: None,
+            },
+        )
+        .await;
+        until(&mut rx, |e| done(e, 1)).await;
+        request(&tx, 2, Command::Unban { user: viewer }).await;
+        let seen = until(&mut rx, |e| done(e, 2)).await;
+        assert!(
+            matches!(
+                seen.last(),
+                Some(Event::Done {
+                    result: Ok(None),
+                    ..
+                })
+            ),
+            "{seen:#?}"
+        );
+        drop(tx);
+        assert!(task.await.unwrap());
+        let log = log.lock().unwrap().clone();
+        let lifted = log
+            .iter()
+            .find(|r| r.method == "DELETE" && r.path == "/liveChat/bans")
+            .unwrap();
+        assert_eq!(lifted.query, "id=CAIS%3D", "encoded once, not twice");
     }
 
     #[tokio::test]
