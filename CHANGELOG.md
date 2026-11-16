@@ -55,6 +55,9 @@ Fixes and polish from the first test stream.
 - On YouTube, a ban, timeout or message sent while the chat was quiet could wait up to 10
   seconds before Rill sent it.
 - A 1-minute Twitch timeout read "for 59s".
+- On YouTube, Unban pressed right after Ban could leave the person hidden on the channel, so their
+  messages no longer appeared until they were unhidden in YouTube Studio. YouTube finishes a ban a
+  few seconds after accepting it, so Rill now waits until it has before lifting it.
 - Kick forgot a channel picked with Read chat when Rill restarted. Signed in with no channel
   open, Kick now reads your own channel, and Accounts shows the account and Disconnect instead
   of only "Not connected".
