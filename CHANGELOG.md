@@ -57,8 +57,8 @@ Fixes and polish from the first test stream.
   seconds before Rill sent it.
 - A 1-minute Twitch timeout read "for 59s".
 - On YouTube, Unban pressed right after Ban could leave the person hidden on the channel, so their
-  messages no longer appeared until they were unhidden in YouTube Studio. YouTube finishes a ban a
-  few seconds after accepting it, so Rill now waits until it has before lifting it.
+  messages no longer appeared until they were unhidden in YouTube Studio. YouTube takes a while to
+  finish a ban, so an Unban within 25 seconds of it now waits until then, and says so.
 - Lifting a YouTube timeout, by Unban or `/unnuke`, failed with "The id parameter specifies an
   invalid value": YouTube sends the ID of a ban already encoded, and Rill encoded it again.
 - Kick forgot a channel picked with Read chat when Rill restarted. Signed in with no channel
