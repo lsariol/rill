@@ -344,7 +344,6 @@ impl Api {
             .await?;
         // A timeout's ID comes back URL-encoded (`…%3D`); sent as is, it would be encoded twice.
         let id = percent_decoded(v["id"].as_str().unwrap_or_default());
-        tracing::debug!(ban = %id, temporary = seconds.is_some(), "YouTube ban given");
         Ok(id)
     }
 
