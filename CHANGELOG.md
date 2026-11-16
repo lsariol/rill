@@ -60,7 +60,7 @@ Fixes and polish from the first test stream.
   messages no longer appeared until they were unhidden in YouTube Studio. YouTube takes a while to
   finish a ban, so an Unban within 25 seconds of it now waits until then, and says so.
 - Lifting a YouTube timeout, by Unban or `/unnuke`, failed with "The id parameter specifies an
-  invalid value": YouTube sends the ID of a ban already encoded, and Rill encoded it again.
+  invalid value". YouTube's API can't delete a timeout, so Rill now replaces it with a 1-second one.
 - Kick forgot a channel picked with Read chat when Rill restarted. Signed in with no channel
   open, Kick now reads your own channel, and Accounts shows the account and Disconnect instead
   of only "Not connected".

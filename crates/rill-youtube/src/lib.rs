@@ -131,7 +131,8 @@ struct Live {
     /// The signed-in channel's name, for lines about its own actions.
     me: Arc<Mutex<String>>,
     /// Channels Rill banned or timed out lately; YouTube's later event about them adds no line.
-    told: Arc<Mutex<HashMap<String, Instant>>>,
+    /// By channel: when, and how many of YouTube's events are still to come.
+    told: Arc<Mutex<HashMap<String, (Instant, u32)>>>,
     /// How long YouTube takes to finish a ban, before it can be lifted.
     settle: Duration,
 }
@@ -676,8 +677,12 @@ async fn already_told(live: &Live, e: Event) -> Event {
         return e;
     };
     let mut told = live.told.lock().await;
-    told.retain(|_, at| at.elapsed() < TOLD_FOR);
-    if told.remove(&moderation.user_id).is_some() {
+    told.retain(|_, (at, _)| at.elapsed() < TOLD_FOR);
+    if let Some((_, left)) = told.get_mut(&moderation.user_id) {
+        *left -= 1;
+        if *left == 0 {
+            told.remove(&moderation.user_id);
+        }
         return Event::UserCleared {
             platform,
             user_id: moderation.user_id,
@@ -693,10 +698,7 @@ async fn already_told(live: &Live, e: Event) -> Event {
 async fn tell(live: &Live, events: &EventSink, user: &UserRef, id: &str, action: ModAction) {
     let name = user.login.trim_start_matches('@').to_string();
     if matches!(action, ModAction::Ban | ModAction::Timeout { .. }) {
-        live.told
-            .lock()
-            .await
-            .insert(id.to_string(), Instant::now());
+        expect_event(live, id).await;
     }
     let me = live.me.lock().await.clone();
     events
@@ -712,6 +714,13 @@ async fn tell(live: &Live, events: &EventSink, user: &UserRef, id: &str, action:
             },
         })
         .await;
+}
+
+/// Notes that YouTube will send an event for a ban or timeout Rill already told.
+async fn expect_event(live: &Live, id: &str) {
+    let mut told = live.told.lock().await;
+    let entry = told.entry(id.to_string()).or_insert((Instant::now(), 0));
+    *entry = (Instant::now(), entry.1 + 1);
 }
 
 async fn remember_authors(live: &Live, events: &[Event]) {
@@ -938,16 +947,24 @@ async fn unban(
         forget().await;
         return not_banned();
     }
+    if saved.until_ms.is_some() {
+        // YouTube's API can't delete a timeout, but a 1-second one replaces it.
+        let Some(chat) = live.chat.lock().await.clone() else {
+            return Err(NOT_LIVE.into());
+        };
+        api.ban(&chat, &id, Some(1))
+            .await
+            .map_err(|e| e.message())?;
+        forget().await;
+        expect_event(live, &id).await;
+        tell(live, events, user, &id, ModAction::Untimeout).await;
+        return Ok(None);
+    }
     tracing::debug!(ban = %saved.ban, "YouTube unban sent");
     match api.unban(&saved.ban).await {
         Ok(()) => {
             forget().await;
-            let action = if saved.until_ms.is_some() {
-                ModAction::Untimeout
-            } else {
-                ModAction::Unban
-            };
-            tell(live, events, user, &id, action).await;
+            tell(live, events, user, &id, ModAction::Unban).await;
             Ok(None)
         }
         // Already lifted elsewhere, such as in YouTube Studio.
@@ -1664,11 +1681,11 @@ mod sessions {
     }
 
     #[tokio::test]
-    async fn lifts_a_timeout_with_the_id_youtube_gave() {
+    async fn lifts_bans_and_timeouts_as_youtube_allows() {
         fn route(r: &Seen) -> (u16, Value) {
             match (r.method.as_str(), r.path.as_str()) {
-                // YouTube sends a timeout's ID URL-encoded.
-                ("POST", "/liveChat/bans") => (200, json!({"id": "CAIS%3D"})),
+                // YouTube sends a ban's ID URL-encoded.
+                ("POST", "/liveChat/bans") => (200, json!({"id": "CAES%3D"})),
                 _ => base_route(r),
             }
         }
@@ -1679,37 +1696,86 @@ mod sessions {
             id: Some("UC@viewer".into()),
             login: "viewer".into(),
         };
-        request(
-            &tx,
-            1,
-            Command::Timeout {
-                user: viewer.clone(),
-                seconds: 60,
-                reason: None,
-            },
-        )
-        .await;
-        until(&mut rx, |e| done(e, 1)).await;
-        request(&tx, 2, Command::Unban { user: viewer }).await;
-        let seen = until(&mut rx, |e| done(e, 2)).await;
-        assert!(
+        let ok = |seen: &[Event]| {
             matches!(
                 seen.last(),
                 Some(Event::Done {
                     result: Ok(None),
                     ..
                 })
-            ),
-            "{seen:#?}"
-        );
+            )
+        };
+        let timeout = Command::Timeout {
+            user: viewer.clone(),
+            seconds: 60,
+            reason: None,
+        };
+        request(&tx, 1, timeout).await;
+        until(&mut rx, |e| done(e, 1)).await;
+        request(
+            &tx,
+            2,
+            Command::Unban {
+                user: viewer.clone(),
+            },
+        )
+        .await;
+        let seen = until(&mut rx, |e| done(e, 2)).await;
+        assert!(ok(&seen), "{seen:#?}");
+        let ban = Command::Ban {
+            user: viewer.clone(),
+            reason: None,
+        };
+        request(&tx, 3, ban).await;
+        until(&mut rx, |e| done(e, 3)).await;
+        request(&tx, 4, Command::Unban { user: viewer }).await;
+        let seen = until(&mut rx, |e| done(e, 4)).await;
+        assert!(ok(&seen), "{seen:#?}");
         drop(tx);
         assert!(task.await.unwrap());
+
         let log = log.lock().unwrap().clone();
-        let lifted = log
+        let bans: Vec<_> = log
             .iter()
-            .find(|r| r.method == "DELETE" && r.path == "/liveChat/bans")
-            .unwrap();
-        assert_eq!(lifted.query, "id=CAIS%3D", "encoded once, not twice");
+            .filter(|r| r.method == "POST" && r.path == "/liveChat/bans")
+            .map(|r| r.body["snippet"]["banDurationSeconds"].clone())
+            .collect();
+        // YouTube can't delete a timeout, so a 1-second one replaces it.
+        assert_eq!(bans, [json!(60), json!(1), Value::Null]);
+        let deletes: Vec<_> = log
+            .iter()
+            .filter(|r| r.method == "DELETE" && r.path == "/liveChat/bans")
+            .map(|r| r.query.as_str())
+            .collect();
+        assert_eq!(deletes, ["id=CAES%3D"], "only the ban, its ID encoded once");
+    }
+
+    #[tokio::test]
+    async fn youtubes_events_for_rills_own_actions_add_no_lines() {
+        let live = Live::default();
+        expect_event(&live, "UCviewer").await;
+        expect_event(&live, "UCviewer").await;
+        let event = || Event::Moderation {
+            platform: Platform::YouTube,
+            moderation: Moderation {
+                moderator: None,
+                user_login: "viewer".into(),
+                user: "Viewer".into(),
+                user_id: "UCviewer".into(),
+                action: ModAction::Timeout { seconds: 1 },
+                reason: None,
+            },
+        };
+        for _ in 0..2 {
+            assert!(matches!(
+                already_told(&live, event()).await,
+                Event::UserCleared { .. }
+            ));
+        }
+        assert!(matches!(
+            already_told(&live, event()).await,
+            Event::Moderation { .. }
+        ));
     }
 
     #[tokio::test]
