@@ -342,7 +342,10 @@ impl Api {
                 cost::WRITE,
             )
             .await?;
-        Ok(v["id"].as_str().unwrap_or_default().to_string())
+        // A timeout's ID comes back URL-encoded (`…%3D`); sent as is, it would be encoded twice.
+        let id = percent_decoded(v["id"].as_str().unwrap_or_default());
+        tracing::debug!(ban = %id, temporary = seconds.is_some(), "YouTube ban given");
+        Ok(id)
     }
 
     /// A channel's ID from its handle (`@name`); `None` if there's no such channel.
@@ -396,9 +399,41 @@ pub fn classify(status: u16, body: &Value) -> ApiError {
     }
 }
 
+/// `text` with `%XX` escapes decoded; anything malformed is kept as it is.
+fn percent_decoded(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(b)) => {
+                out.push(b);
+                i += 3;
+            }
+            (c, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| text.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_timeouts_encoded_id_is_decoded_once() {
+        assert_eq!(percent_decoded("CAISGFVD%3D"), "CAISGFVD=");
+        assert_eq!(percent_decoded("plain-id_1"), "plain-id_1");
+        assert_eq!(percent_decoded("50%"), "50%");
+        assert_eq!(percent_decoded("a%zzb"), "a%zzb");
+    }
 
     #[test]
     fn classifies_quota_and_ended_chats() {
