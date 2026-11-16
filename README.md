@@ -27,6 +27,9 @@ next, from the same code.
   literal slash. Moderation commands work on anyone by name, whether or not they've chatted.
   YouTube lifts a ban only with the ID it gave when banning and lets apps look up no others, so
   Rill can lift the bans and timeouts it gave while open; others are lifted in YouTube Studio.
+  YouTube takes a while to finish a ban, so an unban within 25 seconds of it waits until then,
+  and its API can't delete a timeout, so Rill replaces it with a 1-second one. Unbanning someone
+  who isn't banned says so on Twitch and YouTube; Kick accepts it and reports an unban.
 - **Nukes:** for bot raids and spam waves. `/nuke <phrase>` times out everyone who said the phrase
   in the last 5 minutes for 24 hours; `/nuke haha 48h` sets the timeout, and `/nuke haha 48h 15m`
   also looks back 15 minutes. `/meganuke <phrase> [lookback]` bans instead. Put a platform first
