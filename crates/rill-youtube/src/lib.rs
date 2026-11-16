@@ -774,9 +774,18 @@ async fn handle(ctx: &mut Ctx, api: &Api, live: &Live, req: Option<Request>) -> 
             // Requests run on their own, so the chat keeps flowing meanwhile.
             let (events, api, live) = (ctx.events.clone(), api.clone(), live.clone());
             tokio::spawn(async move {
+                let who = match &command {
+                    Command::Ban { user, .. }
+                    | Command::Timeout { user, .. }
+                    | Command::Unban { user } => {
+                        Some(user.login.trim_start_matches('@').to_string())
+                    }
+                    _ => None,
+                };
                 let result = run_request(&api, &live, &events, command).await;
                 if let Err(e) = &result {
-                    tracing::warn!(err = %e, "YouTube request failed");
+                    let err = unnamed(e, who.as_deref());
+                    tracing::warn!(%err, "YouTube request failed");
                 }
                 events.done(req.id, result).await;
             });
@@ -884,6 +893,14 @@ async fn find(api: &Api, live: &Live, user: &UserRef) -> Result<String, String> 
     }
 }
 
+/// An error for the log without the viewer's name: Rill keeps nothing from YouTube on disk.
+fn unnamed(error: &str, who: Option<&str>) -> String {
+    match who.filter(|w| !w.is_empty()) {
+        Some(w) => error.replace(w, "someone"),
+        None => error.to_string(),
+    }
+}
+
 /// Waits until YouTube has finished a ban Rill just gave: lifted sooner, the user stays hidden.
 async fn settled(live: &Live, events: &EventSink, channel: &str, name: &str) {
     let left = live
@@ -960,7 +977,6 @@ async fn unban(
         tell(live, events, user, &id, ModAction::Untimeout).await;
         return Ok(None);
     }
-    tracing::debug!(ban = %saved.ban, "YouTube unban sent");
     match api.unban(&saved.ban).await {
         Ok(()) => {
             forget().await;
@@ -1008,6 +1024,19 @@ mod tests {
             login: "nobody".into(),
         };
         assert_eq!(resolve(&live, &stranger).await, None);
+    }
+
+    #[test]
+    fn logged_errors_leave_out_the_viewers_name() {
+        let e = "YouTube: Lift RillAppDev's in YouTube Studio. No channel \"@RillAppDev\".";
+        assert_eq!(
+            unnamed(e, Some("RillAppDev")),
+            "YouTube: Lift someone's in YouTube Studio. No channel \"@someone\"."
+        );
+        assert_eq!(
+            unnamed("YouTube: not allowed.", None),
+            "YouTube: not allowed."
+        );
     }
 
     #[tokio::test]
