@@ -51,6 +51,11 @@ const ICONS: &[(&str, &str)] = &[
         include_str!("../../rill-app/assets/icons/youtube.svg"),
     ),
     ("kick", include_str!("../../rill-app/assets/icons/kick.svg")),
+    // Rill's logo, for a message sent to more than one platform.
+    (
+        "rill",
+        include_str!("../../rill-app/assets/app/rill-small.svg"),
+    ),
     (
         "rumble",
         include_str!("../../rill-app/assets/icons/rumble.svg"),
@@ -237,8 +242,13 @@ pub fn line(
                 // Before the echo: you're the channel's owner.
                 None => (Some(colors.get(Rank::Owner.key()).to_string()), Vec::new()),
             };
+            // One icon, as in Rill's window: Rill's own for a message sent to several platforms.
+            let icon = match platforms.as_slice() {
+                [one] => key(*one),
+                _ => "rill".to_string(),
+            };
             json!({
-                "p": platforms.iter().map(|p| key(*p)).collect::<Vec<_>>(),
+                "p": [icon],
                 "name": name,
                 "color": color,
                 "badges": badges,
@@ -684,6 +694,21 @@ mod tests {
         let v = json(&entry, &badge_view());
         assert_eq!(v["name"], "Mobasity");
         assert_eq!(v["badges"][0]["u"], "/icons/kick-owner.svg");
+        assert_eq!(v["p"], json!(["kick"]));
+
+        // Sent to several platforms, it shows Rill's icon only.
+        let Item::Sent(sent) = &mut entry.item else {
+            unreachable!()
+        };
+        sent.deliveries.push(rill_core::feed::Delivery {
+            platform: Platform::Twitch,
+            state: rill_core::feed::DeliveryState::Sent,
+        });
+        assert_eq!(json(&entry, &badge_view())["p"], json!(["rill"]));
+        let Item::Sent(sent) = &mut entry.item else {
+            unreachable!()
+        };
+        sent.deliveries.pop();
 
         // On YouTube, which sends no badge images either, Rill draws its own.
         let Item::Sent(sent) = &mut entry.item else {

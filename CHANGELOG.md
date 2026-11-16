@@ -45,7 +45,8 @@ Fixes and polish from the first test stream.
   keep its chatters long enough to know who's new. The YouTube chatters an older version kept are
   deleted.
 - Rumble is off until turned on in Settings.
-- Messages sent to every platform, and lines about several platforms or none, show Rill's logo.
+- Messages sent to every platform, and lines about several platforms or none, show Rill's logo, in
+  Rill's window and on the overlay.
 
 ### Fixed
 
