@@ -33,7 +33,8 @@ Fixes and polish from the first test stream.
   again to what you were typing.
 - `/ban`, `/timeout` and `/unban` work on anyone by name on Kick and YouTube, not only people who
   have chatted since Rill connected.
-- Unbanning someone who isn't banned says so in a plain line instead of an error.
+- Unbanning someone who isn't banned says so in a plain line instead of an error, on Twitch and
+  YouTube. Kick accepts the unban and reports it as one.
 - When a YouTube stream ends, Rill no longer also says to go live.
 - Web addresses written without `https://`, such as `mobasity.com`, are links too.
 - Buttons and switches light up under the pointer, and a color swatch shrinks to a dot, so it's
