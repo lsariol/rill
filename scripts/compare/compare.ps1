@@ -79,6 +79,7 @@ using System; using System.Runtime.InteropServices;
 public static class CompareWindows {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint flags);
 }
 '@
 Add-Type -AssemblyName System.Drawing
@@ -95,6 +96,8 @@ function Shot($name) {
 function Chrome-Processes { Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object { $_.CommandLine -like "*$profileDir*" } }
 
 $rill = $null
+# Keep the screen on while it runs: Rill and Chrome both draw less once the display sleeps.
+[CompareWindows]::SetThreadExecutionState(0x80000003) | Out-Null
 try {
     # Chrome: a fresh profile, one app window per chat, as a pop-out opens.
     $common = "--user-data-dir=`"$profileDir`" --no-first-run --no-default-browser-check --remote-debugging-port=$port"
@@ -172,6 +175,7 @@ try {
     Chrome-Processes | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 2
     Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue
+    [CompareWindows]::SetThreadExecutionState(0x80000000) | Out-Null
 }
 Log 'Done'
 Write-Host "$ok Comparison finished. Summarize it with: python scripts/compare/summarize.py `"$out`"" -ForegroundColor Green

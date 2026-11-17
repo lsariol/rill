@@ -316,6 +316,11 @@ for k, v in summary['messages'].items():
 if irc:
     w(f"- Twitch, counted from Twitch's chat server: {irc}")
 w(f"- YouTube pop-out mode: {summary['youtube_mode']}")
+readings = [v for p in pages for v in p['pages'].values() if isinstance(v, dict) and 'visibility' in v]
+if readings:
+    hidden = sum(v['visibility'] != 'visible' for v in readings)
+    w(f"- Pop-out pages hidden (covered or screen off, so not drawn) in {hidden} of {len(readings)} readings"
+      + ("" if hidden == 0 else ": the CPU figures for those minutes are too low"))
 if stats:
     w(f"- Rill over its whole run ({stats.get('seconds', 0):.0f} s): {stats.get('events', 0):.0f} events, {stats.get('renders', 0):.0f} redraws ({stats.get('renders', 0) / max(stats.get('seconds', 1), 1):.1f} a second), {stats.get('feed', 0):.0f} lines kept, {stats.get('images', 0):.0f} images")
 w(f"- Animated images Rill cut short (broken files): {cut_short}")
