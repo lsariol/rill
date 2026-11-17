@@ -300,10 +300,12 @@ fn badges(seq: u64, platform: Platform, badges: &[Badge], hover: HoverFn) -> imp
                         .size(px(icon_px()))
                         .rounded_sm()
                         .bg(rgb(0x34ae0a))
-                        .child(img(url.clone()).size(px(icon_px())))
+                        .child(img(crate::image_cache::chat_sized(url)).size(px(icon_px())))
                         .into_any_element()
                 }
-                Some(url) => img(url.clone()).size(px(icon_px())).into_any_element(),
+                Some(url) => img(crate::image_cache::chat_sized(url))
+                    .size(px(icon_px()))
+                    .into_any_element(),
                 // Kick sends no image for its role badges: Rill carries Kick's own.
                 None if platform == Platform::Kick => img(SharedString::from(format!(
                     "kick-badges/{}.svg",
@@ -493,7 +495,7 @@ pub(crate) fn emote_image(name: &str, url: Option<&str>, size: Option<(u16, u16)
         return label(name.to_string());
     };
     let fallback = name.to_string();
-    let image = img(url.to_string())
+    let image = img(crate::image_cache::chat_sized(url))
         .flex_none()
         .with_fallback(move || label(fallback.clone()));
     match size {
