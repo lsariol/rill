@@ -12,3 +12,4 @@ workspace = true
 [dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros"] }
 tracing.workspace = true
+jiff.workspace = true

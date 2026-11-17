@@ -47,7 +47,7 @@ pub(crate) fn install_hook() {
         let text = format!(
             "Rill {} had a problem at {} on thread \"{thread}\".\n{info}\n\nBacktrace:\n{}",
             env!("CARGO_PKG_VERSION"),
-            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+            jiff::Timestamp::now().strftime("%Y-%m-%d %H:%M:%S UTC"),
             std::backtrace::Backtrace::force_capture()
         );
         tracing::error!(thread, panic = %info, "crashed");

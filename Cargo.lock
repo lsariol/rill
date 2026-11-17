@@ -3321,6 +3321,58 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jiff"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cc767b5763de45e810109520123bb2829a653f3a7ed9be40b2bc4f81158f595"
+dependencies = [
+ "jiff-core",
+ "jiff-static",
+ "jiff-tzdb-platform",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde_core",
+ "windows-link 0.2.1",
+]
+
+[[package]]
+name = "jiff-core"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "894f7ac42105f584100691b3bf6e6b92dd12fcfa225f6c397f95c8a94b47b68f"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "jiff-static"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "955491488dc99b572ea6d67b172dcd98787d00744b1fb44a5689b4e6413695a6"
+dependencies = [
+ "jiff-core",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
+name = "jiff-tzdb"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12e71a1b68a875a44a33bb7a1dd84392cb77145a3367a552a3cfe6a4f5cf3afc"
+
+[[package]]
+name = "jiff-tzdb-platform"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc65b284afcfa8f6cf189c7274c805505314a7ab975c60e1f548bff56525420e"
+dependencies = [
+ "jiff-tzdb",
+]
+
+[[package]]
 name = "jni"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5552,7 +5604,6 @@ dependencies = [
 name = "rill-app"
 version = "0.0.2"
 dependencies = [
- "chrono",
  "embed-resource",
  "futures",
  "gpui-base",
@@ -5562,6 +5613,7 @@ dependencies = [
  "gpui-pre-platform",
  "gpui-pre-reqwest-client",
  "image",
+ "jiff",
  "rill-core",
  "rill-kick",
  "rill-os",
@@ -5583,6 +5635,7 @@ dependencies = [
 name = "rill-core"
 version = "0.0.2"
 dependencies = [
+ "jiff",
  "tokio",
  "tracing",
 ]
@@ -5607,9 +5660,9 @@ name = "rill-kick"
 version = "0.0.2"
 dependencies = [
  "base64 0.22.1",
- "chrono",
  "futures-util",
  "getrandom 0.3.4",
+ "jiff",
  "reqwest",
  "rill-core",
  "rill-emotes",
@@ -5650,7 +5703,6 @@ dependencies = [
 name = "rill-rumble"
 version = "0.0.2"
 dependencies = [
- "chrono",
  "reqwest",
  "rill-core",
  "rill-emotes",
@@ -5679,7 +5731,6 @@ dependencies = [
 name = "rill-twitch"
 version = "0.0.2"
 dependencies = [
- "chrono",
  "futures-util",
  "reqwest",
  "rill-core",
@@ -5697,7 +5748,6 @@ name = "rill-youtube"
 version = "0.0.2"
 dependencies = [
  "base64 0.22.1",
- "chrono",
  "getrandom 0.3.4",
  "prost",
  "prost-types",

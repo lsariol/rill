@@ -297,9 +297,7 @@ impl Api {
                 Some(AdBreak {
                     id: b["ad_break_id"].as_str().or(b["id"].as_str())?.to_string(),
                     seconds: u32::try_from(b["break_duration_seconds"].as_u64()?).ok()?,
-                    started: chrono::DateTime::parse_from_rfc3339(b["created_at"].as_str()?)
-                        .ok()?
-                        .with_timezone(&chrono::Utc),
+                    started_ms: rill_core::time_ms(b["created_at"].as_str()?)?,
                     source: b["source"].as_str().unwrap_or_default().to_lowercase(),
                 })
             })
@@ -338,16 +336,17 @@ pub const MAX_AD_SECONDS: u32 = 90;
 pub struct AdBreak {
     pub id: String,
     pub seconds: u32,
-    pub started: chrono::DateTime<chrono::Utc>,
+    /// When it started, in Unix milliseconds.
+    pub started_ms: i64,
     /// Lowercase; contains "auto" for Kick's automatic ads.
     pub source: String,
 }
 
 impl AdBreak {
-    /// Seconds left at `now`; `None` once it's over.
-    pub fn remaining(&self, now: chrono::DateTime<chrono::Utc>) -> Option<u32> {
-        let end = self.started + chrono::Duration::seconds(i64::from(self.seconds));
-        let left = (end - now).num_seconds();
+    /// Seconds left at `now_ms`; `None` once it's over.
+    pub fn remaining(&self, now_ms: i64) -> Option<u32> {
+        let end_ms = self.started_ms + i64::from(self.seconds) * 1000;
+        let left = (end_ms - now_ms) / 1000;
         (left > 0).then(|| u32::try_from(left).unwrap_or(self.seconds))
     }
 }

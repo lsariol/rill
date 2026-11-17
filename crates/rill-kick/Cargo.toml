@@ -17,12 +17,12 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
-chrono.workspace = true
 sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.3"
 
 [dev-dependencies]
+jiff.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros", "sync", "net", "io-util"] }
 

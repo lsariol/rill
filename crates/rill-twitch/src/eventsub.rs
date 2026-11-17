@@ -93,9 +93,7 @@ fn redemption(kind: &str, timestamp: &str, e: &Value) -> Option<ChatMessage> {
         },
         fragments: merge_text(fragments),
         kind: MessageKind::Event(EventKind::Redemption),
-        sent_at_ms: chrono::DateTime::parse_from_rfc3339(timestamp)
-            .map(|t| t.timestamp_millis())
-            .unwrap_or_else(|_| rill_core::now_ms()),
+        sent_at_ms: rill_core::time_ms(timestamp).unwrap_or_else(rill_core::now_ms),
         reply_to: None,
     })
 }
@@ -213,11 +211,9 @@ pub fn moderation(timestamp: &str, e: &Value) -> Option<Moderation> {
         "ban" => ModAction::Ban,
         "unban" => ModAction::Unban,
         "timeout" => {
-            let ends = chrono::DateTime::parse_from_rfc3339(target["expires_at"].as_str()?).ok()?;
-            let at = chrono::DateTime::parse_from_rfc3339(timestamp).ok()?;
-            let secs = ((ends - at).num_milliseconds() as f64 / 1000.0)
-                .round()
-                .max(1.0) as i64;
+            let ends = rill_core::time_ms(target["expires_at"].as_str()?)?;
+            let at = rill_core::time_ms(timestamp)?;
+            let secs = ((ends - at) as f64 / 1000.0).round().max(1.0) as i64;
             // Twitch's two times are a moment apart: 599 s is a 10m timeout, and 59 s is 1m.
             let secs = if secs >= 55 {
                 (secs + 30) / 60 * 60
@@ -379,9 +375,7 @@ fn chat_message(timestamp: &str, e: &Value, badges: &Badges) -> ChatMessage {
         },
         fragments: merge_text(fragments),
         kind,
-        sent_at_ms: chrono::DateTime::parse_from_rfc3339(timestamp)
-            .map(|t| t.timestamp_millis())
-            .unwrap_or_else(|_| rill_core::now_ms()),
+        sent_at_ms: rill_core::time_ms(timestamp).unwrap_or_else(rill_core::now_ms),
         reply_to,
     }
 }
