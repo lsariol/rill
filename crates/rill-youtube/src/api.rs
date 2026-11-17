@@ -203,6 +203,7 @@ impl Api {
     }
 
     /// The live chat of someone's live video, if it's live.
+    #[cfg(feature = "video")]
     pub async fn video_chat(&self, video: &str) -> Result<Option<String>, ApiError> {
         let v = self
             .call(
