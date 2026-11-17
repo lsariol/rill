@@ -83,8 +83,10 @@ foreach ($name in $profiles.Keys) {
     $p = Start-Process -FilePath $exe -ArgumentList $appArgs -PassThru
     Start-Sleep -Seconds 5
     $cpu = @(); $gpu = @(); $ws = @(); $priv = @()
-    $slices = [math]::Floor($secs / 5)
-    foreach ($s in 1..$slices) {
+    # By the clock, not a count: each GPU reading takes a second or two, and a count ran past
+    # --exit-after on long profiles, measuring a closed Rill.
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($clock.Elapsed.TotalSeconds -le $secs - 5 -and -not $p.HasExited) {
         $cpu += Cpu-Percent $p 5
         $gpu += Gpu-Percent $p.Id
         $p.Refresh(); $ws += $p.WorkingSet64 / 1MB; $priv += $p.PrivateMemorySize64 / 1MB
