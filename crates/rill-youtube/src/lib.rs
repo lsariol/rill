@@ -63,6 +63,7 @@ const OWNER: Capabilities = Capabilities::of(&[
 /// The YouTube connection.
 pub struct YouTubeAdapter {
     client: Option<Client>,
+    video: Option<String>,
 }
 
 impl YouTubeAdapter {
@@ -79,7 +80,13 @@ impl YouTubeAdapter {
             (Some(id), Some(secret)) => Some(Client { id, secret }),
             _ => None,
         };
-        YouTubeAdapter { client }
+        let video = settings
+            .video
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string);
+        YouTubeAdapter { client, video }
     }
 }
 
@@ -112,6 +119,8 @@ struct Ctx {
     stream: String,
     /// How long YouTube takes to finish a ban, before it can be lifted.
     ban_settle: Duration,
+    /// Someone else's live video to read instead of the user's own broadcast.
+    video: Option<String>,
 }
 
 enum Outcome {
@@ -191,6 +200,7 @@ async fn run(adapter: YouTubeAdapter, io: AdapterIo) {
         seven_tv: Some(rill_emotes::Config::default()),
         stream: stream::ENDPOINT.into(),
         ban_settle: BAN_SETTLE,
+        video: adapter.video,
     };
     let mut failure: Option<String> = None;
     loop {
@@ -366,7 +376,11 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
     let mut told_not_live = false;
     let mut told_not_enabled = false;
     loop {
-        let chat = match api.active_chat().await {
+        let found = match &ctx.video {
+            Some(video) => api.video_chat(video).await,
+            None => api.active_chat().await,
+        };
+        let chat = match found {
             Ok(Some(chat)) => chat,
             Ok(None) => {
                 ctx.events
@@ -1001,6 +1015,7 @@ mod tests {
         let none = YouTubeAdapter::new(&rill_os::settings::YouTubeSettings {
             client_id: Some("id".into()),
             client_secret: None,
+            video: None,
         });
         if BUILTIN_CLIENT_SECRET.is_none() {
             assert!(none.client.is_none());
@@ -1220,6 +1235,7 @@ mod sessions {
             seven_tv: None,
             stream,
             ban_settle: Duration::from_millis(300),
+            video: None,
         };
         let token = Token {
             access: "access".into(),
@@ -1805,6 +1821,33 @@ mod sessions {
             already_told(&live, event()).await,
             Event::Moderation { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn finds_the_chat_of_someone_elses_live_video() {
+        fn route(r: &Seen) -> (u16, Value) {
+            match (r.method.as_str(), r.path.as_str()) {
+                ("GET", "/videos") if r.query.contains("id=live1") => (
+                    200,
+                    json!({"items": [{"liveStreamingDetails": {"activeLiveChatId": "chat9"}}]}),
+                ),
+                ("GET", "/videos") => (200, json!({"items": []})),
+                _ => base_route(r),
+            }
+        }
+        let (base, _log) = api_server(route).await;
+        let token = Token {
+            access: "access".into(),
+            refresh: "refresh".into(),
+            expires_at_ms: now_ms() + 3_600_000,
+        };
+        let client = Client {
+            id: "client".into(),
+            secret: "secret".into(),
+        };
+        let api = Api::new(reqwest::Client::new(), client, token, &base);
+        assert_eq!(api.video_chat("live1").await, Ok(Some("chat9".into())));
+        assert_eq!(api.video_chat("ended").await, Ok(None));
     }
 
     #[tokio::test]
