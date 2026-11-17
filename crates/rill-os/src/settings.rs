@@ -133,6 +133,7 @@ pub struct YouTubeSettings {
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
     /// A live video to read, by its ID; the signed-in user's own broadcast when empty.
+    #[cfg(feature = "youtube-video")]
     pub video: Option<String>,
 }
 

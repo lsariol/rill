@@ -35,7 +35,8 @@ $devSettings = Join-Path $repo '.dev\settings.json'
 if (-not (Test-Path $devSettings)) { Write-Host "$fail $devSettings not found. Set up a debug run of Rill first (README: Platform setup)." -ForegroundColor Red; exit 1 }
 
 # Built like the installer's copy, with debug assertions on so it signs in with the development
-# sign-ins instead of an installed Rill's, and with symbols so threads.ps1 can name functions.
+# sign-ins instead of an installed Rill's, with symbols so threads.ps1 can name functions, and with
+# the youtube.video setting, which the installer's copy leaves out.
 $target = Join-Path $repo 'target\compare'
 if (-not $NoBuild) {
     Write-Host "Building Rill..."
@@ -44,7 +45,7 @@ if (-not $NoBuild) {
     $env:CARGO_PROFILE_RELEASE_STRIP = 'false'
     $env:CARGO_PROFILE_RELEASE_DEBUG = 'line-tables-only'
     Push-Location $repo
-    try { cargo build --release -p rill-app } finally { Pop-Location }
+    try { cargo build --release -p rill-app --features youtube-video } finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { Write-Host "$fail Build failed. Fix the errors above and run the comparison again." -ForegroundColor Red; exit 1 }
 }
 $exe = Join-Path $target 'release\rill.exe'

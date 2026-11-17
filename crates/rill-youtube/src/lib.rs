@@ -63,6 +63,7 @@ const OWNER: Capabilities = Capabilities::of(&[
 /// The YouTube connection.
 pub struct YouTubeAdapter {
     client: Option<Client>,
+    #[cfg(feature = "video")]
     video: Option<String>,
 }
 
@@ -80,13 +81,18 @@ impl YouTubeAdapter {
             (Some(id), Some(secret)) => Some(Client { id, secret }),
             _ => None,
         };
+        #[cfg(feature = "video")]
         let video = settings
             .video
             .as_deref()
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .map(str::to_string);
-        YouTubeAdapter { client, video }
+        YouTubeAdapter {
+            client,
+            #[cfg(feature = "video")]
+            video,
+        }
     }
 }
 
@@ -120,6 +126,7 @@ struct Ctx {
     /// How long YouTube takes to finish a ban, before it can be lifted.
     ban_settle: Duration,
     /// Someone else's live video to read instead of the user's own broadcast.
+    #[cfg(feature = "video")]
     video: Option<String>,
 }
 
@@ -200,6 +207,7 @@ async fn run(adapter: YouTubeAdapter, io: AdapterIo) {
         seven_tv: Some(rill_emotes::Config::default()),
         stream: stream::ENDPOINT.into(),
         ban_settle: BAN_SETTLE,
+        #[cfg(feature = "video")]
         video: adapter.video,
     };
     let mut failure: Option<String> = None;
@@ -376,10 +384,13 @@ async fn session(ctx: &mut Ctx, token: Token) -> Outcome {
     let mut told_not_live = false;
     let mut told_not_enabled = false;
     loop {
+        #[cfg(feature = "video")]
         let found = match &ctx.video {
             Some(video) => api.video_chat(video).await,
             None => api.active_chat().await,
         };
+        #[cfg(not(feature = "video"))]
+        let found = api.active_chat().await;
         let chat = match found {
             Ok(Some(chat)) => chat,
             Ok(None) => {
@@ -1014,8 +1025,7 @@ mod tests {
     fn needs_both_client_parts() {
         let none = YouTubeAdapter::new(&rill_os::settings::YouTubeSettings {
             client_id: Some("id".into()),
-            client_secret: None,
-            video: None,
+            ..Default::default()
         });
         if BUILTIN_CLIENT_SECRET.is_none() {
             assert!(none.client.is_none());
@@ -1235,6 +1245,7 @@ mod sessions {
             seven_tv: None,
             stream,
             ban_settle: Duration::from_millis(300),
+            #[cfg(feature = "video")]
             video: None,
         };
         let token = Token {
@@ -1823,6 +1834,7 @@ mod sessions {
         ));
     }
 
+    #[cfg(feature = "video")]
     #[tokio::test]
     async fn finds_the_chat_of_someone_elses_live_video() {
         fn route(r: &Seen) -> (u16, Value) {
