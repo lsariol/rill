@@ -272,6 +272,28 @@ upstream connection and serves every test:
 cargo run --release -p rill-sim --bin firehose-relay   # then each test uses --firehose ws://127.0.0.1:9300
 ```
 
+### Comparing with the pop-out chats
+
+`scripts/compare/compare.ps1` runs Rill side by side with Twitch's, YouTube's and Kick's own pop-out
+chats in Chrome, on the same live channels at the same time, and records CPU, memory, GPU, I/O,
+threads and how many messages each window showed:
+
+```powershell
+powershell -File scripts/compare/compare.ps1 -Twitch somechannel -YouTubeVideo VIDEO_ID -Kick somechannel -Seconds 1200
+python scripts/compare/summarize.py .dev\compare\<date-time>
+```
+
+It needs Chrome, Node.js 22 or later and Python 3, and a debug run of Rill signed in to the three
+platforms: it builds Rill as the installer does, but with the development sign-ins, and points it
+at the channels with the `channel` settings and `"youtube": { "video": "VIDEO_ID" }`. The four
+windows open side by side from `-Left`/`-Top` (480 by 1040 each by default); leave them uncovered
+and the pointer off them while it runs, since browsers stop drawing covered windows and Twitch
+pauses its chat under the pointer. CPU comes from the processor's cycle counter, which agrees with
+Chrome's own accounting; Windows' usual CPU time misses work done in short bursts.
+`python scripts/compare/twitch-rate.py 30 channel1 channel2` shows how busy Twitch chats are, to
+pick channels. `scripts/compare/threads.ps1` on its own records a running Rill's threads, and
+names the functions a busy one is in.
+
 ### Installer
 
 With the .NET 8 SDK and `vpk` installed (see Requirements), in PowerShell from the repository
