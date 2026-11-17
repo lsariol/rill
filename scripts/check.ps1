@@ -15,7 +15,8 @@ function Step([string]$Name, [scriptblock]$Command) {
 
 Step 'rustfmt' { cargo fmt --all --check }
 Step 'clippy' { cargo clippy --workspace --all-targets -- -D warnings }
-Step 'tests' { cargo test --workspace }
+Step 'clippy (sim feature)' { cargo clippy --workspace --all-targets --all-features -- -D warnings }
+Step 'tests' { cargo test --workspace --all-features }
 if (Get-Command cargo-deny -ErrorAction SilentlyContinue) {
     Step 'cargo-deny' { cargo deny check }
 } else {

@@ -185,9 +185,9 @@ on your computer except its sign-in.
 To run it from source instead, in PowerShell from the repository folder:
 
 ```powershell
-cargo run -p rill-app            # connect to the real platforms
-cargo run -p rill-app -- --sim   # simulated chat, no accounts needed
-cargo run -p rill-app -- --help  # all options
+cargo run -p rill-app                         # connect to the real platforms
+cargo run -p rill-app --features sim -- --sim # simulated chat, no accounts needed
+cargo run -p rill-app -- --help               # all options
 ```
 
 ## Configuration
@@ -258,7 +258,9 @@ powershell -File scripts/bench.ps1   # startup, CPU, memory and GPU under simula
 powershell -File scripts/soak.ps1 -Minutes 480   # long-stream memory check
 ```
 
-For a load test with real chat, `--firehose <url>` reads a public Twitch chat firehose (in
+Simulated chat (`--sim`, `--rate` and the other options `--help` lists) and the firehose are only in
+builds with the `sim` feature, which the benchmark and soak scripts turn on; the installer's build
+leaves them out. For a load test with real chat, `--firehose <url>` reads a public Twitch chat firehose (in
 catquery's `jsonBasic` format, about 1,400 messages a second) and spreads it across the four
 platforms; `scripts/soak.ps1 -Firehose <url>` does the same for a long run. It's read-only, and
 nothing it receives is saved. Badge images, channels' own subscriber badges included, come from

@@ -10,9 +10,14 @@ publish.workspace = true
 name = "rill"
 path = "src/main.rs"
 
+[features]
+# Simulated chat and the firehose load test (--sim, --rate, --firehose…) for benchmarks and
+# development. Left out of the installer's build.
+sim = ["dep:rill-sim"]
+
 [dependencies]
 rill-core.workspace = true
-rill-sim.workspace = true
+rill-sim = { workspace = true, optional = true }
 rill-os.workspace = true
 rill-twitch.workspace = true
 rill-kick.workspace = true

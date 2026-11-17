@@ -8,7 +8,7 @@ $fail = [char]0x2717; $ok = [char]0x2713
 
 if (-not $NoBuild) {
     Write-Host "Building the release binary..."
-    cargo build --release -p rill-app
+    cargo build --release -p rill-app --features sim
     if ($LASTEXITCODE -ne 0) { Write-Host "$fail Build failed. Fix the errors above and run the benchmark again." -ForegroundColor Red; exit 1 }
 }
 $exe = (Resolve-Path "target\release\rill.exe").Path
