@@ -215,7 +215,7 @@ in `settings.json` (in `.dev/` for debug runs):
 ```json
 {
   "twitch": { "client_id": "…", "channel": null },
-  "youtube": { "client_id": "…", "client_secret": "…" },
+  "youtube": { "client_id": "…", "client_secret": "…", "video": null },
   "kick": { "channel": "somechannel", "client_id": "…", "client_secret": "…" }
 }
 ```
@@ -224,7 +224,8 @@ in `settings.json` (in `.dev/` for debug runs):
   OAuth redirect URL `http://localhost` (unused; sign-in uses a device code). `channel` reads
   another channel instead of your own.
 - **YouTube:** in Google Cloud, enable the YouTube Data API v3 and create an OAuth client of type
-  **Desktop app**. Chat appears while you're live. Rill reads it only over YouTube's streaming chat
+  **Desktop app**. Chat appears while you're live; `video`, a live video's ID, reads that stream's
+  chat instead of your own. Rill reads it only over YouTube's streaming chat
   (gRPC), which costs 5 quota units each time it connects rather than every few seconds; it never
   falls back to polling, which would use up the daily quota (10,000 units by default) far faster.
   If the stream fails, Rill retries less and less often and says so. Sending, deleting and bans
