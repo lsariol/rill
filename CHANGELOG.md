@@ -50,6 +50,12 @@ Fixes and polish from the first test stream.
 
 ### Fixed
 
+- A broken animated emote in chat kept one processor core fully busy until Rill closed. Rill now
+  skips a frame that can't be decoded and gives up on an animation after three in a row.
+- Animated emotes took far more memory than they needed: Kick sends emotes at full size, up to
+  250 pixels and a hundred frames, and every frame was kept. Emotes are now kept at the size chat
+  shows them, so after ten minutes of a busy Kick chat Rill uses under 100 MB instead of over
+  500 MB. Hover cards still show the full-size picture.
 - YouTube's own emoji, such as `:hand-pink-waving:`, show as pictures instead of their names.
   A channel's member emoji still show as text: YouTube doesn't give apps their pictures.
 - YouTube chat stopped arriving when the chat went quiet for a moment: Rill took YouTube closing
