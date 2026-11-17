@@ -64,7 +64,8 @@ Set-Field $settings.kick 'channel' $Kick
 Set-Field $settings.overlay 'enabled' $false
 Set-Field $settings 'auto_update' $false
 Set-Field $settings 'disabled_platforms' @('rumble')
-$settings | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 (Join-Path $data 'settings.json')
+# Without a byte order mark, which Windows PowerShell's utf8 adds and Rill's JSON reader refuses.
+[IO.File]::WriteAllText((Join-Path $data 'settings.json'), ($settings | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding $false))
 
 $profileDir = Join-Path $data 'chrome-profile'
 $port = 9333
