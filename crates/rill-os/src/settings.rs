@@ -132,6 +132,8 @@ pub struct YouTubeSettings {
     /// Overrides the built-in desktop OAuth client.
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
+    /// A live video to read, by its ID; the signed-in user's own broadcast when empty.
+    pub video: Option<String>,
 }
 
 /// Which lines stand out with a colored background and bar, and get a mark on the scroll bar.

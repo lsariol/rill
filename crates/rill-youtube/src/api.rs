@@ -202,6 +202,22 @@ impl Api {
         Ok(found.map(|(_, chat)| chat.to_string()))
     }
 
+    /// The live chat of someone's live video, if it's live.
+    pub async fn video_chat(&self, video: &str) -> Result<Option<String>, ApiError> {
+        let v = self
+            .call(
+                Method::GET,
+                "/videos",
+                &[("part", "liveStreamingDetails"), ("id", video)],
+                None,
+                cost::LIST_BROADCASTS,
+            )
+            .await?;
+        Ok(v["items"][0]["liveStreamingDetails"]["activeLiveChatId"]
+            .as_str()
+            .map(str::to_string))
+    }
+
     /// Inserts a mid-roll ad break into the live broadcast (monetized channels only).
     pub async fn insert_ad(&self, seconds: u32) -> Result<(), ApiError> {
         let id = self.active_broadcast().await?["id"]
