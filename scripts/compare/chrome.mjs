@@ -158,6 +158,8 @@ else if (cmd === 'read') await forEachPage(`(() => ({
   jsHeapMB: performance.memory ? +(performance.memory.usedJSHeapSize / 1048576).toFixed(1) : null,
   domNodes: document.getElementsByTagName('*').length,
   mode: document.querySelector('#view-selector')?.innerText.split('\\n')[0] ?? null,
+  // Hidden when the window is covered or the screen is off: Chrome then stops drawing it.
+  visibility: document.visibilityState,
 }))()`);
 else { console.error('Usage: node chrome.mjs <port> setup <left> <top> <width> <height> | reset | read | procs'); process.exit(1); }
 process.exit(0);
