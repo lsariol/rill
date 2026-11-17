@@ -1,8 +1,9 @@
 # Changelog
 
-## v0.0.2 (unreleased)
+## v0.0.2 (2026-11-17)
 
-Fixes and polish from the first test stream.
+Fixes and polish from the first test streams, far less processor and memory for animated emotes,
+and what YouTube's developer policies ask of an app.
 
 ### Changed
 
