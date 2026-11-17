@@ -79,7 +79,10 @@ using System; using System.Runtime.InteropServices;
 public static class CompareWindows {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
-  [DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint flags);
+  [DllImport("kernel32.dll")] static extern uint SetThreadExecutionState(uint flags);
+  // Keeps the display and the PC awake until AllowSleep: ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED.
+  public static void KeepAwake() { SetThreadExecutionState(0x80000003); }
+  public static void AllowSleep() { SetThreadExecutionState(0x80000000); }
 }
 '@
 Add-Type -AssemblyName System.Drawing
@@ -97,7 +100,7 @@ function Chrome-Processes { Get-CimInstance Win32_Process -Filter "Name='chrome.
 
 $rill = $null
 # Keep the screen on while it runs: Rill and Chrome both draw less once the display sleeps.
-[CompareWindows]::SetThreadExecutionState(0x80000003) | Out-Null
+[CompareWindows]::KeepAwake()
 try {
     # Chrome: a fresh profile, one app window per chat, as a pop-out opens.
     $common = "--user-data-dir=`"$profileDir`" --no-first-run --no-default-browser-check --remote-debugging-port=$port"
@@ -175,7 +178,7 @@ try {
     Chrome-Processes | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 2
     Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue
-    [CompareWindows]::SetThreadExecutionState(0x80000000) | Out-Null
+    [CompareWindows]::AllowSleep()
 }
 Log 'Done'
 Write-Host "$ok Comparison finished. Summarize it with: python scripts/compare/summarize.py `"$out`"" -ForegroundColor Green
