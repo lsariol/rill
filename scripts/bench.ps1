@@ -1,7 +1,7 @@
 # Measures Rill's release build: warm startup, then CPU, memory and GPU under simulated chat.
-# Run from anywhere on Windows: powershell -File scripts/bench.ps1 [-Quick] [-NoBuild]
+# Run from anywhere on Windows: powershell -File scripts/bench.ps1 [-Quick] [-Seconds 60] [-NoBuild]
 # Keep the Rill window visible while it runs; minimized windows don't render.
-param([switch]$Quick, [switch]$NoBuild)
+param([switch]$Quick, [int]$Seconds = 60, [switch]$NoBuild)
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot)
 $fail = [char]0x2717; $ok = [char]0x2713
@@ -66,7 +66,8 @@ foreach ($i in 0..5) {
 }
 $startup = ($times | Measure-Object -Minimum -Average)
 
-$secs = if ($Quick) { 20 } else { 60 }
+# Each profile's length; -Quick is a 20-second check.
+$secs = if ($Quick) { 20 } else { $Seconds }
 $profiles = [ordered]@{
     'idle (connected, no chat)' = '--rate 0'
     'steady ~50 msg/s'          = '--rate 17'
