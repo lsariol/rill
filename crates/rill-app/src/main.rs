@@ -26,6 +26,7 @@ use gpui::{
 };
 use gpui_component::{Root, Theme, ThemeMode};
 use rill_core::{Hub, Platform};
+#[cfg(feature = "sim")]
 use rill_sim::{Profile, SimAdapter};
 
 use crate::platforms::{MakeAdapter, Platforms};
@@ -34,28 +35,43 @@ const USAGE: &str = "\
 Usage: rill [options]
 
 Options:
+  --history <n>       Keep this many chat lines (default: the Settings choice, 5,000)
+  --overlay <port>    Serve the OBS overlay on this port for this run, whatever Settings say
+  --exit-after <s>    Quit after this many seconds (for benchmarks)
+  --stats <file>      Write counters to this file on quit (with --exit-after)
+  -h, --help          Show this help";
+
+/// Simulated chat and the firehose load test, in builds with the `sim` feature.
+#[cfg(feature = "sim")]
+const SIM_USAGE: &str = "
+
+Simulated chat (this build has the sim feature):
   --sim               Show simulated chat instead of connecting to the platforms
   --rate <n>          Simulated messages per second, per platform (default 4)
   --bursts            Ten times the rate for 3 s every 20 s
   --emotes            Make most words emotes
   --flaky             Drop and restore connections now and then
   --fail <0-1>        Share of sends and actions that fail (default 0.05)
-  --history <n>       Keep this many chat lines (default: the Settings choice, 5,000)
-  --overlay <port>    Serve the OBS overlay on this port for this run, whatever Settings say
-  --exit-after <s>    Quit after this many seconds (for benchmarks)
-  --stats <file>      Write counters to this file on quit (with --exit-after)
   --firehose <url>    Load test: real chat from a public firehose (catquery's jsonBasic
                       format), spread across the four platforms; read-only
-  -h, --help          Show this help
 
---rate, --bursts, --emotes, --flaky and --fail apply to simulated chat and turn on --sim.";
+--rate, --bursts, --emotes, --flaky and --fail turn on --sim.";
+#[cfg(not(feature = "sim"))]
+const SIM_USAGE: &str = "";
+
+fn usage() -> String {
+    format!("{USAGE}{SIM_USAGE}")
+}
 
 /// Command-line options.
 #[derive(Debug, Default)]
 struct Options {
+    /// Simulated chat or the firehose instead of the platforms (only with the `sim` feature).
     sim: bool,
     /// Real chat from a firehose instead of simulated chat.
+    #[cfg(feature = "sim")]
     firehose: Option<String>,
+    #[cfg(feature = "sim")]
     profile: Profile,
     exit_after: Option<Duration>,
     stats: Option<std::path::PathBuf>,
@@ -70,25 +86,32 @@ fn parse_args() -> Result<Options, String> {
     while let Some(arg) = args.next() {
         let mut value = |name: &str| {
             args.next()
-                .ok_or_else(|| format!("{name} needs a value.\n\n{USAGE}"))
+                .ok_or_else(|| format!("{name} needs a value.\n\n{}", usage()))
         };
         match arg.as_str() {
-            "-h" | "--help" => return Err(USAGE.to_string()),
+            "-h" | "--help" => return Err(usage()),
+            #[cfg(feature = "sim")]
             "--sim" => o.sim = true,
+            #[cfg(feature = "sim")]
             "--firehose" => {
                 o.firehose = Some(value("--firehose")?);
                 o.sim = true;
             }
+            #[cfg(feature = "sim")]
             "--rate" => {
                 o.sim = true;
                 o.profile.rate = number(&value("--rate")?, "--rate")?;
             }
+            #[cfg(feature = "sim")]
             "--fail" => {
                 o.sim = true;
                 o.profile.fail_rate = number(&value("--fail")?, "--fail")?.clamp(0., 1.);
             }
+            #[cfg(feature = "sim")]
             "--bursts" => (o.sim, o.profile.bursts) = (true, true),
+            #[cfg(feature = "sim")]
             "--emotes" => (o.sim, o.profile.emote_heavy) = (true, true),
+            #[cfg(feature = "sim")]
             "--flaky" => (o.sim, o.profile.flaky) = (true, true),
             "--exit-after" => {
                 o.exit_after = Some(Duration::from_secs_f64(number(
@@ -104,10 +127,51 @@ fn parse_args() -> Result<Options, String> {
                     format!("--overlay needs a port from 1 to 65535, not \"{port}\".")
                 })?);
             }
-            other => return Err(format!("Unknown option \"{other}\".\n\n{USAGE}")),
+            other => return Err(format!("Unknown option \"{other}\".\n\n{}", usage())),
         }
     }
     Ok(o)
+}
+
+/// Simulated chat, or the firehose in Twitch's slot, when the options ask for it.
+#[cfg(feature = "sim")]
+fn simulated_platforms(options: &Options) -> Option<Platforms> {
+    if let Some(url) = &options.firehose {
+        // The firehose takes Twitch's slot; the others connect quietly so every icon is live.
+        let quiet = Profile {
+            rate: 0.,
+            ..options.profile.clone()
+        };
+        let url = url.clone();
+        let make: MakeAdapter = Box::new(move |p| match p {
+            Platform::Twitch => Box::new(rill_sim::FirehoseAdapter::new(url.clone())),
+            _ => Box::new(SimAdapter::new(p, quiet.clone())),
+        });
+        return Some(Platforms::new(Default::default(), make, false));
+    }
+    options.sim.then(|| {
+        let profile = options.profile.clone();
+        let make: MakeAdapter = Box::new(move |p| Box::new(SimAdapter::new(p, profile.clone())));
+        Platforms::new(Default::default(), make, false)
+    })
+}
+
+#[cfg(not(feature = "sim"))]
+fn simulated_platforms(_: &Options) -> Option<Platforms> {
+    None
+}
+
+impl Options {
+    /// Simulated chat rather than the firehose's real chat.
+    #[cfg(feature = "sim")]
+    fn simulated_chat(&self) -> bool {
+        self.sim && self.firehose.is_none()
+    }
+
+    #[cfg(not(feature = "sim"))]
+    fn simulated_chat(&self) -> bool {
+        false
+    }
 }
 
 fn number(s: &str, name: &str) -> Result<f64, String> {
@@ -204,24 +268,9 @@ fn main() -> ExitCode {
     {
         tracing::warn!("TLS provider was already installed");
     }
-    let (platforms, startup_errors) = if let Some(url) = &options.firehose {
-        // The firehose takes Twitch's slot; the others connect quietly so every icon is live.
-        let quiet = rill_sim::Profile {
-            rate: 0.,
-            ..options.profile.clone()
-        };
-        let url = url.clone();
-        let make: MakeAdapter = Box::new(move |p| match p {
-            Platform::Twitch => Box::new(rill_sim::FirehoseAdapter::new(url.clone())),
-            _ => Box::new(SimAdapter::new(p, quiet.clone())),
-        });
-        (Platforms::new(Default::default(), make, false), Vec::new())
-    } else if options.sim {
-        let profile = options.profile.clone();
-        let make: MakeAdapter = Box::new(move |p| Box::new(SimAdapter::new(p, profile.clone())));
-        (Platforms::new(Default::default(), make, false), Vec::new())
-    } else {
-        real_platforms()
+    let (platforms, startup_errors) = match simulated_platforms(&options) {
+        Some(p) => (p, Vec::new()),
+        None => real_platforms(),
     };
     let (hub, events) = match Hub::start(platforms.start()) {
         Ok(started) => started,
@@ -247,7 +296,7 @@ fn main() -> ExitCode {
     let history = options.history;
     let overlay = options.overlay;
     // Simulated chat (not the firehose) marks first-time chatters after a minute, to show them.
-    let simulated = options.sim && options.firehose.is_none();
+    let simulated = options.simulated_chat();
     let stats_path = options.stats.clone();
     app.run(move |cx: &mut App| {
         gpui_component::init(cx);
