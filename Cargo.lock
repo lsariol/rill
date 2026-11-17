@@ -5561,6 +5561,7 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
  "gpui-pre-reqwest-client",
+ "image",
  "rill-core",
  "rill-kick",
  "rill-os",
