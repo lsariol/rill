@@ -17,10 +17,35 @@ New-Item -ItemType Directory -Force $out | Out-Null
 # The release build's settings and logs stay in .dev too.
 $env:RILL_DATA_DIR = Join-Path $out "data"
 
+# CPU from the processor's cycle counter: Windows' CPU time is charged in clock ticks and
+# misses work done in short bursts, which is how Rill works, so it reads far too low.
+Add-Type @'
+using System; using System.Runtime.InteropServices;
+public static class Cycles {
+  [DllImport("kernel32.dll")] static extern bool QueryProcessCycleTime(IntPtr process, out ulong cycles);
+  [DllImport("kernel32.dll")] static extern bool QueryThreadCycleTime(IntPtr thread, out ulong cycles);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentThread();
+  public static ulong Of(IntPtr process) { ulong c; QueryProcessCycleTime(process, out c); return c; }
+  // Cycles per second, measured by keeping this thread busy for half a second.
+  public static double PerSecond() {
+    double best = 0;
+    for (int i = 0; i < 3; i++) {
+      ulong a, b; var w = System.Diagnostics.Stopwatch.StartNew();
+      QueryThreadCycleTime(GetCurrentThread(), out a);
+      while (w.ElapsedMilliseconds < 500) { }
+      QueryThreadCycleTime(GetCurrentThread(), out b);
+      best = Math.Max(best, (b - a) / w.Elapsed.TotalSeconds);
+    }
+    return best;
+  }
+}
+'@
+$hz = [Cycles]::PerSecond()
+
 function Cpu-Percent($proc, $seconds) {
-    $proc.Refresh(); $t0 = $proc.TotalProcessorTime; $w = [Diagnostics.Stopwatch]::StartNew()
-    Start-Sleep -Seconds $seconds; $proc.Refresh()
-    ($proc.TotalProcessorTime - $t0).TotalMilliseconds / $w.Elapsed.TotalMilliseconds / [Environment]::ProcessorCount * 100
+    $c0 = [Cycles]::Of($proc.Handle); $w = [Diagnostics.Stopwatch]::StartNew()
+    Start-Sleep -Seconds $seconds
+    ([Cycles]::Of($proc.Handle) - $c0) / $hz / $w.Elapsed.TotalSeconds / [Environment]::ProcessorCount * 100
 }
 
 function Gpu-Percent($procId) {
@@ -80,6 +105,6 @@ foreach ($name in $profiles.Keys) {
 }
 
 "Warm startup (window shown): best {0:N0} ms, average {1:N0} ms over {2} runs" -f $startup.Minimum, $startup.Average, $startup.Count
-"CPU % is of all {0} logical cores. {1} s per profile." -f [Environment]::ProcessorCount, $secs
+"CPU % is of all {0} logical cores, from the cycle counter. {1} s per profile." -f [Environment]::ProcessorCount, $secs
 $rows | Format-Table -AutoSize | Out-String -Width 200
 Write-Host "$ok Benchmark finished." -ForegroundColor Green
