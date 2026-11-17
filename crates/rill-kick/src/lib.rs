@@ -445,7 +445,7 @@ async fn watch_ads(shared: Shared, events: EventSink) {
                 continue;
             }
         };
-        let now = chrono::Utc::now();
+        let now = rill_core::now_ms();
         for b in breaks {
             let Some(remaining) = b.remaining(now) else {
                 continue;
@@ -1709,7 +1709,7 @@ mod official_api {
                             200,
                             json!({"data": {"ad_breaks": [
                                 {"ad_break_id": "ab9", "break_duration_seconds": 60,
-                                 "created_at": (chrono::Utc::now() - chrono::Duration::seconds(10)).to_rfc3339(),
+                                 "created_at": (jiff::Timestamp::now() - jiff::SignedDuration::from_secs(10)).to_string(),
                                  "source": "AUTO", "status": "active"},
                                 {"ad_break_id": "old", "break_duration_seconds": 30,
                                  "created_at": "2026-01-01T00:00:00Z", "source": "manual"}
@@ -1947,7 +1947,7 @@ mod official_api {
         // The status shows a running automatic break and an old one; only the running one counts.
         let api = shared.lock().signed.clone().unwrap().api;
         let breaks = api.ad_breaks().await.unwrap();
-        let now = chrono::Utc::now();
+        let now = rill_core::now_ms();
         let running: Vec<_> = breaks
             .iter()
             .filter_map(|b| b.remaining(now).map(|r| (b, r)))

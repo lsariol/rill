@@ -144,8 +144,7 @@ pub fn to_event(item: &Value) -> Option<Event> {
         },
         sent_at_ms: snippet["publishedAt"]
             .as_str()
-            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-            .map(|t| t.timestamp_millis())
+            .and_then(rill_core::time_ms)
             .unwrap_or_else(rill_core::now_ms),
         reply_to: None,
     }))

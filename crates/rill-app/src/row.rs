@@ -2,7 +2,6 @@
 
 use std::rc::Rc;
 
-use chrono::TimeZone;
 use gpui::{
     AnyElement, Context, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
     IntoElement, ParentElement, StatefulInteractiveElement, Styled, StyledImage, Window, div, img,
@@ -255,10 +254,17 @@ fn gutter(platform: Option<Platform>) -> impl IntoElement {
 
 /// A time as the row shows it.
 fn clock(ms: i64) -> String {
-    chrono::Local
-        .timestamp_millis_opt(ms)
-        .single()
-        .map(|t| t.format("%H:%M").to_string())
+    local_time(ms, "%H:%M")
+}
+
+/// A time in the computer's time zone, in a `strftime` format; empty if it's out of range.
+pub fn local_time(ms: i64, format: &str) -> String {
+    jiff::Timestamp::from_millisecond(ms)
+        .map(|t| {
+            t.to_zoned_datetime(jiff::tz::TimeZone::system())
+                .strftime(format)
+                .to_string()
+        })
         .unwrap_or_default()
 }
 

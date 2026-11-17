@@ -43,3 +43,39 @@ pub fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
 }
+
+/// Unix milliseconds of an RFC 3339 time, such as `2026-11-17T20:15:00.123Z`.
+pub fn time_ms(text: &str) -> Option<i64> {
+    text.parse::<jiff::Timestamp>()
+        .ok()
+        .map(|t| t.as_millisecond())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::time_ms;
+
+    #[test]
+    fn reads_each_platforms_timestamps() {
+        // 2026-11-06 06:00:00 UTC.
+        let base = 1_793_944_800_000;
+        // Rumble and YouTube: an offset.
+        assert_eq!(time_ms("2026-11-06T06:00:00+00:00"), Some(base));
+        assert_eq!(time_ms("2026-11-06T06:00:00.000000+00:00"), Some(base));
+        assert_eq!(time_ms("2026-11-06T01:00:00-05:00"), Some(base));
+        // Kick: Z.
+        assert_eq!(time_ms("2026-11-06T06:00:00Z"), Some(base));
+        // Twitch: nanoseconds, cut to milliseconds.
+        assert_eq!(time_ms("2026-11-06T06:00:00.634234626Z"), Some(base + 634));
+        assert_eq!(time_ms("2026-11-06T06:00:00.2Z"), Some(base + 200));
+    }
+
+    #[test]
+    fn rejects_what_isnt_a_full_time() {
+        assert_eq!(time_ms(""), None);
+        assert_eq!(time_ms("soon"), None);
+        // No offset: which moment it means is unknown.
+        assert_eq!(time_ms("2026-11-06T06:00:00"), None);
+        assert_eq!(time_ms("2026-11-06"), None);
+    }
+}

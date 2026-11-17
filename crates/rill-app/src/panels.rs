@@ -1,6 +1,5 @@
 //! Panels above the composer: the user card, the "which platform?" prompt and the poll form.
 
-use chrono::TimeZone;
 use gpui::StyledImage as _;
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, KeyBinding,
@@ -1629,11 +1628,7 @@ impl ChatView {
         }
         let latest = *starts.iter().max()?;
         (latest > now).then(|| {
-            let date = chrono::Local
-                .timestamp_millis_opt(latest)
-                .single()
-                .map(|t| t.format("%B %-d").to_string())
-                .unwrap_or_default();
+            let date = crate::row::local_time(latest, "%B %-d");
             format!(
                 "Rill is learning who has chatted before, so it doesn't mark everyone at first: \
                  first-time chatters are marked from {date}."
@@ -1941,11 +1936,7 @@ impl ChatView {
             .rev()
             .filter_map(|e| match &e.item {
                 rill_core::Item::Chat(m) if m.platform == p && m.author.id == a.id => {
-                    let at = chrono::Local
-                        .timestamp_millis_opt(e.received_ms)
-                        .single()
-                        .map(|t| t.format("%H:%M").to_string())
-                        .unwrap_or_default();
+                    let at = crate::row::local_time(e.received_ms, "%H:%M");
                     Some((
                         e.seq,
                         at,

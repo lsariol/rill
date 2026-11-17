@@ -167,7 +167,7 @@ impl Helix {
                         .and_then(|v| v.to_str().ok())
                         .and_then(|v| v.parse::<i64>().ok())
                         .unwrap_or(0);
-                    let wait_secs = reset - chrono::Utc::now().timestamp();
+                    let wait_secs = reset - rill_core::now_ms() / 1000;
                     // Big batches (a nuke) wait out short limits instead of failing.
                     if limited < 3 && wait_secs <= 60 {
                         limited += 1;

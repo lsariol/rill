@@ -46,9 +46,7 @@ impl Supporter {
                 "subscribed" => EventKind::Subscription,
                 _ => EventKind::Other,
             }),
-            sent_at_ms: chrono::DateTime::parse_from_rfc3339(&self.at)
-                .map(|t| t.timestamp_millis())
-                .unwrap_or_else(|_| rill_core::now_ms()),
+            sent_at_ms: rill_core::time_ms(&self.at).unwrap_or_else(rill_core::now_ms),
             reply_to: None,
         }
     }
@@ -144,9 +142,7 @@ impl Said {
             },
             fragments,
             kind,
-            sent_at_ms: chrono::DateTime::parse_from_rfc3339(&self.created_on)
-                .map(|t| t.timestamp_millis())
-                .unwrap_or_else(|_| rill_core::now_ms()),
+            sent_at_ms: rill_core::time_ms(&self.created_on).unwrap_or_else(rill_core::now_ms),
             reply_to: None,
         }
     }

@@ -296,8 +296,7 @@ fn chat_message(d: &Value, sub_badges: &SubBadges) -> ChatMessage {
         kind: MessageKind::Chat,
         sent_at_ms: d["created_at"]
             .as_str()
-            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-            .map(|t| t.timestamp_millis())
+            .and_then(rill_core::time_ms)
             .unwrap_or_else(rill_core::now_ms),
         reply_to,
     }
