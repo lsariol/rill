@@ -1,18 +1,26 @@
 //! A bounded image cache for emotes and badges: least recently used images are unloaded.
 //!
 //! Images drawn in chat are shrunk to the largest size chat draws them at, so a big animated
-//! emote doesn't keep every frame at full size.
+//! emote doesn't keep every frame at full size. Rill decodes downloaded images itself and stops
+//! at an animation's first broken frame: GPUI skips broken frames, and some broken GIFs report
+//! the same error forever, which kept a core busy until Rill closed.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::io::Cursor;
 use std::rc::Rc;
 use std::sync::Arc;
+
+use futures::AsyncReadExt as _;
+use gpui::http_client::{AsyncBody, HttpClient};
 
 use gpui::{
     App, AppContext, Asset, Entity, EntityId, ImageAssetLoader, ImageCache, ImageCacheError,
     RenderImage, Resource, SharedUri, Task, Window,
 };
-use image::{Frame, ImageBuffer, Rgba, imageops};
+use image::codecs::gif::GifDecoder;
+use image::codecs::webp::WebPDecoder;
+use image::{AnimationDecoder, DynamicImage, Frame, ImageBuffer, ImageFormat, Rgba, imageops};
 
 /// Marks an image address as drawn in chat. The cache reads it; it's never fetched.
 const CHAT: &str = "#chat-size";
@@ -123,9 +131,21 @@ struct Load {
 impl Load {
     fn start(resource: &Resource, max_px: u32, cx: &mut App) -> Load {
         let (fetch, shrink) = source(resource);
-        let load = ImageAssetLoader::load(fetch, cx);
+        // GPUI's own loader, for embedded images and anything that isn't a bitmap (SVG);
+        // it only runs if awaited.
+        let gpui_load = ImageAssetLoader::load(fetch.clone(), cx);
+        let client = cx.http_client();
         let work = cx.background_executor().spawn(async move {
-            let image = load.await?;
+            let image = match &fetch {
+                Resource::Uri(uri) => {
+                    let bytes = download(client.as_ref(), &uri.to_string()).await?;
+                    match image::guess_format(&bytes) {
+                        Ok(format) => decode(&bytes, format)?,
+                        Err(_) => gpui_load.await?,
+                    }
+                }
+                _ => gpui_load.await?,
+            };
             Ok(if shrink { shrunk(image, max_px) } else { image })
         });
         let state = Rc::new(RefCell::new(State::Loading(HashSet::new())));
@@ -164,6 +184,93 @@ impl Load {
             State::Done(result) => Some(result.clone()),
         }
     }
+}
+
+/// An image's bytes from the web.
+async fn download(client: &dyn HttpClient, uri: &str) -> Result<Vec<u8>, ImageCacheError> {
+    let mut response = client
+        .get(uri, AsyncBody::from(()), true)
+        .await
+        .map_err(|e| failed(format!("loading {uri}: {e}")))?;
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .read_to_end(&mut body)
+        .await
+        .map_err(|e| failed(format!("reading {uri}: {e}")))?;
+    if !response.status().is_success() {
+        return Err(failed(format!("{uri} answered {}", response.status())));
+    }
+    Ok(body)
+}
+
+fn failed(why: String) -> ImageCacheError {
+    ImageCacheError::Io(Arc::new(std::io::Error::other(why)))
+}
+
+/// Decodes a bitmap into frames GPUI can draw (BGRA), every frame of an animation.
+fn decode(bytes: &[u8], format: ImageFormat) -> Result<Arc<RenderImage>, ImageCacheError> {
+    let bad = |e: image::ImageError| failed(format!("decoding a {format:?} image: {e}"));
+    let mut frames = match format {
+        ImageFormat::Gif => frames_until_broken(
+            GifDecoder::new(Cursor::new(bytes))
+                .map_err(bad)?
+                .into_frames(),
+        ),
+        ImageFormat::WebP => {
+            let mut decoder = WebPDecoder::new(Cursor::new(bytes)).map_err(bad)?;
+            if decoder.has_animation() {
+                let _ = decoder.set_background_color(Rgba([0, 0, 0, 0]));
+                frames_until_broken(decoder.into_frames())
+            } else {
+                vec![Frame::new(
+                    DynamicImage::from_decoder(decoder).map_err(bad)?.to_rgba8(),
+                )]
+            }
+        }
+        _ => vec![Frame::new(
+            image::load_from_memory_with_format(bytes, format)
+                .map_err(bad)?
+                .to_rgba8(),
+        )],
+    };
+    if frames.is_empty() {
+        return Err(failed(format!(
+            "no frame of the {format:?} image could be decoded"
+        )));
+    }
+    for frame in &mut frames {
+        for pixel in frame.buffer_mut().pixels_mut() {
+            pixel.0.swap(0, 2);
+        }
+    }
+    Ok(Arc::new(RenderImage::new(frames)))
+}
+
+/// Errors in a row after which an animation is cut short.
+const BROKEN_FRAMES: usize = 3;
+
+/// An animation's frames, skipping a broken one but stopping once several fail in a row:
+/// a cut-off file reports the same error forever.
+fn frames_until_broken(frames: image::Frames<'_>) -> Vec<Frame> {
+    let mut out = Vec::new();
+    let mut failures = 0;
+    for frame in frames {
+        match frame {
+            Ok(frame) => {
+                failures = 0;
+                out.push(frame);
+            }
+            Err(e) => {
+                failures += 1;
+                if failures == BROKEN_FRAMES {
+                    tracing::debug!(err = %e, frames = out.len(), "animated image cut short");
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The image at most `max_px` tall, every frame scaled alike; smaller images as they are.
@@ -229,6 +336,69 @@ mod tests {
             })
             .collect();
         Arc::new(RenderImage::new(frames))
+    }
+
+    fn gif(frames: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut out);
+            for i in 0..frames {
+                let buf = ImageBuffer::from_pixel(8, 8, Rgba([40 * i as u8, 90, 160, 255]));
+                encoder.encode_frame(Frame::new(buf)).unwrap();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_cut_off_gif_stops_instead_of_decoding_forever() {
+        let mut bytes = gif(3);
+        bytes.truncate(bytes.len() - 2);
+        // The decoder itself reports the same error again and again.
+        let decoder = GifDecoder::new(Cursor::new(&bytes)).unwrap();
+        let errors = decoder
+            .into_frames()
+            .take(50)
+            .filter(Result::is_err)
+            .count();
+        assert!(errors > 40, "{errors}");
+        let image = decode(&bytes, ImageFormat::Gif).unwrap();
+        assert_eq!(image.frame_count(), 2);
+    }
+
+    #[test]
+    fn skips_a_broken_frame_but_gives_up_on_a_run_of_them() {
+        let ok = || {
+            Ok(Frame::new(ImageBuffer::from_pixel(
+                1,
+                1,
+                Rgba([0, 0, 0, 255]),
+            )))
+        };
+        let bad = || {
+            Err(image::ImageError::IoError(std::io::Error::other(
+                "broken frame",
+            )))
+        };
+        let some = vec![ok(), bad(), ok(), bad(), bad(), ok()];
+        assert_eq!(
+            frames_until_broken(image::Frames::new(Box::new(some.into_iter()))).len(),
+            3
+        );
+        let forever = std::iter::once(ok()).chain(std::iter::repeat_with(bad));
+        assert_eq!(
+            frames_until_broken(image::Frames::new(Box::new(forever))).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn decodes_every_frame_of_a_gif_in_gpuis_byte_order() {
+        let image = decode(&gif(3), ImageFormat::Gif).unwrap();
+        assert_eq!(image.frame_count(), 3);
+        let px = &image.as_bytes(0).unwrap()[..4];
+        // Red and blue swapped: 0 red, 160 blue becomes [160, _, 0, _].
+        assert!(px[0] > 120 && px[2] < 40, "{px:?}");
     }
 
     #[test]
