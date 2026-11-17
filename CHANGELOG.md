@@ -47,8 +47,8 @@ Fixes and polish from the first test stream.
 - Rumble is off until turned on in Settings.
 - Messages sent to every platform, and lines about several platforms or none, show Rill's logo, in
   Rill's window and on the overlay.
-- Rill's download is about half a megabyte smaller: it no longer carries the simulated chat used
-  for testing, which is now only in builds made for benchmarks.
+- Rill no longer carries the simulated chat used for testing, which is now only in builds made for
+  benchmarks.
 
 ### Fixed
 
